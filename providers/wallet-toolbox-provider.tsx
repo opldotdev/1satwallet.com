@@ -58,6 +58,7 @@ import {
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import {
+	diagnoseNoWalletResult,
 	statusAfterDisconnect,
 	type WalletConnectionStatus,
 } from "@/lib/wallet-connection-status";
@@ -597,11 +598,11 @@ export function WalletToolboxProvider({
 				return false;
 			}
 			if (!result) {
+				const diagnostic = await diagnoseNoWalletResult();
+				if (generation !== connectionGenerationRef.current) return false;
 				localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
-				setConnectionStatus("no-wallet");
-				setInitError(
-					"No BRC-100 wallet responded. Open 1Sat Wallet Desktop, enable a compatible extension, or use an embedded wallet browser and try again.",
-				);
+				setConnectionStatus(diagnostic.status);
+				setInitError(diagnostic.message);
 				initGuardRef.current = false;
 				return false;
 			}
