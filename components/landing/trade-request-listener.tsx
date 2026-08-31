@@ -20,10 +20,16 @@ import { signP2PCommand } from "@/lib/p2p-auth";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
 import { TradeDialog } from "./trade-dialog";
+import {
+	inboxRenewalDelay,
+	recoverActiveSession,
+} from "./trade-request-lifecycle";
 
 function shortIdentity(value: string): string {
 	return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
+
+const INBOX_RETRY_MS = 60 * 1000;
 
 function ConnectedTradeRequestListener({
 	identityKey,
@@ -44,25 +50,58 @@ function ConnectedTradeRequestListener({
 		sessionId: string;
 		peerIdentity: string;
 	} | null>(null);
-	const openingInbox = useRef(false);
 	const seenIncoming = useRef<string | null>(null);
-	const seenAccepted = useRef<string | null>(null);
+	const terminalSession = useRef<string | null>(null);
 	const resolvingIncoming = useRef(false);
 
 	useEffect(() => {
-		if (openingInbox.current) return;
-		openingInbox.current = true;
-		void signP2PCommand(wallet, "inbox.open", { token: inboxToken })
-			.then((signed) => openInbox(signed))
-			.then(() => setInboxReady(true))
-			.catch((error) => {
-				openingInbox.current = false;
-				toast.error(
-					error instanceof Error
-						? `P2P inbox unavailable: ${error.message}`
-						: "P2P inbox unavailable.",
+		let cancelled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let capabilityExpiresAt = 0;
+		let reportedUnavailable = false;
+
+		const schedule = (delay: number) => {
+			if (cancelled) return;
+			timer = setTimeout(() => void renew(), delay);
+		};
+		const renew = async () => {
+			try {
+				const signed = await signP2PCommand(wallet, "inbox.open", {
+					token: inboxToken,
+				});
+				const result = await openInbox(signed);
+				if (cancelled) return;
+				capabilityExpiresAt = result.expiresAt;
+				reportedUnavailable = false;
+				setInboxReady(true);
+				schedule(inboxRenewalDelay(result.expiresAt));
+			} catch (error) {
+				if (cancelled) return;
+				if (capabilityExpiresAt <= Date.now()) setInboxReady(false);
+				if (!reportedUnavailable) {
+					reportedUnavailable = true;
+					toast.error(
+						error instanceof Error
+							? `P2P inbox unavailable: ${error.message}`
+							: "P2P inbox unavailable.",
+					);
+				}
+				schedule(
+					capabilityExpiresAt > Date.now()
+						? Math.min(
+								INBOX_RETRY_MS,
+								Math.max(1_000, capabilityExpiresAt - Date.now() - 1_000),
+							)
+						: INBOX_RETRY_MS,
 				);
-			});
+			}
+		};
+
+		void renew();
+		return () => {
+			cancelled = true;
+			if (timer) clearTimeout(timer);
+		};
 	}, [inboxToken, openInbox, wallet]);
 
 	const inbox = useQuery(
@@ -86,29 +125,28 @@ function ConnectedTradeRequestListener({
 		play("alert");
 	}, [incoming, play]);
 
-	const acceptedRequest = inbox?.outgoingAccepted[0];
+	const recoverableSession = recoverActiveSession(
+		inbox?.activeSessions[0],
+		identityKey,
+	);
 	useEffect(() => {
 		if (
-			!acceptedRequest?.sessionId ||
-			seenAccepted.current === acceptedRequest.requestId
+			!recoverableSession ||
+			activeSession ||
+			terminalSession.current === recoverableSession.sessionId
 		) {
 			return;
 		}
-		seenAccepted.current = acceptedRequest.requestId;
 		play("dialog");
-		queueMicrotask(() =>
-			setActiveSession({
-				sessionId: acceptedRequest.sessionId as string,
-				peerIdentity: acceptedRequest.toIdentity,
-			}),
-		);
-	}, [acceptedRequest, play]);
+		queueMicrotask(() => setActiveSession(recoverableSession));
+	}, [activeSession, play, recoverableSession]);
 
 	useEffect(() => {
 		if (
 			activeTrade &&
 			(activeTrade.status === "cancelled" || activeTrade.status === "expired")
 		) {
+			terminalSession.current = activeTrade.sessionId;
 			play("dialog", 0.2);
 			queueMicrotask(() => setActiveSession(null));
 		}
@@ -128,17 +166,22 @@ function ConnectedTradeRequestListener({
 	};
 
 	const handleAccept = async () => {
-		if (!incoming) return;
+		if (!incoming || resolvingIncoming.current) return;
 		resolvingIncoming.current = true;
 		try {
-			const sessionId = crypto.randomUUID();
-			await signAndRun(
+			const result = (await signAndRun(
 				"request.accept",
-				{ requestId: incoming.requestId, sessionId },
+				{
+					requestId: incoming.requestId,
+					sessionId: crypto.randomUUID(),
+				},
 				acceptRequest,
-			);
+			)) as { sessionId: string };
 			play("dialog");
-			setActiveSession({ sessionId, peerIdentity: incoming.fromIdentity });
+			setActiveSession({
+				sessionId: result.sessionId,
+				peerIdentity: incoming.fromIdentity,
+			});
 		} catch (error) {
 			resolvingIncoming.current = false;
 			toast.error(
@@ -150,7 +193,7 @@ function ConnectedTradeRequestListener({
 	};
 
 	const handleDecline = async () => {
-		if (!incoming) return;
+		if (!incoming || resolvingIncoming.current) return;
 		resolvingIncoming.current = true;
 		try {
 			await signAndRun(
@@ -202,8 +245,10 @@ function ConnectedTradeRequestListener({
 					? error.message
 					: "The session could not be cancelled.",
 			);
+			return;
 		}
-		setActiveSession(null);
+		// Keep rendering the authoritative session until the reactive query observes
+		// its terminal state. Clearing early can recover the same stale active row.
 	};
 
 	return (
@@ -289,8 +334,11 @@ function ConnectedTradeRequestListener({
 }
 
 export function TradeRequestListener() {
-	const { identityKey, wallet } = useWalletToolbox();
-	return process.env.NEXT_PUBLIC_CONVEX_URL && identityKey && wallet ? (
+	const { connectionStatus, identityKey, wallet } = useWalletToolbox();
+	return process.env.NEXT_PUBLIC_CONVEX_URL &&
+		connectionStatus === "ready" &&
+		identityKey &&
+		wallet ? (
 		<ConnectedTradeRequestListener
 			identityKey={identityKey}
 			key={identityKey}
