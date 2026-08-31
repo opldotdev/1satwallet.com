@@ -1,3 +1,4 @@
+import type { PromptRequest } from "@1sat/permission-module";
 import WalletWireCalls, {
 	type CallType,
 } from "@bsv/sdk/wallet/substrates/WalletWireCalls";
@@ -196,6 +197,21 @@ export interface CWIChannelCounterpartyPermissionRequestMessage
 	requestID: string;
 	counterparty: string;
 	permissions: CounterpartyPermissions;
+}
+
+export interface CWIChannelAssetPermissionRequestMessage
+	extends CWISessionEnvelope {
+	type: "cwi-asset-permission-request";
+	requestID: string;
+	chain: "main" | "test";
+	request: PromptRequest;
+}
+
+export interface CWIChannelAssetPermissionResponseMessage
+	extends CWISessionEnvelope {
+	type: "cwi-asset-permission-response";
+	requestID: string;
+	approved: boolean;
 }
 
 export interface CWIChannelGrantCounterpartyPermissionMessage

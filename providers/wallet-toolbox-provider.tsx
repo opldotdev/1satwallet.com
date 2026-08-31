@@ -21,6 +21,10 @@ import {
 	type WalletSession,
 } from "@1sat/connect";
 import {
+	createAssetPermissionModules,
+	type OneSatPermissionModule,
+} from "@1sat/permission-module";
+import {
 	type AddressManager,
 	createWebWallet,
 	type WebWalletResult,
@@ -42,6 +46,7 @@ import {
 	useState,
 } from "react";
 import { useExchangeRate } from "@/hooks/use-exchange-rate";
+import { requestAssetPermission } from "@/lib/cwi/asset-permission-prompt";
 import {
 	advanceReceiveAddress,
 	buildReceiveAddressManager,
@@ -276,6 +281,7 @@ export function WalletToolboxProvider({
 	const externalServicesRef = useRef<OneSatServices | null>(null);
 	const connectionGenerationRef = useRef(0);
 	const teardownPromiseRef = useRef<Promise<void> | null>(null);
+	const assetPermissionModulesRef = useRef<OneSatPermissionModule[]>([]);
 
 	const [isInitialized, setIsInitialized] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -548,6 +554,8 @@ export function WalletToolboxProvider({
 
 			const webWallet = walletResultRef.current;
 			walletResultRef.current = null;
+			for (const module of assetPermissionModulesRef.current) module.dispose();
+			assetPermissionModulesRef.current = [];
 			externalServicesRef.current?.close();
 			externalServicesRef.current = null;
 			localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
@@ -747,6 +755,7 @@ export function WalletToolboxProvider({
 			setIsInitializing(true);
 			setConnectionStatus("authenticating");
 			let pendingResult: WebWalletResult | null = null;
+			let pendingPermissionModules: OneSatPermissionModule[] = [];
 			try {
 				const rootKey = PrivateKey.fromHex(rootKeyHex);
 				const newIdentityKey = rootKey.toPublicKey().toString();
@@ -771,10 +780,20 @@ export function WalletToolboxProvider({
 					return false;
 				}
 
+				const assetPermissionModules = createAssetPermissionModules({
+					wallet: result.wallet,
+					promptHandler: requestAssetPermission,
+					adminOriginator: ADMIN_ORIGINATOR,
+					services: result.services,
+				});
+				pendingPermissionModules = Object.values(assetPermissionModules);
 				const wpm = new WalletPermissionsManager(
 					result.wallet,
 					ADMIN_ORIGINATOR,
-					PERMISSIONS_CONFIG,
+					{
+						...PERMISSIONS_CONFIG,
+						permissionModules: assetPermissionModules,
+					},
 				);
 				const loadedState = loadReceiveAddressState(
 					{ chain, identityKey: newIdentityKey },
@@ -797,12 +816,16 @@ export function WalletToolboxProvider({
 					originator: ADMIN_ORIGINATOR,
 				});
 				if (generation !== connectionGenerationRef.current) {
+					for (const module of pendingPermissionModules) module.dispose();
+					pendingPermissionModules = [];
 					await result.destroy();
 					return false;
 				}
 
 				pendingResult = null;
 				walletResultRef.current = result;
+				assetPermissionModulesRef.current = pendingPermissionModules;
+				pendingPermissionModules = [];
 				setWallet(result.wallet);
 				setServices(result.services);
 
@@ -837,6 +860,7 @@ export function WalletToolboxProvider({
 
 				return true;
 			} catch {
+				for (const module of pendingPermissionModules) module.dispose();
 				await pendingResult?.destroy();
 				if (generation !== connectionGenerationRef.current) return false;
 				reportDiagnostic({

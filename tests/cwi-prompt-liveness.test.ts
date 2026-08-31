@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, test } from "node:test";
 import type { WalletPermissionsManager } from "@bsv/wallet-toolbox-client";
+import {
+	bindAssetPermissionPromptHandler,
+	canApproveAssetPermission,
+	requestAssetPermission,
+} from "../lib/cwi/asset-permission-prompt";
 import { CWIBridge } from "../lib/cwi/bridge";
 import { CWIRelay } from "../lib/cwi/relay";
 import { createSessionBase, createSessionEnvelope } from "../lib/cwi/types";
@@ -160,6 +165,22 @@ function responses(channel: FakeBroadcastChannel) {
 }
 
 describe("BRC-219 prompt liveness", () => {
+	test("asset prompt handler cleanup cannot clear a newer relay binding", async () => {
+		const request = {
+			kind: "protocol" as const,
+			originator: "app.example",
+			payload: {},
+			summary: "test",
+		};
+		assert.equal(await requestAssetPermission(request), false);
+		const cleanupFirst = bindAssetPermissionPromptHandler(async () => false);
+		const cleanupSecond = bindAssetPermissionPromptHandler(async () => true);
+		cleanupFirst();
+		assert.equal(await requestAssetPermission(request), true);
+		cleanupSecond();
+		assert.equal(await requestAssetPermission(request), false);
+	});
+
 	test("waits beyond 2, 5, and 10 minutes until a wallet becomes available", async () => {
 		const clock = useManualClock();
 		let wallet: WalletPermissionsManager | null = null;
@@ -284,6 +305,230 @@ describe("BRC-219 prompt liveness", () => {
 			{ id: "deny-call", status: "error", code: 1 },
 		);
 		harness.relay.stop();
+	});
+
+	test("asset permission approval stays bound to the requesting session", async () => {
+		let relay!: CWIRelay;
+		const wallet = {
+			createAction: async (_args: unknown, originator: string) => {
+				const approved = await relay.requestAssetPermission(
+					{
+						kind: "transaction",
+						originator,
+						payload: { title: "Send BSV21" },
+						summary: "Send 21 TEST",
+					},
+					"test",
+				);
+				if (!approved) throw new Error("Permission denied");
+				return { reference: "approved" };
+			},
+		} as unknown as WalletPermissionsManager;
+		const harness = startRelay({ getWallet: () => wallet });
+		relay = harness.relay;
+		const session = openSession(harness.channel, "asset-permission");
+		harness.channel.emit(request(session, "asset-call", "createAction"));
+		await tick();
+
+		const prompt = harness.channel.sent.find(
+			(message) =>
+				(message as { type?: string }).type === "cwi-asset-permission-request",
+		) as {
+			requestID: string;
+			chain: string;
+			request: { originator: string };
+		};
+		assert.equal(prompt.request.originator, "app.example");
+		assert.equal(prompt.chain, "test");
+
+		const otherSession = openSession(harness.channel, "asset-attacker");
+		harness.channel.emit({
+			...createSessionEnvelope(otherSession),
+			type: "cwi-asset-permission-response",
+			requestID: prompt.requestID,
+			approved: true,
+		});
+		await tick();
+		assert.equal(responses(harness.channel).length, 0);
+
+		harness.channel.emit({
+			...createSessionEnvelope(session),
+			type: "cwi-asset-permission-response",
+			requestID: prompt.requestID,
+			approved: true,
+		});
+		await tick();
+		await tick();
+		assert.deepEqual(responses(harness.channel).at(-1)?.result, {
+			reference: "approved",
+		});
+		harness.relay.stop();
+	});
+
+	test("blocks approval when live BSV21 verification reports a mismatch", async () => {
+		const review = await canApproveAssetPermission(
+			{
+				kind: "transaction",
+				originator: "app.example",
+				summary: "Send 21 TEST",
+				payload: {
+					title: "Transaction Request",
+					subtitle: "app.example",
+					panels: [],
+					rows: [],
+					trust: { state: "unverified" },
+					verify: {
+						kind: "bsv21.transfer",
+						inputs: [
+							{
+								basket: "bsv21",
+								id: "token-output",
+								outpoint: `${"a".repeat(64)}.0`,
+								satoshis: 1,
+								tags: ["bsv21:token-id", "sym:test"],
+							},
+						],
+						outputs: [],
+					},
+				},
+			},
+			{
+				bsv21: {
+					getTokenDetails: async () => ({ status: { is_active: false } }),
+				},
+			},
+		);
+		assert.equal(review.allowed, false);
+		assert.match(review.reason ?? "", /not active/i);
+	});
+
+	test("bounds asset prompts and rejects all of them when their session closes", async () => {
+		let relay!: CWIRelay;
+		let settled: boolean[] = [];
+		const wallet = {
+			createAction: async (_args: unknown, originator: string) => {
+				const decisions = Array.from({ length: 9 }, (_, index) =>
+					relay.requestAssetPermission(
+						{
+							kind: "transaction",
+							originator,
+							payload: { title: `Request ${index}` },
+							summary: `Request ${index}`,
+						},
+						"main",
+					),
+				);
+				void Promise.all(decisions).then((values) => {
+					settled = values;
+				});
+				return { reference: "queued" };
+			},
+		} as unknown as WalletPermissionsManager;
+		const harness = startRelay({ getWallet: () => wallet });
+		relay = harness.relay;
+		const session = openSession(harness.channel, "asset-bounds");
+		harness.channel.emit(request(session, "bounded", "createAction"));
+		await tick();
+		await tick();
+
+		assert.equal(
+			harness.channel.sent.filter(
+				(message) =>
+					(message as { type?: string }).type ===
+					"cwi-asset-permission-request",
+			).length,
+			8,
+		);
+		harness.channel.emit({
+			...createSessionEnvelope(session),
+			type: "cwi-session-close",
+		});
+		await tick();
+		assert.deepEqual(
+			settled,
+			Array.from({ length: 9 }, () => false),
+		);
+		assert.equal(
+			(
+				relay as unknown as {
+					pendingAssetDecisions: Map<string, unknown>;
+				}
+			).pendingAssetDecisions.size,
+			0,
+		);
+		harness.relay.stop();
+	});
+
+	test("fails closed for oversized or non-serializable asset prompts", async () => {
+		let relay!: CWIRelay;
+		const wallet = {
+			createAction: async (
+				args: { mode: "large" | "function" },
+				originator: string,
+			) => ({
+				allowed: await relay.requestAssetPermission(
+					{
+						kind: "transaction",
+						originator,
+						payload:
+							args.mode === "large"
+								? { title: "x".repeat(400_000) }
+								: { title: "test", invalid: () => undefined },
+						summary: "test",
+					},
+					"main",
+				),
+			}),
+		} as unknown as WalletPermissionsManager;
+		const harness = startRelay({ getWallet: () => wallet });
+		relay = harness.relay;
+		const session = openSession(harness.channel, "asset-payload");
+		for (const mode of ["large", "function"] as const) {
+			harness.channel.emit(request(session, mode, "createAction", { mode }));
+			await tick();
+			await tick();
+		}
+
+		assert.equal(
+			harness.channel.sent.some(
+				(message) =>
+					(message as { type?: string }).type ===
+					"cwi-asset-permission-request",
+			),
+			false,
+		);
+		assert.deepEqual(
+			responses(harness.channel).map((response) => response.result),
+			[{ allowed: false }, { allowed: false }],
+		);
+		harness.relay.stop();
+	});
+
+	test("relay stop rejects an in-flight asset review", async () => {
+		let relay!: CWIRelay;
+		let settled: boolean | undefined;
+		const wallet = {
+			createAction: async (_args: unknown, originator: string) => {
+				settled = await relay.requestAssetPermission(
+					{
+						kind: "transaction",
+						originator,
+						payload: { title: "test" },
+						summary: "test",
+					},
+					"main",
+				);
+				return { settled };
+			},
+		} as unknown as WalletPermissionsManager;
+		const harness = startRelay({ getWallet: () => wallet });
+		relay = harness.relay;
+		const session = openSession(harness.channel, "asset-stop");
+		harness.channel.emit(request(session, "stopped", "createAction"));
+		await tick();
+		harness.relay.stop();
+		await tick();
+		assert.equal(settled, false);
 	});
 
 	test("session close aborts in-flight work and unblocks the next session", async () => {

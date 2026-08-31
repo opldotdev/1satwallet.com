@@ -1,3 +1,4 @@
+import type { PromptRequest } from "@1sat/permission-module";
 import type {
 	CounterpartyPermissions,
 	GroupedPermissions,
@@ -10,6 +11,7 @@ import {
 	CWI_MAX_PENDING_GLOBAL,
 	CWI_MAX_PENDING_PER_SESSION,
 	CWI_MAX_REQUEST_IDS_PER_SESSION,
+	type CWIChannelAssetPermissionRequestMessage,
 	type CWIChannelBaseMessage,
 	type CWIChannelCounterpartyPermissionRequestMessage,
 	type CWIChannelGroupedPermissionRequestMessage,
@@ -137,6 +139,10 @@ export class CWIRelay {
 	private readonly relayId = crypto.randomUUID();
 	private readonly sessions = new Map<string, RelaySession>();
 	private readonly pendingDecisions = new Map<string, PendingDecision>();
+	private readonly pendingAssetDecisions = new Map<
+		string,
+		{ sessionId: string; resolve: (approved: boolean) => void }
+	>();
 	private currentContext: RelaySession | null = null;
 	private activeGlobal = 0;
 	private dispatchTail: Promise<void> = Promise.resolve();
@@ -182,6 +188,10 @@ export class CWIRelay {
 		this.handler = null;
 		this.sessions.clear();
 		this.pendingDecisions.clear();
+		for (const pending of this.pendingAssetDecisions.values()) {
+			pending.resolve(false);
+		}
+		this.pendingAssetDecisions.clear();
 		this.currentContext = null;
 		this.activeGlobal = 0;
 		this.channel?.close();
@@ -269,6 +279,45 @@ export class CWIRelay {
 		this.postToChannel(message);
 	}
 
+	requestAssetPermission(
+		request: PromptRequest,
+		chain: "main" | "test",
+	): Promise<boolean> {
+		const session = this.contextFor(request.originator);
+		const sessionPending = [
+			...this.pendingDecisions.values(),
+			...this.pendingAssetDecisions.values(),
+		].filter((pending) => pending.sessionId === session?.sessionId).length;
+		const globalPending =
+			this.pendingDecisions.size + this.pendingAssetDecisions.size;
+		if (
+			!session ||
+			!isWithinCWIPayloadLimit(request) ||
+			sessionPending >= CWI_MAX_PENDING_PER_SESSION ||
+			globalPending >= CWI_MAX_PENDING_GLOBAL
+		) {
+			return Promise.resolve(false);
+		}
+		const requestID = crypto.randomUUID();
+		return new Promise((resolve) => {
+			this.pendingAssetDecisions.set(requestID, {
+				sessionId: session.sessionId,
+				resolve,
+			});
+			const message: CWIChannelAssetPermissionRequestMessage = {
+				...this.envelope(session),
+				type: "cwi-asset-permission-request",
+				requestID,
+				chain,
+				request,
+			};
+			if (!this.postToChannel(message)) {
+				this.pendingAssetDecisions.delete(requestID);
+				resolve(false);
+			}
+		});
+	}
+
 	private handleMessage(data: unknown): void {
 		if (
 			this.isStopped ||
@@ -335,6 +384,15 @@ export class CWIRelay {
 			);
 		} else if (hasRequestID(data, "cwi-counterparty-permission-deny")) {
 			void this.handleDecision(session, data.requestID, "counterparty", false);
+		} else if (
+			hasRequestID(data, "cwi-asset-permission-response") &&
+			typeof data.approved === "boolean"
+		) {
+			const pending = this.pendingAssetDecisions.get(data.requestID);
+			if (pending?.sessionId === session.sessionId) {
+				this.pendingAssetDecisions.delete(data.requestID);
+				pending.resolve(data.approved);
+			}
 		}
 	}
 
@@ -673,7 +731,16 @@ export class CWIRelay {
 			lifecycleError("Wallet session closed; retry the request"),
 		);
 		this.cancelPendingDecisions(sessionId);
+		this.cancelPendingAssetDecisions(sessionId);
 		this.sessions.delete(sessionId);
+	}
+
+	private cancelPendingAssetDecisions(sessionId: string): void {
+		for (const [requestID, pending] of this.pendingAssetDecisions) {
+			if (pending.sessionId !== sessionId) continue;
+			this.pendingAssetDecisions.delete(requestID);
+			pending.resolve(false);
+		}
 	}
 
 	private cancelPendingDecisions(sessionId: string): void {

@@ -6,6 +6,7 @@ import type {
 } from "@bsv/wallet-toolbox-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+	type BridgeAssetPermissionRequest,
 	type BridgeCounterpartyPermissionRequest,
 	type BridgeGroupedPermissionRequest,
 	type BridgePermissionRequest,
@@ -20,6 +21,7 @@ interface CWIBridgeState {
 	activePermission: BridgePermissionRequest | null;
 	activeGroupedPermission: BridgeGroupedPermissionRequest | null;
 	activeCounterpartyPermission: BridgeCounterpartyPermissionRequest | null;
+	activeAssetPermission: BridgeAssetPermissionRequest | null;
 	queueLength: number;
 	transport: "embed";
 	fallbackRecommended: boolean;
@@ -39,6 +41,7 @@ interface CWIBridgeState {
 		expiry?: number,
 	) => void;
 	denyCounterpartyPermission: (requestID: string) => void;
+	respondToAssetPermission: (requestID: string, approved: boolean) => void;
 	grantStorageAccess: () => void;
 	retryStatus: () => void;
 }
@@ -65,17 +68,22 @@ export function useCWIBridge(): CWIBridgeState {
 	const [counterpartyQueue, setCounterpartyQueue] = useState<
 		BridgeCounterpartyPermissionRequest[]
 	>([]);
+	const [assetPermissionQueue, setAssetPermissionQueue] = useState<
+		BridgeAssetPermissionRequest[]
+	>([]);
 	const [storageAccessRequired, setStorageAccessRequired] = useState(false);
 
 	const activePermission = permissionQueue[0] ?? null;
 	const activeGroupedPermission = groupedQueue[0] ?? null;
 	const activeCounterpartyPermission = counterpartyQueue[0] ?? null;
+	const activeAssetPermission = assetPermissionQueue[0] ?? null;
 
 	useEffect(() => {
 		const resetPermissionQueues = () => {
 			setPermissionQueue([]);
 			setGroupedQueue([]);
 			setCounterpartyQueue([]);
+			setAssetPermissionQueue([]);
 		};
 		const bridge = new CWIBridge({
 			onStatusChange: setStatus,
@@ -102,6 +110,16 @@ export function useCWIBridge(): CWIBridgeState {
 			},
 			onCounterpartyPermissionRequest: (request) => {
 				setCounterpartyQueue((prev) => {
+					if (
+						prev.some((existing) => existing.requestID === request.requestID)
+					) {
+						return prev;
+					}
+					return [...prev, request];
+				});
+			},
+			onAssetPermissionRequest: (request) => {
+				setAssetPermissionQueue((prev) => {
 					if (
 						prev.some((existing) => existing.requestID === request.requestID)
 					) {
@@ -196,6 +214,17 @@ export function useCWIBridge(): CWIBridgeState {
 		}
 	}, []);
 
+	const respondToAssetPermission = useCallback(
+		(requestID: string, approved: boolean) => {
+			if (bridgeRef.current?.respondToAssetPermission(requestID, approved)) {
+				setAssetPermissionQueue((prev) =>
+					prev.filter((request) => request.requestID !== requestID),
+				);
+			}
+		},
+		[],
+	);
+
 	const retryStatus = useCallback(() => {
 		bridgeRef.current?.requestStatus();
 	}, []);
@@ -209,13 +238,17 @@ export function useCWIBridge(): CWIBridgeState {
 	}, []);
 
 	const totalQueue =
-		permissionQueue.length + groupedQueue.length + counterpartyQueue.length;
+		permissionQueue.length +
+		groupedQueue.length +
+		counterpartyQueue.length +
+		assetPermissionQueue.length;
 
 	return {
 		status,
 		activePermission,
 		activeGroupedPermission,
 		activeCounterpartyPermission,
+		activeAssetPermission,
 		queueLength: totalQueue,
 		transport: transportState.transport,
 		fallbackRecommended: transportState.fallbackRecommended,
@@ -227,6 +260,7 @@ export function useCWIBridge(): CWIBridgeState {
 		denyGroupedPermission,
 		grantCounterpartyPermission,
 		denyCounterpartyPermission,
+		respondToAssetPermission,
 		grantStorageAccess,
 		retryStatus,
 	};
