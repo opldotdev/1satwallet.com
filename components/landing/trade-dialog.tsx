@@ -26,6 +26,8 @@ import {
 } from "@/components/ui/sound-dialog";
 import { signP2PCommand } from "@/lib/p2p-auth";
 import type { P2PTradeItem } from "@/lib/types/p2p";
+import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
+import { validateBsv21OfferForLock } from "@/lib/wallet/bsv21-offer-validation";
 import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
@@ -72,6 +74,11 @@ function OfferItem({
 				)}
 				<div className="min-w-0 flex-1">
 					<p className="truncate font-medium text-sm">{item.name}</p>
+					{item.type === "bsv21" && (
+						<p className="truncate text-muted-foreground text-xs">
+							{formatBsv21Amount(item.amount, item.decimals ?? 0)} units
+						</p>
+					)}
 					<p className="truncate font-mono text-muted-foreground text-xs">
 						{item.id}
 					</p>
@@ -100,9 +107,11 @@ export function TradeDialog({
 }: TradeDialogProps) {
 	const session = useQuery(api.p2p.getSession, { sessionId });
 	const updateOffer = useMutation(api.p2p.updateOffer);
-	const { wallet, ordinals } = useWalletToolbox();
+	const { wallet, ordinals, oneSatContext } = useWalletToolbox();
 	const [inventoryOpen, setInventoryOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
+	const [verifyingAssets, setVerifyingAssets] = useState(false);
+	const [lockError, setLockError] = useState<string | null>(null);
 
 	const initiator = session?.initiatorIdentity === myIdentity;
 	const myItems = ((initiator
@@ -126,17 +135,33 @@ export function TradeDialog({
 
 	const publishOffer = async (items: P2PTradeItem[], locked: boolean) => {
 		if (!wallet || !session) return;
-		if (locked) {
-			const missing = items.find(
-				(item) => item.type === "ordinal" && !ownedOrdinals.has(item.id),
-			);
-			if (missing) {
-				toast.error(`${missing.name} is no longer available in this wallet.`);
-				return;
-			}
-		}
+		setLockError(null);
 		setBusy(true);
 		try {
+			if (locked) {
+				const missing = items.find(
+					(item) => item.type === "ordinal" && !ownedOrdinals.has(item.id),
+				);
+				if (missing) {
+					const message = `${missing.name} is no longer available in this wallet.`;
+					setLockError(message);
+					toast.error(message);
+					return;
+				}
+				if (items.some((item) => item.type === "bsv21")) {
+					setVerifyingAssets(true);
+					const validation = await validateBsv21OfferForLock(
+						oneSatContext,
+						items,
+					);
+					setVerifyingAssets(false);
+					if (!validation.ok) {
+						setLockError(validation.message);
+						toast.error(validation.message);
+						return;
+					}
+				}
+			}
 			const signed = await signP2PCommand(wallet, "session.offer", {
 				sessionId,
 				revision: myRevision + 1,
@@ -145,13 +170,16 @@ export function TradeDialog({
 			});
 			await updateOffer(signed);
 		} catch (error) {
-			toast.error(
+			const message =
 				error instanceof Error
 					? error.message
-					: "The offer could not be updated.",
-			);
+					: "The offer could not be updated.";
+			setLockError(message);
+			toast.error(message);
+		} finally {
+			setVerifyingAssets(false);
+			setBusy(false);
 		}
-		setBusy(false);
 	};
 
 	if (!session) {
@@ -171,7 +199,12 @@ export function TradeDialog({
 			<InventorySelector
 				onOpenChange={setInventoryOpen}
 				onSelect={(item) => {
-					if (!myItems.some((existing) => existing.id === item.id)) {
+					if (
+						!myItems.some(
+							(existing) =>
+								existing.type === item.type && existing.id === item.id,
+						)
+					) {
 						void publishOffer([...myItems, item], false);
 					}
 				}}
@@ -214,10 +247,13 @@ export function TradeDialog({
 									<OfferItem
 										canRemove={!myLocked && !busy}
 										item={item}
-										key={item.id}
+										key={`${item.type}:${item.id}`}
 										onRemove={() =>
 											void publishOffer(
-												myItems.filter((entry) => entry.id !== item.id),
+												myItems.filter(
+													(entry) =>
+														entry.type !== item.type || entry.id !== item.id,
+												),
 												false,
 											)
 										}
@@ -246,8 +282,17 @@ export function TradeDialog({
 									) : (
 										<Lock className="size-4" data-icon="inline-start" />
 									)}
-									{myLocked ? "Unlock offer" : "Lock offer"}
+									{verifyingAssets
+										? "Checking BSV21 assets…"
+										: myLocked
+											? "Unlock offer"
+											: "Lock offer"}
 								</Button>
+								{lockError && (
+									<p className="text-destructive text-xs" role="alert">
+										{lockError}
+									</p>
+								)}
 							</div>
 						</section>
 
@@ -261,7 +306,7 @@ export function TradeDialog({
 							</div>
 							<div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
 								{peerItems.map((item) => (
-									<OfferItem item={item} key={item.id} />
+									<OfferItem item={item} key={`${item.type}:${item.id}`} />
 								))}
 								{peerItems.length === 0 && (
 									<p className="rounded-md border border-dashed p-6 text-center text-muted-foreground text-sm">
