@@ -6,7 +6,7 @@ import {
 	type P2PCommand,
 	verifyP2PCommand,
 } from "../lib/p2p-auth";
-import type { P2PTradeItem } from "../lib/types/p2p";
+import { parseP2PTradeItems } from "../lib/p2p-trade-items";
 import {
 	internalMutation,
 	type MutationCtx,
@@ -21,7 +21,6 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 const INBOX_TTL_MS = 12 * 60 * 60 * 1000;
 const UUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const OUTPOINT = /^[0-9a-f]{64}_[0-9]+$/;
 
 const signedArgs = { body: v.string(), signature: v.string() };
 
@@ -58,54 +57,6 @@ function identityField(value: Record<string, unknown>, field: string): string {
 
 function tokenHash(token: string): string {
 	return toHex(Hash.sha256(token, "utf8"));
-}
-
-function parseItems(value: unknown): P2PTradeItem[] {
-	if (!Array.isArray(value) || value.length > 24) {
-		throw new Error("Invalid offer items");
-	}
-	return value.map((candidate) => {
-		const item = record(candidate);
-		const id = stringField(item, "id", 128).toLowerCase();
-		const name = stringField(item, "name", 140);
-		const type = item.type;
-		if (type !== "ordinal" && type !== "bsv21" && type !== "satoshis") {
-			throw new Error("Invalid offer item type");
-		}
-		const image = item.image;
-		if (
-			image !== undefined &&
-			(typeof image !== "string" || image.length > 2048)
-		) {
-			throw new Error("Invalid offer item image");
-		}
-		const amount = item.amount;
-		if (
-			amount !== undefined &&
-			(typeof amount !== "string" || amount.length > 80)
-		) {
-			throw new Error("Invalid offer item amount");
-		}
-		const result: P2PTradeItem = { id, name, type, image, amount };
-		if (type === "ordinal") {
-			if (!OUTPOINT.test(id)) throw new Error("Invalid ordinal outpoint");
-			const [txid, voutText] = id.split("_");
-			const vout = Number(voutText);
-			if (!Number.isSafeInteger(vout) || vout < 0) {
-				throw new Error("Invalid ordinal outpoint");
-			}
-			result.txid = txid;
-			result.vout = vout;
-		}
-		if (
-			item.satoshis !== undefined &&
-			(!Number.isSafeInteger(item.satoshis) || (item.satoshis as number) < 0)
-		) {
-			throw new Error("Invalid item satoshis");
-		}
-		if (typeof item.satoshis === "number") result.satoshis = item.satoshis;
-		return result;
-	});
 }
 
 async function runIdempotent<T>(
@@ -359,7 +310,7 @@ export const updateOffer = mutation({
 				) {
 					throw new Error("Invalid offer revision");
 				}
-				const items = parseItems(payload.items);
+				const items = parseP2PTradeItems(payload.items);
 				const session = await sessionById(ctx, sessionId);
 				if (!session) throw new Error("Trade session not found");
 				if (session.status === "cancelled" || session.status === "expired") {

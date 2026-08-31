@@ -1,6 +1,33 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const p2pTradeItem = v.union(
+	v.object({
+		id: v.string(),
+		name: v.string(),
+		type: v.literal("ordinal"),
+		image: v.optional(v.string()),
+		txid: v.string(),
+		vout: v.number(),
+		satoshis: v.optional(v.number()),
+	}),
+	v.object({
+		id: v.string(),
+		name: v.string(),
+		type: v.literal("bsv21"),
+		amount: v.string(),
+		decimals: v.optional(v.number()),
+		image: v.optional(v.string()),
+	}),
+	v.object({
+		id: v.string(),
+		name: v.string(),
+		type: v.literal("satoshis"),
+		image: v.optional(v.string()),
+		satoshis: v.number(),
+	}),
+);
+
 export default defineSchema({
 	p2pInboxTokens: defineTable({
 		identityKey: v.string(),
@@ -48,38 +75,8 @@ export default defineSchema({
 		sessionId: v.string(),
 		initiatorIdentity: v.string(),
 		participantIdentity: v.string(),
-		initiatorItems: v.array(
-			v.object({
-				id: v.string(),
-				name: v.string(),
-				type: v.union(
-					v.literal("ordinal"),
-					v.literal("bsv21"),
-					v.literal("satoshis"),
-				),
-				amount: v.optional(v.string()),
-				image: v.optional(v.string()),
-				txid: v.optional(v.string()),
-				vout: v.optional(v.number()),
-				satoshis: v.optional(v.number()),
-			}),
-		),
-		participantItems: v.array(
-			v.object({
-				id: v.string(),
-				name: v.string(),
-				type: v.union(
-					v.literal("ordinal"),
-					v.literal("bsv21"),
-					v.literal("satoshis"),
-				),
-				amount: v.optional(v.string()),
-				image: v.optional(v.string()),
-				txid: v.optional(v.string()),
-				vout: v.optional(v.number()),
-				satoshis: v.optional(v.number()),
-			}),
-		),
+		initiatorItems: v.array(p2pTradeItem),
+		participantItems: v.array(p2pTradeItem),
 		initiatorRevision: v.number(),
 		participantRevision: v.number(),
 		initiatorLocked: v.boolean(),
