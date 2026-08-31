@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSound } from "@/hooks/use-sound";
 import { useWallet } from "@/providers/wallet-provider";
+import { SharedPresence } from "./shared-presence";
 
 function StaticLogo() {
 	return (
@@ -133,6 +134,10 @@ export function LandingHero() {
 						</Card>
 					</div>
 				</div>
+			</div>
+
+			<div className="absolute inset-0 z-50 pointer-events-none">
+				<SharedPresence />
 			</div>
 		</div>
 	);

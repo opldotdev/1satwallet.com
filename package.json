@@ -20,6 +20,7 @@
 		"@1sat/wallet-browser": "^0.0.90",
 		"@bsv/sdk": "^2.4.2",
 		"@bsv/wallet-toolbox-client": "2.10.4",
+		"@convex-dev/presence": "0.4.0",
 		"@radix-ui/react-alert-dialog": "^1.1.23",
 		"@radix-ui/react-avatar": "^1.2.6",
 		"@radix-ui/react-collapsible": "^1.1.20",

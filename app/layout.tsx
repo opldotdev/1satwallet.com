@@ -10,6 +10,7 @@ import { WalletBridge } from "@/components/wallet-bridge";
 import { QueryProvider } from "@/providers/query-provider";
 import { WalletProvider } from "@/providers/wallet-provider";
 import { WalletToolboxProvider } from "@/providers/wallet-toolbox-provider";
+import { ConvexClientProvider } from "./ConvexClientProvider";
 import "./globals.css";
 import "./animations.css";
 
@@ -85,24 +86,26 @@ export default function RootLayout({
 			<body
 				className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} antialiased font-sans`}
 			>
-				<ThemeProvider
-					attribute="class"
-					defaultTheme="dark"
-					enableSystem
-					disableTransitionOnChange
-				>
-					<ThemeTokenProvider>
-						<QueryProvider>
-							<WalletProvider>
-								<WalletToolboxProvider>
-									<KeyboardShortcuts />
-									<WalletBridge>{children}</WalletBridge>
-									<Toaster position="bottom-right" />
-								</WalletToolboxProvider>
-							</WalletProvider>
-						</QueryProvider>
-					</ThemeTokenProvider>
-				</ThemeProvider>
+				<ConvexClientProvider>
+					<ThemeProvider
+						attribute="class"
+						defaultTheme="dark"
+						enableSystem
+						disableTransitionOnChange
+					>
+						<ThemeTokenProvider>
+							<QueryProvider>
+								<WalletProvider>
+									<WalletToolboxProvider>
+										<KeyboardShortcuts />
+										<WalletBridge>{children}</WalletBridge>
+										<Toaster position="bottom-right" />
+									</WalletToolboxProvider>
+								</WalletProvider>
+							</QueryProvider>
+						</ThemeTokenProvider>
+					</ThemeProvider>
+				</ConvexClientProvider>
 			</body>
 		</html>
 	);

@@ -13,6 +13,7 @@
         "@1sat/wallet-browser": "^0.0.90",
         "@bsv/sdk": "^2.4.2",
         "@bsv/wallet-toolbox-client": "2.10.4",
+        "@convex-dev/presence": "0.4.0",
         "@radix-ui/react-alert-dialog": "^1.1.23",
         "@radix-ui/react-avatar": "^1.2.6",
         "@radix-ui/react-collapsible": "^1.1.20",
@@ -153,6 +154,10 @@
     "@bsv/sdk": ["@bsv/sdk@2.4.2", "", {}, "sha512-UW1eC6YU+GdHBIQEBemuJo24K5S6rJBd6umNfkOpHR0ke5bgi58ymMrpX6Dm1cd4FYXsTDrbzyiKaH//LmJ7kw=="],
 
     "@bsv/wallet-toolbox-client": ["@bsv/wallet-toolbox-client@2.10.4", "", { "dependencies": { "hash-wasm": "^4.12.0", "idb": "^8.0.3" }, "peerDependencies": { "@bsv/sdk": "^2.4.1" } }, "sha512-mV0XFgaqdwFOkU7VzoyKtskScpUaAipV4YHjhDAopeetTcxf7X53gYHF8caMCuDRTsoawk04zNKfkpZZBhXrsw=="],
+
+    "@convex-dev/batch-worker": ["@convex-dev/batch-worker@0.2.1", "", { "peerDependencies": { "convex": "^1.36.1", "react": "^18.3.1 || ^19.0.0" } }, "sha512-QEDW6XmT+SmBJAmNqyl0QAEmJ4yMKJAIoJ+LntsA8KY5gYP+UhSFvTEMCvo177RZxOR/cfkZ3R+4S/UBaj/JnQ=="],
+
+    "@convex-dev/presence": ["@convex-dev/presence@0.4.0", "", { "dependencies": { "@convex-dev/batch-worker": "^0.2.0" }, "peerDependencies": { "convex": "^1.36.1", "expo-crypto": ">=14.1.0", "react": "~18.3.1 || ^19.0.0", "react-dom": "~18.3.1 || ^19.0.0", "react-native": ">=0.79.0" }, "optionalPeers": ["expo-crypto", "react-native"] }, "sha512-T1f2aHyS2D2dxvMnvY+qSJBIRG0W7ph8+mgOvZif52JLlLNscCHTangAgNWR4VLYGhXFFDxwSSpdh7vxzA/hPQ=="],
 
     "@cto.af/wtf8": ["@cto.af/wtf8@0.0.5", "", {}, "sha512-LfUFi+Vv4eDzj+XAtR89e3wwjXA/NZjUSwU5NhwbBrLecxPaBYFy3exCuc1j+D4UZeOVdqlsl8G7LmOt18V0tg=="],
 
