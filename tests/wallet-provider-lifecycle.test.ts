@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	diagnoseNoWalletResult,
+	probeWalletReachability,
 	statusAfterDisconnect,
 } from "@/lib/wallet-connection-status";
 
@@ -38,12 +39,34 @@ describe("wallet provider lifecycle", () => {
 		assert.doesNotMatch(failed.message, /did not grant/);
 	});
 
-	it("treats a successful second identity probe as a transient provider failure", async () => {
+	it("does not require a second protected identity probe to diagnose a provider failure", async () => {
 		const transient = await diagnoseNoWalletResult(async () => ({
 			state: "identity-ready",
 		}));
 
 		assert.equal(transient.status, "provider-error");
 		assert.match(transient.message, /wallet\/provider error/);
+	});
+
+	it("never repeats identity-key retrieval during reachability diagnosis", async () => {
+		let identityRequests = 0;
+		const wallet = {
+			async connectToSubstrate() {},
+			async getVersion() {
+				return { version: "wallet-brc100-1.0.0" };
+			},
+			async isAuthenticated() {
+				return { authenticated: true as const };
+			},
+			async getPublicKey() {
+				identityRequests += 1;
+				throw new Error("diagnostics must not call this");
+			},
+		};
+
+		const result = await probeWalletReachability(() => wallet);
+
+		assert.deepEqual(result, { state: "provider-error" });
+		assert.equal(identityRequests, 0);
 	});
 });

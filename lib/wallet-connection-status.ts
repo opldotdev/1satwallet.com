@@ -40,8 +40,15 @@ function isPermissionError(error: unknown): boolean {
 	return code === "ERR_PERMISSION_DENIED" || code === "WERR_UNAUTHORIZED";
 }
 
-async function probeWalletReachability(): Promise<WalletConnectionProbeResult> {
-	const wallet = new WalletClient("auto");
+type ReachabilityWallet = Pick<
+	WalletClient,
+	"connectToSubstrate" | "getVersion" | "isAuthenticated"
+>;
+
+export async function probeWalletReachability(
+	createWallet: () => ReachabilityWallet = () => new WalletClient("auto"),
+): Promise<WalletConnectionProbeResult> {
+	const wallet = createWallet();
 	try {
 		await wallet.connectToSubstrate();
 		await wallet.getVersion({});
@@ -52,11 +59,9 @@ async function probeWalletReachability(): Promise<WalletConnectionProbeResult> {
 	try {
 		const { authenticated } = await wallet.isAuthenticated({});
 		if (!authenticated) return { state: "authorization-required" };
-		const { publicKey } = await wallet.getPublicKey({ identityKey: true });
-		if (!/^(02|03)[0-9a-fA-F]{64}$/.test(publicKey)) {
-			return { state: "provider-error", code: "INVALID_IDENTITY_KEY" };
-		}
-		return { state: "identity-ready" };
+		// connectWallet already attempted the protected identity request before
+		// returning null. Repeating it here opens a second permission prompt.
+		return { state: "provider-error" };
 	} catch (error) {
 		if (isPermissionError(error)) {
 			return { state: "authorization-required" };
