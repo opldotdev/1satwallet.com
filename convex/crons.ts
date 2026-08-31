@@ -15,4 +15,10 @@ crons.interval(
 	internal.p2p.deleteExpiredRecords,
 );
 
+crons.interval(
+	"delete expired signed P2P presence announcements",
+	{ minutes: 5 },
+	internal.presence.deleteExpiredAnnouncements,
+);
+
 export default crons;

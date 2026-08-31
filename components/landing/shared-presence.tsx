@@ -1,12 +1,17 @@
 "use client";
 
 import usePresence from "@convex-dev/presence/react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { MousePointer2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useSound } from "@/hooks/use-sound";
 import { signP2PCommand } from "@/lib/p2p-auth";
+import {
+	getWalletPresenceUserId,
+	PRESENCE_ANNOUNCEMENT_REFRESH_MS,
+	PRESENCE_ROOM_ID,
+} from "@/lib/p2p-presence";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
 
@@ -15,7 +20,7 @@ interface CursorData {
 	y: number;
 }
 
-const ROOM_ID = "landing";
+const ROOM_ID = PRESENCE_ROOM_ID;
 const HEARTBEAT_INTERVAL = 10_000;
 const CURSOR_COLORS = [
 	"var(--chart-1)",
@@ -39,7 +44,7 @@ export function getPresenceUserId(
 	const normalizedIdentityKey = identityKey?.toLowerCase();
 	return normalizedIdentityKey &&
 		/^(02|03)[0-9a-f]{64}$/.test(normalizedIdentityKey)
-		? `wallet:${chain}:${normalizedIdentityKey}`
+		? getWalletPresenceUserId(normalizedIdentityKey, chain, anonymousId)
 		: `anon:${anonymousId}`;
 }
 
@@ -83,9 +88,21 @@ function PresenceLayer({
 	);
 	const updateCursor = useMutation(api.presence.updateCursor);
 	const sendRequest = useMutation(api.p2p.sendRequest);
+	const publicIdentities = useQuery(api.presence.listPublicIdentities, {
+		roomId: ROOM_ID,
+	});
 	const { play } = useSound();
 	const { wallet } = useWalletToolbox();
 	const [requestingPeer, setRequestingPeer] = useState<string | null>(null);
+	const [identityClock, setIdentityClock] = useState(() => Date.now());
+
+	useEffect(() => {
+		const timer = setInterval(
+			() => setIdentityClock(Date.now()),
+			HEARTBEAT_INTERVAL,
+		);
+		return () => clearInterval(timer);
+	}, []);
 
 	const handlePointerMove = useCallback(
 		(event: PointerEvent) => {
@@ -128,9 +145,14 @@ function PresenceLayer({
 
 	const online = presenceState?.filter((entry) => entry.online) ?? [];
 	const cursors = online.filter((entry) => entry.userId !== userId);
+	const identityByUserId = new Map(
+		(publicIdentities ?? [])
+			.filter((identity) => identity.expiresAt > identityClock)
+			.map((identity) => [identity.userId, identity]),
+	);
 
 	const startTrade = async (peerUserId: string) => {
-		const peerIdentity = peerUserId.split(":")[2]?.toLowerCase();
+		const peerIdentity = identityByUserId.get(peerUserId)?.identityKey ?? null;
 		if (!wallet || !identityKey) {
 			toast.error("Connect and unlock a BRC-100 wallet to initiate a trade.");
 			return;
@@ -180,14 +202,18 @@ function PresenceLayer({
 			{cursors.map((cursor, index) => {
 				const data = isCursorData(cursor.data) ? cursor.data : { x: 50, y: 50 };
 				const color = CURSOR_COLORS[index % CURSOR_COLORS.length];
-				const peerIdentity = cursor.userId.split(":")[2] ?? null;
-				const label = labelForUserId(cursor.userId);
+				const publicIdentity = identityByUserId.get(cursor.userId);
+				const peerIdentity = publicIdentity?.identityKey ?? null;
+				const label = publicIdentity?.label ?? labelForUserId(cursor.userId);
+				const profileStatus = publicIdentity?.profile
+					? `${publicIdentity.profile.source} profile ${publicIdentity.profile.verification}`
+					: "no verified public profile";
 				return (
 					<button
 						aria-label={
 							peerIdentity
 								? `Start a trade with ${label}`
-								: `${label} is browsing anonymously`
+								: `${label} has unverified presence`
 						}
 						className="group absolute z-50 hidden border-none bg-transparent p-0 pointer-events-auto md:block motion-safe:transition-[left,top,transform] motion-safe:duration-100 motion-safe:ease-out hover:scale-110"
 						disabled={requestingPeer === cursor.userId}
@@ -214,11 +240,16 @@ function PresenceLayer({
 							<div
 								className="absolute top-6 left-6 whitespace-nowrap rounded-full px-2 py-1 font-mono text-xs font-medium text-white shadow-lg"
 								style={{ backgroundColor: color }}
+								title={
+									publicIdentity
+										? `Wallet signature verified; ${profileStatus}`
+										: "Wallet identity unverified"
+								}
 							>
 								{label}
-								{peerIdentity && (
-									<span className="ml-1 opacity-75">· BRC-100</span>
-								)}
+								<span className="ml-1 opacity-75">
+									{peerIdentity ? "· verified" : "· unverified"}
+								</span>
 							</div>
 							<div
 								className="absolute -inset-3 -z-10 rounded-full opacity-0 transition-opacity group-hover:opacity-30"
@@ -234,9 +265,45 @@ function PresenceLayer({
 
 export function SharedPresence() {
 	const [anonymousId, setAnonymousId] = useState<string | null>(null);
-	const { chain, connectionStatus, identityKey } = useWalletToolbox();
+	const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(
+		null,
+	);
+	const announce = useMutation(api.presence.announce);
+	const { chain, connectionStatus, identityKey, wallet } = useWalletToolbox();
 
 	useEffect(() => setAnonymousId(crypto.randomUUID()), []);
+
+	useEffect(() => {
+		if (!anonymousId || !identityKey || !wallet) {
+			setAuthenticatedUserId(null);
+			return;
+		}
+		let cancelled = false;
+		let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+		const userId = getPresenceUserId(identityKey, anonymousId, chain);
+		setAuthenticatedUserId(null);
+		const publish = async () => {
+			try {
+				const signed = await signP2PCommand(wallet, "presence.announce", {
+					chain,
+					sessionId: anonymousId,
+					userId,
+				});
+				await announce(signed);
+				if (!cancelled) setAuthenticatedUserId(userId);
+			} catch {
+				if (!cancelled) setAuthenticatedUserId(null);
+			}
+			if (!cancelled) {
+				refreshTimer = setTimeout(publish, PRESENCE_ANNOUNCEMENT_REFRESH_MS);
+			}
+		};
+		void publish();
+		return () => {
+			cancelled = true;
+			if (refreshTimer) clearTimeout(refreshTimer);
+		};
+	}, [announce, anonymousId, chain, identityKey, wallet]);
 
 	if (
 		!process.env.NEXT_PUBLIC_CONVEX_URL ||
@@ -245,7 +312,13 @@ export function SharedPresence() {
 	) {
 		return null;
 	}
-	const userId = getPresenceUserId(identityKey, anonymousId, chain);
+	const expectedWalletUserId = identityKey
+		? getPresenceUserId(identityKey, anonymousId, chain)
+		: null;
+	const userId =
+		authenticatedUserId && authenticatedUserId === expectedWalletUserId
+			? authenticatedUserId
+			: `anon:${anonymousId}`;
 	return (
 		<PresenceLayer key={userId} userId={userId} identityKey={identityKey} />
 	);

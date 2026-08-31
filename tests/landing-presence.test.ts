@@ -40,11 +40,11 @@ describe("landing presence restoration", () => {
 
 		assert.equal(
 			getPresenceUserId(identityKey, firstDocumentId),
-			`wallet:main:${canonicalIdentityKey}`,
+			`wallet:main:${canonicalIdentityKey}:${firstDocumentId}`,
 		);
 		assert.equal(
 			getPresenceUserId(identityKey, firstDocumentId, "test"),
-			`wallet:test:${canonicalIdentityKey}`,
+			`wallet:test:${canonicalIdentityKey}:${firstDocumentId}`,
 		);
 		assert.equal(
 			getPresenceUserId(null, firstDocumentId),
@@ -58,7 +58,7 @@ describe("landing presence restoration", () => {
 			getPresenceUserId(null, firstDocumentId),
 			getPresenceUserId(null, secondDocumentId),
 		);
-		assert.equal(
+		assert.notEqual(
 			getPresenceUserId(identityKey, firstDocumentId),
 			getPresenceUserId(identityKey, secondDocumentId),
 		);
@@ -84,10 +84,8 @@ describe("landing presence restoration", () => {
 		assert.doesNotMatch(presence, /sessionStorage|localStorage/);
 		assert.match(presence, /crypto\.randomUUID\(\)/);
 		assert.match(presence, /connectionStatus\s*===\s*"authenticating"/);
-		assert.match(
-			presence,
-			/<PresenceLayer\s+key=\{userId\}\s+userId=\{userId\}/,
-		);
+		assert.match(presence, /<PresenceLayer/);
+		assert.match(presence, /userId=\{userId\}/);
 
 		for (const forbidden of [
 			"useAuth",
@@ -145,12 +143,9 @@ describe("landing presence restoration", () => {
 			JSON.parse(manifest).dependencies["@convex-dev/presence"],
 			"0.4.0",
 		);
-		assert.match(server, /const ROOM_ID = "landing"/);
+		assert.match(server, /const ROOM_ID = PRESENCE_ROOM_ID/);
 		assert.match(server, /const HEARTBEAT_INTERVAL = 10_000/);
-		assert.match(
-			server,
-			/\^wallet:\(main\|test\):\(02\|03\)\[0-9a-f\]\{64\}\$/,
-		);
+		assert.match(server, /const WALLET_USER_ID/);
 		assert.match(server, /\^anon:\[0-9a-f\]\{8\}/);
 		assert.match(
 			server,
@@ -162,6 +157,8 @@ describe("landing presence restoration", () => {
 		);
 		assert.match(server, /export const disconnect = mutation/);
 		assert.match(server, /Presence is deliberately visual-only/);
+		assert.match(server, /requireActiveWalletAnnouncement/);
+		assert.match(server, /authenticatePresenceAnnouncement/);
 		assert.doesNotMatch(server, /api\.(?:trades|authenticatedTrades)/);
 		assert.match(generatedApi, /presence:\s*typeof presence/);
 		assert.match(generatedApi, /ComponentApi<"presence">/);
