@@ -54,7 +54,7 @@ interface MaterialControls {
 	offIntensity?: number;
 }
 
-const FONT_JSON_URL = "/fonts/kanit-extrabold-italic.typeface.json";
+const FONT_JSON_URL = "/fonts/kanit-extrabold.typeface.json";
 
 export function Logo3D() {
 	const [colors, setColors] = useState<{
