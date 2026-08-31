@@ -4,6 +4,9 @@ import usePresence from "@convex-dev/presence/react";
 import { useMutation } from "convex/react";
 import { MousePointer2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { useSound } from "@/hooks/use-sound";
+import { signP2PCommand } from "@/lib/p2p-auth";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
 
@@ -62,7 +65,13 @@ function isCursorData(value: unknown): value is CursorData {
 	return Number.isFinite(data.x) && Number.isFinite(data.y);
 }
 
-function PresenceLayer({ userId }: { userId: string }) {
+function PresenceLayer({
+	userId,
+	identityKey,
+}: {
+	userId: string;
+	identityKey: string | null;
+}) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const lastUpdateRef = useRef(0);
 	const updateInFlightRef = useRef(false);
@@ -73,6 +82,10 @@ function PresenceLayer({ userId }: { userId: string }) {
 		HEARTBEAT_INTERVAL,
 	);
 	const updateCursor = useMutation(api.presence.updateCursor);
+	const sendRequest = useMutation(api.p2p.sendRequest);
+	const { play } = useSound();
+	const { wallet } = useWalletToolbox();
+	const [requestingPeer, setRequestingPeer] = useState<string | null>(null);
 
 	const handlePointerMove = useCallback(
 		(event: PointerEvent) => {
@@ -116,6 +129,39 @@ function PresenceLayer({ userId }: { userId: string }) {
 	const online = presenceState?.filter((entry) => entry.online) ?? [];
 	const cursors = online.filter((entry) => entry.userId !== userId);
 
+	const startTrade = async (peerUserId: string) => {
+		const peerIdentity = peerUserId.split(":")[2]?.toLowerCase();
+		if (!wallet || !identityKey) {
+			toast.error("Connect and unlock a BRC-100 wallet to initiate a trade.");
+			return;
+		}
+		if (!peerIdentity) {
+			toast.error(
+				"That visitor needs to connect a wallet before you can trade.",
+			);
+			return;
+		}
+		if (requestingPeer) return;
+		setRequestingPeer(peerUserId);
+		play("click");
+		try {
+			const requestId = crypto.randomUUID();
+			const signed = await signP2PCommand(wallet, "request.create", {
+				requestId,
+				toIdentity: peerIdentity,
+			});
+			await sendRequest(signed);
+			toast.success(
+				`Trade request sent to ${truncateIdentifier(peerIdentity)}.`,
+			);
+		} catch (error) {
+			toast.error(
+				error instanceof Error ? error.message : "The trade request failed.",
+			);
+		}
+		setRequestingPeer(null);
+	};
+
 	return (
 		<div
 			ref={containerRef}
@@ -134,30 +180,52 @@ function PresenceLayer({ userId }: { userId: string }) {
 			{cursors.map((cursor, index) => {
 				const data = isCursorData(cursor.data) ? cursor.data : { x: 50, y: 50 };
 				const color = CURSOR_COLORS[index % CURSOR_COLORS.length];
+				const peerIdentity = cursor.userId.split(":")[2] ?? null;
+				const label = labelForUserId(cursor.userId);
 				return (
-					<div
-						aria-hidden="true"
-						className="absolute z-50 hidden md:block motion-safe:transition-[left,top] motion-safe:duration-100 motion-safe:ease-out"
+					<button
+						aria-label={
+							peerIdentity
+								? `Start a trade with ${label}`
+								: `${label} is browsing anonymously`
+						}
+						className="group absolute z-50 hidden border-none bg-transparent p-0 pointer-events-auto md:block motion-safe:transition-[left,top,transform] motion-safe:duration-100 motion-safe:ease-out hover:scale-110"
+						disabled={requestingPeer === cursor.userId}
 						key={cursor.userId}
+						onClick={() => void startTrade(cursor.userId)}
+						onContextMenu={(event) => {
+							event.preventDefault();
+							void startTrade(cursor.userId);
+						}}
 						style={{
 							color,
 							left: `${Math.max(0, Math.min(100, data.x))}%`,
 							top: `${Math.max(0, Math.min(100, data.y))}%`,
 							transform: "translate(-2px, -2px)",
 						}}
+						type="button"
 					>
-						<MousePointer2
-							className="size-6 -rotate-12 drop-shadow-lg"
-							fill="currentColor"
-							strokeWidth={1}
-						/>
-						<div
-							className="absolute top-6 left-6 whitespace-nowrap rounded-full px-2 py-1 font-mono text-xs font-medium text-white shadow-lg"
-							style={{ backgroundColor: color }}
-						>
-							{labelForUserId(cursor.userId)}
+						<div className="relative">
+							<MousePointer2
+								className="size-6 -rotate-12 drop-shadow-lg"
+								fill="currentColor"
+								strokeWidth={1}
+							/>
+							<div
+								className="absolute top-6 left-6 whitespace-nowrap rounded-full px-2 py-1 font-mono text-xs font-medium text-white shadow-lg"
+								style={{ backgroundColor: color }}
+							>
+								{label}
+								{peerIdentity && (
+									<span className="ml-1 opacity-75">· BRC-100</span>
+								)}
+							</div>
+							<div
+								className="absolute -inset-3 -z-10 rounded-full opacity-0 transition-opacity group-hover:opacity-30"
+								style={{ backgroundColor: color }}
+							/>
 						</div>
-					</div>
+					</button>
 				);
 			})}
 		</div>
@@ -178,5 +246,7 @@ export function SharedPresence() {
 		return null;
 	}
 	const userId = getPresenceUserId(identityKey, anonymousId, chain);
-	return <PresenceLayer key={userId} userId={userId} />;
+	return (
+		<PresenceLayer key={userId} userId={userId} identityKey={identityKey} />
+	);
 }

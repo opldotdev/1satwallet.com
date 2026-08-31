@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useSound } from "@/hooks/use-sound";
 import { useWallet } from "@/providers/wallet-provider";
 import { SharedPresence } from "./shared-presence";
+import { TradeRequestListener } from "./trade-request-listener";
 
 function StaticLogo() {
 	return (
@@ -87,7 +88,8 @@ export function LandingHero() {
 							onClick={() => play("click")}
 						>
 							<Link href="/download">
-								Apple App <ArrowRight className="ml-2 w-6 h-6" />
+								Apple App
+								<ArrowRight className="ml-2 w-6 h-6" data-icon="inline-end" />
 							</Link>
 						</Button>
 					</div>
@@ -139,6 +141,7 @@ export function LandingHero() {
 			<div className="absolute inset-0 z-50 pointer-events-none">
 				<SharedPresence />
 			</div>
+			<TradeRequestListener />
 		</div>
 	);
 }
