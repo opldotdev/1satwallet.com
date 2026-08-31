@@ -10,6 +10,7 @@
 
 import type * as crons from "../crons.js";
 import type * as cwiAuth from "../cwiAuth.js";
+import type * as p2p from "../p2p.js";
 import type * as presence from "../presence.js";
 
 import type {
@@ -21,6 +22,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   cwiAuth: typeof cwiAuth;
+  p2p: typeof p2p;
   presence: typeof presence;
 }>;
 

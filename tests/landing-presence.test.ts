@@ -25,8 +25,8 @@ describe("landing presence restoration", () => {
 
 		assert.match(config, /@convex-dev\/presence\/convex\.config\.js/);
 		assert.match(config, /\.use\(presence\)/);
-		assert.doesNotMatch(schema, /\btrades\s*:\s*defineTable/);
-		assert.doesNotMatch(schema, /\btradeRequests\s*:\s*defineTable/);
+		assert.match(schema, /p2pRequests:\s*defineTable/);
+		assert.match(schema, /p2pSessions:\s*defineTable/);
 	});
 
 	it("derives stable, distinct anonymous and connected session identities", async () => {
@@ -95,8 +95,6 @@ describe("landing presence restoration", () => {
 			"ordPk",
 			"wifToAddress",
 			"accessToken",
-			"authenticatedTrades",
-			"sendTradeRequest",
 			"Sigma",
 			"sigma",
 		]) {
@@ -114,7 +112,7 @@ describe("landing presence restoration", () => {
 		assert.equal(existsSync(join(root, "app/auth/sigma")), false);
 	});
 
-	it("mounts one Convex provider and visual-only presence on the landing page", () => {
+	it("mounts one Convex provider, presence, and the restored trade listener", () => {
 		const layout = read("app/layout.tsx");
 		const convexProvider = read("app/ConvexClientProvider.tsx");
 		const hero = read("components/landing/hero.tsx");
@@ -127,20 +125,15 @@ describe("landing presence restoration", () => {
 		assert.match(hero, /import\s*\{\s*SharedPresence\s*\}/);
 		assert.equal(hero.match(/<SharedPresence\s*\/>/g)?.length, 1);
 
-		for (const removedTradeUi of [
+		for (const restoredTradeUi of [
 			"components/landing/trade-request-listener.tsx",
 			"components/landing/trade-dialog.tsx",
 			"components/landing/inventory-selector.tsx",
-			"convex/trades.ts",
-			"convex/authenticatedTrades.ts",
+			"convex/p2p.ts",
 		]) {
-			assert.equal(
-				existsSync(join(root, removedTradeUi)),
-				false,
-				`visual-only restoration must not reintroduce ${removedTradeUi}`,
-			);
+			assert.equal(existsSync(join(root, restoredTradeUi)), true);
 		}
-		assert.doesNotMatch(hero, /TradeRequestListener|TradeDialog/);
+		assert.match(hero, /TradeRequestListener/);
 	});
 
 	it("pins the package protocol and validates visual-only presence input", () => {
@@ -169,10 +162,7 @@ describe("landing presence restoration", () => {
 		);
 		assert.match(server, /export const disconnect = mutation/);
 		assert.match(server, /Presence is deliberately visual-only/);
-		assert.doesNotMatch(
-			server,
-			/export const (?:sendTradeRequest|createTrade|acceptTrade)|api\.(?:trades|authenticatedTrades)/,
-		);
+		assert.doesNotMatch(server, /api\.(?:trades|authenticatedTrades)/);
 		assert.match(generatedApi, /presence:\s*typeof presence/);
 		assert.match(generatedApi, /ComponentApi<"presence">/);
 	});
@@ -184,8 +174,10 @@ describe("landing presence restoration", () => {
 			presence,
 			/presenceState\?\.filter\(\(entry\) => entry\.online\)/,
 		);
-		assert.match(presence, /hidden md:block/);
+		assert.match(presence, /hidden[^"]*md:block/);
 		assert.match(presence, /motion-safe:transition-/);
+		assert.match(presence, /startTrade/);
+		assert.match(presence, /BRC-100/);
 		assert.doesNotMatch(presence, /(?<!motion-safe:)animate-pulse/);
 	});
 });
