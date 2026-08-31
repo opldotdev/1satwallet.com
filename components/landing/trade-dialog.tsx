@@ -235,16 +235,16 @@ export function TradeDialog({
 									onClick={() => setInventoryOpen(true)}
 									variant="outline"
 								>
-									<Plus className="mr-2 size-4" /> Add item
+									<Plus className="size-4" data-icon="inline-start" /> Add item
 								</Button>
 								<Button
 									disabled={busy || myItems.length === 0}
 									onClick={() => void publishOffer(myItems, !myLocked)}
 								>
 									{myLocked ? (
-										<XCircle className="mr-2 size-4" />
+										<XCircle className="size-4" data-icon="inline-start" />
 									) : (
-										<Lock className="mr-2 size-4" />
+										<Lock className="size-4" data-icon="inline-start" />
 									)}
 									{myLocked ? "Unlock offer" : "Lock offer"}
 								</Button>

@@ -166,7 +166,8 @@ function Bsv21BuyButton({ details, listing }: Bsv21BuyButtonProps) {
 					setOpen(true);
 				}}
 			>
-				<ShoppingCart className="mr-2 size-4" /> Review purchase
+				<ShoppingCart className="size-4" data-icon="inline-start" /> Review
+				purchase
 			</Button>
 			{disabledReason ? (
 				<p className="max-w-sm text-xs text-destructive" role="status">
@@ -216,7 +217,8 @@ function Bsv21BuyButton({ details, listing }: Bsv21BuyButtonProps) {
 									size="sm"
 									onClick={() => void refresh().then(() => setOpen(false))}
 								>
-									<RefreshCw className="mr-2 size-4" /> Refresh listing
+									<RefreshCw className="size-4" data-icon="inline-start" />{" "}
+									Refresh listing
 								</Button>
 							) : null}
 						</div>
