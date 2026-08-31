@@ -43,7 +43,11 @@ import {
 } from "@/lib/wallet/bsv21-authority";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
-type AuthorityOperation = "mint" | "transfer" | "terminate";
+type AuthorityOperation =
+	| "mint"
+	| "transfer"
+	| "terminate-authority"
+	| "terminate";
 type AuthorityReview =
 	| {
 			kind: "mint";
@@ -51,6 +55,11 @@ type AuthorityReview =
 			symbol: string;
 			decimals: number;
 			amount: bigint;
+	  }
+	| {
+			kind: "terminate-authority";
+			tokenId: string;
+			symbol: string;
 	  }
 	| {
 			kind: "terminate";
@@ -65,6 +74,10 @@ type AuthorityReview =
 			symbol: string;
 			destination: { address?: string; counterparty?: string };
 	  };
+
+function isPermanentTermination(kind: AuthorityOperation): boolean {
+	return kind === "terminate-authority" || kind === "terminate";
+}
 
 export function Bsv21AuthorityManager({
 	bsv21Available,
@@ -130,19 +143,27 @@ export function Bsv21AuthorityManager({
 				});
 				return;
 			}
-			const atomic = parseBsv21Amount(amount, decimals);
-			if (!atomic) {
-				setError(
-					`Enter a positive amount with at most ${decimals} decimal places.`,
-				);
-				return;
-			}
 			if (
-				operation === "terminate" &&
+				isPermanentTermination(operation) &&
 				!confirmsPermanentMintTermination(confirmation, normalizedTokenId)
 			) {
 				setError(
 					`Type ${permanentMintTerminationConfirmation(normalizedTokenId)} exactly to continue.`,
+				);
+				return;
+			}
+			if (operation === "terminate-authority") {
+				setReview({
+					kind: operation,
+					tokenId: normalizedTokenId,
+					symbol,
+				});
+				return;
+			}
+			const atomic = parseBsv21Amount(amount, decimals);
+			if (!atomic) {
+				setError(
+					`Enter a positive amount with at most ${decimals} decimal places.`,
 				);
 				return;
 			}
@@ -189,17 +210,27 @@ export function Bsv21AuthorityManager({
 				throw new Error("Review details changed. Review the action again.");
 			}
 			if (
-				review.kind !== "transfer" &&
-				(parseBsv21Amount(amount, review.decimals) !== review.amount ||
-					(review.kind === "terminate" &&
-						!confirmsPermanentMintTermination(confirmation, review.tokenId)))
+				isPermanentTermination(review.kind) &&
+				!confirmsPermanentMintTermination(confirmation, review.tokenId)
+			) {
+				setReview(null);
+				throw new Error("Review details changed. Review the action again.");
+			}
+			if (
+				(review.kind === "mint" || review.kind === "terminate") &&
+				parseBsv21Amount(amount, review.decimals) !== review.amount
 			) {
 				setReview(null);
 				throw new Error("Review details changed. Review the action again.");
 			}
 			await prepareLiveBsv21AuthorityExecution(oneSatContext);
 			let intent: Bsv21AuthorityIntent;
-			if (review.kind === "terminate") {
+			if (review.kind === "terminate-authority") {
+				intent = {
+					kind: "terminate-authority",
+					tokenId: review.tokenId,
+				};
+			} else if (review.kind === "terminate") {
 				intent = {
 					kind: "terminate",
 					tokenId: review.tokenId,
@@ -222,9 +253,11 @@ export function Bsv21AuthorityManager({
 			if (result.error) throw new Error(result.error);
 			if (!result.txid) throw new Error(BSV21_ACTION_CONFIRMATION_MISSING);
 			setStatus(
-				review.kind === "terminate"
-					? `Final mint submitted in ${result.txid ?? "the wallet"}. Mint authority was permanently consumed.`
-					: `Authority action submitted in ${result.txid ?? "the wallet"}. Overlay indexing is not yet confirmed.`,
+				review.kind === "terminate-authority"
+					? `Mint authority was permanently ended in ${result.txid}. No tokens were minted.`
+					: review.kind === "terminate"
+						? `Final mint submitted in ${result.txid}. Mint authority was permanently consumed.`
+						: `Authority action submitted in ${result.txid ?? "the wallet"}. Overlay indexing is not yet confirmed.`,
 			);
 			setReview(null);
 			setOpen(false);
@@ -240,8 +273,8 @@ export function Bsv21AuthorityManager({
 				category: "action",
 				code: "action.failed",
 				operation: `wallet.bsv21.authority.${review.kind}`,
-				recoverable: review.kind !== "terminate",
-				context: { retryable: review.kind !== "terminate" },
+				recoverable: !isPermanentTermination(review.kind),
+				context: { retryable: !isPermanentTermination(review.kind) },
 			});
 			setError(bsv21AuthorityFailureMessage(cause));
 			play("error");
@@ -274,8 +307,8 @@ export function Bsv21AuthorityManager({
 				<div>
 					<h3 className="font-medium">Mint authority</h3>
 					<p className="text-sm text-muted-foreground">
-						Mint supply, transfer control, or permanently end minting with a
-						final mint.
+						Mint supply, transfer control, or permanently end minting with or
+						without a final mint.
 					</p>
 				</div>
 				<Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
@@ -304,7 +337,9 @@ export function Bsv21AuthorityManager({
 											? "Mint and continue authority"
 											: review.kind === "transfer"
 												? "Transfer authority only"
-												: "Final mint and end authority"}
+												: review.kind === "terminate-authority"
+													? "End authority without minting"
+													: "Final mint and end authority"}
 									</dd>
 									<dt>Token</dt>
 									<dd className="break-all text-right font-mono">
@@ -318,7 +353,7 @@ export function Bsv21AuthorityManager({
 													review.destination.counterparty}
 											</dd>
 										</>
-									) : (
+									) : review.kind === "terminate-authority" ? null : (
 										<>
 											<dt>Amount</dt>
 											<dd className="break-all text-right font-mono">
@@ -333,7 +368,7 @@ export function Bsv21AuthorityManager({
 								</dl>
 								<div
 									className={`flex gap-2 rounded-md border p-3 text-sm ${
-										review.kind === "terminate"
+										isPermanentTermination(review.kind)
 											? "border-destructive bg-destructive/10 text-destructive"
 											: "border-amber-500/40 bg-amber-500/5"
 									}`}
@@ -344,7 +379,9 @@ export function Bsv21AuthorityManager({
 											? "A replacement authority returns to this wallet so future minting remains possible."
 											: review.kind === "transfer"
 												? "This wallet gives up its authority. The recipient controls all future minting."
-												: "This mints the final amount and emits no replacement authority. No wallet can ever mint this token again."}
+												: review.kind === "terminate-authority"
+													? "This consumes the mint authority without minting tokens. No wallet can ever mint this token again."
+													: "This mints the final amount and emits no replacement authority. No wallet can ever mint this token again."}
 									</p>
 								</div>
 							</div>
@@ -367,6 +404,9 @@ export function Bsv21AuthorityManager({
 											</SelectItem>
 											<SelectItem value="transfer">
 												Transfer authority only
+											</SelectItem>
+											<SelectItem value="terminate-authority">
+												Permanently end without minting
 											</SelectItem>
 											<SelectItem value="terminate">
 												Final mint and permanently end
@@ -395,7 +435,7 @@ export function Bsv21AuthorityManager({
 											onChange={(event) => setDestination(event.target.value)}
 										/>
 									</div>
-								) : (
+								) : operation === "terminate-authority" ? null : (
 									<div className="space-y-2">
 										<Label htmlFor="bsv21-authority-amount">
 											{operation === "terminate"
@@ -410,12 +450,12 @@ export function Bsv21AuthorityManager({
 										/>
 									</div>
 								)}
-								{operation === "terminate" ? (
+								{isPermanentTermination(operation) ? (
 									<div className="space-y-2 rounded-md border border-destructive bg-destructive/10 p-3">
 										<p className="text-sm text-destructive">
-											Authority-only termination is unavailable in @1sat/actions
-											0.0.202. This supported path requires a final positive
-											mint.
+											{operation === "terminate-authority"
+												? "This permanently consumes mint authority without creating any tokens."
+												: "This creates the final positive mint and permanently consumes mint authority."}
 										</p>
 										<Label
 											className="text-destructive"
@@ -452,7 +492,9 @@ export function Bsv21AuthorityManager({
 								onClick={() => void (review ? execute() : prepareReview())}
 								type="button"
 								variant={
-									review?.kind === "terminate" ? "destructive" : "default"
+									review && isPermanentTermination(review.kind)
+										? "destructive"
+										: "default"
 								}
 							>
 								{busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}

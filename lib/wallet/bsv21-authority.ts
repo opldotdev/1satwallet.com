@@ -45,6 +45,7 @@ export type Bsv21AuthorityIntent =
 			tokenId: string;
 			destination: Bsv21Destination;
 	  }
+	| { kind: "terminate-authority"; tokenId: string }
 	| { kind: "terminate"; tokenId: string; finalAmount: bigint };
 
 export interface Bsv21AuthorityActions {
@@ -99,6 +100,11 @@ export async function executeBsv21AuthorityIntent(
 			return actions.mint(ctx, {
 				tokenId: intent.tokenId,
 				auth: { destination: intent.destination },
+			});
+		case "terminate-authority":
+			return actions.mint(ctx, {
+				tokenId: intent.tokenId,
+				endMinting: true,
 			});
 		case "terminate":
 			return actions.mint(ctx, {

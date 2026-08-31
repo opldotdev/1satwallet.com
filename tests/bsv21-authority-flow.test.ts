@@ -49,6 +49,11 @@ describe("canonical BSV21 authority action dispatch", () => {
 		);
 		await executeBsv21AuthorityIntent(
 			ctx,
+			{ kind: "terminate-authority", tokenId },
+			actions,
+		);
+		await executeBsv21AuthorityIntent(
+			ctx,
 			{ kind: "terminate", tokenId, finalAmount: 7n },
 			actions,
 		);
@@ -79,6 +84,13 @@ describe("canonical BSV21 authority action dispatch", () => {
 					auth: {
 						destination: { counterparty: "02".padEnd(66, "1") },
 					},
+				},
+			},
+			{
+				action: "mintBsv21",
+				input: {
+					tokenId,
+					endMinting: true,
 				},
 			},
 			{
@@ -160,7 +172,28 @@ describe("canonical BSV21 authority action dispatch", () => {
 		}
 	});
 
-	test("never sends the ignored-auth authority-only termination workaround", async () => {
+	test("uses the public authority-only termination shape without mint or auth", async () => {
+		let mintInput: Record<string, unknown> | undefined;
+		const actions: Bsv21AuthorityActions = {
+			deploy: async () => ({}),
+			mint: async (_ctx, input) => {
+				mintInput = input as unknown as Record<string, unknown>;
+				return { txid: "authority-termination" };
+			},
+		};
+
+		await executeBsv21AuthorityIntent(
+			{} as OneSatContext,
+			{ kind: "terminate-authority", tokenId },
+			actions,
+		);
+
+		assert.deepEqual(mintInput, { tokenId, endMinting: true });
+		assert.equal(Object.hasOwn(mintInput ?? {}, "mint"), false);
+		assert.equal(Object.hasOwn(mintInput ?? {}, "auth"), false);
+	});
+
+	test("preserves final positive mint termination without an auth output", async () => {
 		let mintInput: Record<string, unknown> | undefined;
 		const actions: Bsv21AuthorityActions = {
 			deploy: async () => ({}),
