@@ -88,16 +88,16 @@ type ActionStatus =
 	| null;
 
 function StatusMessage({ status }: { status: ActionStatus }) {
-	if (!status) return null;
 	return (
 		<p
+			aria-atomic="true"
 			aria-live="polite"
 			className={
-				status.kind === "error" ? "text-destructive text-sm" : "text-sm"
+				status?.kind === "error" ? "text-destructive text-sm" : "text-sm"
 			}
 			role="status"
 		>
-			{status.message}
+			{status?.message}
 		</p>
 	);
 }
