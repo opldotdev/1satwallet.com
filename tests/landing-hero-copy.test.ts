@@ -20,6 +20,8 @@ describe("landing hero copy", () => {
 	it("keeps the landing page focused on its trading canvas", () => {
 		assert.doesNotMatch(heroSource, /EncryptionGrid/);
 		assert.doesNotMatch(heroSource, /Feature Grid/);
+		assert.doesNotMatch(heroSource, /min-h-\[100dvh\]/);
+		assert.match(heroSource, /min-h-0 flex-1/);
 		assert.match(heroSource, /P2P trading floor/);
 	});
 });

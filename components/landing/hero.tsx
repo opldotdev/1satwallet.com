@@ -49,7 +49,7 @@ export function LandingHero() {
 	);
 
 	return (
-		<div className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden bg-background selection:bg-primary/20">
+		<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden bg-background selection:bg-primary/20">
 			<div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
 			<div
 				aria-hidden="true"
