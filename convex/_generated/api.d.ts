@@ -10,6 +10,7 @@
 
 import type * as crons from "../crons.js";
 import type * as cwiAuth from "../cwiAuth.js";
+import type * as presence from "../presence.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +21,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   cwiAuth: typeof cwiAuth;
+  presence: typeof presence;
 }>;
 
 /**
@@ -48,4 +50,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: Record<string, never>;
+export declare const components: {
+  presence: import("@convex-dev/presence/_generated/component.js").ComponentApi<"presence">;
+};
