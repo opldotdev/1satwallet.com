@@ -22,6 +22,6 @@ const arrayBuffer = source.buffer.slice(
 // is the order FontLoader expects for both q and b outline commands.
 const result = new TTFLoader().parse(arrayBuffer);
 
-fs.writeFileSync(outputPath, JSON.stringify(result));
+fs.writeFileSync(outputPath, `${JSON.stringify(result, null, "\t")}\n`);
 console.log(`Converted ${inputPath} to ${outputPath}`);
 console.log(`Total glyphs: ${Object.keys(result.glyphs).length}`);
