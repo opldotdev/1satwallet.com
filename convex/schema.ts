@@ -65,11 +65,15 @@ export default defineSchema({
 		expiresAt: v.number(),
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		terminalAt: v.optional(v.number()),
+		purgeAt: v.optional(v.number()),
 	})
 		.index("by_requestId", ["requestId"])
 		.index("by_to_status", ["toIdentity", "status"])
 		.index("by_from_status", ["fromIdentity", "status"])
-		.index("by_expiresAt", ["expiresAt"]),
+		.index("by_status_expiresAt", ["status", "expiresAt"])
+		.index("by_expiresAt", ["expiresAt"])
+		.index("by_purgeAt", ["purgeAt"]),
 
 	p2pSessions: defineTable({
 		sessionId: v.string(),
@@ -90,11 +94,15 @@ export default defineSchema({
 		expiresAt: v.number(),
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		terminalAt: v.optional(v.number()),
+		purgeAt: v.optional(v.number()),
 	})
 		.index("by_sessionId", ["sessionId"])
 		.index("by_initiator", ["initiatorIdentity"])
 		.index("by_participant", ["participantIdentity"])
-		.index("by_expiresAt", ["expiresAt"]),
+		.index("by_status_expiresAt", ["status", "expiresAt"])
+		.index("by_expiresAt", ["expiresAt"])
+		.index("by_purgeAt", ["purgeAt"]),
 
 	// CWI redirect fallback auth requests (OAuth-style)
 	cwiAuthRequests: defineTable({
