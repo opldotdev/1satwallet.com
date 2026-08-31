@@ -1,32 +1,50 @@
 # Deployment contract
 
-This is the operator contract for deploying 1Sat Website. It records only
-configuration observed locally or through read-only Vercel and Git commands on
-2026-08-30. It does not certify the current preview or production runtime.
+<!-- markdownlint-disable MD013 -->
+
+This is the operator contract for deploying 1Sat Wallet. It defines the target
+repository and Vercel topology as of 2026-08-31. It does not certify that the
+domain cutover or current preview/production runtime has passed release
+acceptance.
 
 ## Project and domains
 
-| Item | Observed contract |
+| Item | Authoritative contract |
 | --- | --- |
-| Git remote | `git@github.com:opldotdev/1sat-website.git` |
-| Release branch | `omega` exists on the GitHub remote; CI verifies pushes and pull requests targeting it |
-| Vercel owner/project | `OPL` (`opldotdev`) / `1sat-website` |
-| Apex domain | `1satwallet.com` aliases the Vercel custom environment `omega` |
-| `www` domain | `www.1satwallet.com` currently aliases the Vercel `production` target built from `master` |
+| Git remote | `git@github.com:opldotdev/1satwallet.com.git` |
+| Release branch | `main`; pull requests merge to `main` and CI verifies the merge candidate and resulting push |
+| Vercel owner/project | `OPL` (`opldotdev`) / a dedicated `1satwallet.com` project connected only to this repository's `main` branch |
+| Apex domain | `1satwallet.com` serves the approved Production deployment from `main` |
+| `www` domain | Redirects to the apex hostname or serves the same approved Production deployment |
 
-The apex/`www` split is a release blocker: both hostnames must resolve to the
-same approved `omega` commit, or one must explicitly redirect to the canonical
-hostname. Do not change aliases or DNS as part of ordinary application work.
+`opldotdev/1sat-website:omega` and its `1sat-website` Vercel project are the
+historical source and deployment. They are not valid destinations for new
+wallet pull requests. Until the dedicated project passes acceptance and both
+domains are cut over, the last known-good historical deployment is the traffic
+rollback anchor. Record its immutable deployment URL and ID in the release
+issue; do not rely on an old branch name or a mutable alias.
+
+Both canonical hostnames must resolve to the same approved `main` commit, or
+`www` must explicitly redirect to the apex. Domain, alias, and DNS changes are
+release-owner operations, not ordinary application changes.
 
 Vercel's linked-project metadata lives in ignored `.vercel/project.json`. Never
 commit that directory. Inspecting the link is read-only:
 
 ```bash
 vercel whoami
-vercel project inspect 1sat-website
+vercel project inspect 1satwallet.com
 vercel inspect https://1satwallet.com
 vercel inspect https://www.1satwallet.com
 ```
+
+The dedicated Vercel project's Production deployment must be publicly
+accessible without Vercel Authentication or a protection-bypass cookie.
+Preview protection is a separate, explicit choice: document whether previews
+are public, protected by Vercel Authentication, or protected by another named
+policy. Never infer either policy from the historical project or the team
+default. Release acceptance must include one unauthenticated request to the
+Production domain and one request proving the documented Preview behavior.
 
 ## Environment ownership
 
@@ -39,20 +57,23 @@ Values without that prefix remain server-only.
 | `NEXT_PUBLIC_ONESAT_TEST_STACK_URL` | Public, **unverified** | Testnet routing is unresolved under OPL-3992; do not treat the example host as release-certified |
 | `NEXT_PUBLIC_WALLET_STORAGE_URL` | Public | Wallet storage; `https://wallet.1sat.app` in production |
 | `NEXT_PUBLIC_APP_URL` | Public | Web app; `https://1satwallet.com` for the canonical release and `http://localhost:8255` locally |
-| `NEXT_PUBLIC_CONVEX_URL` | Public endpoint | CWI redirect store; separate Preview and Production/`omega` deployments |
-| `CWI_REDIRECT_SECRET` | **Server secret** | CWI redirect encryption; unique long random values for Preview and Production/`omega` |
+| `NEXT_PUBLIC_CONVEX_URL` | Public endpoint | CWI redirect store; separate Preview and Production deployments |
+| `CWI_REDIRECT_SECRET` | **Server secret** | CWI redirect encryption; unique long random values for Preview and Production |
 
 `messagebox.1sat.app` is part of the wider 1Sat infrastructure, but this
 checkout does not currently read a message-box environment variable. Add one
 only when a shipped code path consumes it.
 
-The read-only Vercel inventory currently shows separate Preview and
-Production/`omega` Convex configuration. It also shows one
-`CWI_REDIRECT_SECRET` entry spanning Development, Preview, Production, and
-`omega`; that must be split before release. Several variables from removed
-features remain configured (`OPENAI_API_KEY`, Sigma variables, Blob, and legacy
-API/market endpoints). Confirm ownership and remove unused values separately;
-never copy them into `NEXT_PUBLIC_` variables.
+The historical Vercel inventory showed separate Preview and
+Production/`omega` Convex configuration, but one `CWI_REDIRECT_SECRET` entry
+spanned several targets. Do not copy that environment wholesale. Create the
+dedicated project's variables from the table above, have the owner re-enter or
+rotate server secrets, and give Preview and Production distinct values. Secret
+values cannot be recovered through a normal Vercel inventory and must never be
+printed into logs, issues, commits, or screenshots. Removed-feature variables
+(`OPENAI_API_KEY`, Sigma variables, Blob, and legacy API/market endpoints) are
+not part of the new project's contract unless a shipped code path and owner are
+documented.
 
 List names, targets, and age without downloading secret values:
 
@@ -127,17 +148,19 @@ preview or production smoke test.
 
 ## Promotion checklist
 
-1. Confirm the candidate commit is on `omega` and CI is green.
+1. Confirm the candidate commit is on `main` and CI is green.
 2. Confirm Preview uses its own Convex deployment and CWI redirect secret.
 3. Exercise create/import/unlock, external provider connection, hosted CWI
    iframe, and redirect approval/denial on the candidate preview.
 4. Review browser console/network output for CSP, CORS, cache, and mixed-content
    failures on mobile and desktop.
-5. Point both canonical hostnames at the same approved commit (or configure the
+5. Confirm Production is public and Preview behaves according to the explicit
+   protection policy.
+6. Point both canonical hostnames at the same approved commit (or configure the
    documented canonical redirect).
-6. Smoke health, wallet entry, hosted iframe, redirect exchange, and core asset
+7. Smoke health, wallet entry, hosted iframe, redirect exchange, and core asset
    routes on the actual production domains.
-7. If a money-safety or wallet-access regression appears, restore the previous
+8. If a money-safety or wallet-access regression appears, restore the previous
    known-good deployment alias first; preserve logs and request IDs for the
    incident record.
 
