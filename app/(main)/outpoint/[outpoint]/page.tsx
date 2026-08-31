@@ -239,9 +239,9 @@ const Outpoint = async ({
 							{history.map((h) => (
 								<li
 									key={h.outpoint}
-									className="flex items-center gap-3 border-b border-border/50 py-1.5"
+									className="flex min-w-0 items-center gap-3 border-b border-border/50 py-1.5"
 								>
-									<span className="break-all">{h.outpoint}</span>
+									<span className="min-w-0 flex-1 break-all">{h.outpoint}</span>
 									<span className="text-muted-foreground text-xs ml-auto shrink-0">
 										{h.spend ? "spent" : "unspent"}
 									</span>
