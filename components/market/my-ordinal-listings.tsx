@@ -123,7 +123,8 @@ export function MyOrdinalListings() {
 					onClick={() => void refresh()}
 				>
 					<RefreshCw
-						className={`mr-2 size-4 ${listingsQuery.isFetching ? "animate-spin" : ""}`}
+						className={`size-4 ${listingsQuery.isFetching ? "animate-spin" : ""}`}
+						data-icon="inline-start"
 					/>
 					Refresh
 				</Button>
@@ -181,7 +182,7 @@ export function MyOrdinalListings() {
 											size="sm"
 											onClick={() => setCancelOutpoint(output.outpoint)}
 										>
-											<X className="mr-2 size-4" />
+											<X className="size-4" data-icon="inline-start" />
 											Cancel listing
 										</Button>
 									</div>
