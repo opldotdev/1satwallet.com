@@ -144,12 +144,13 @@ export default function GlitchCanvas() {
     scene.add(mesh);
 
     // Animation Loop
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
     let animationFrameId: number;
 
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
-      const elapsedTime = clock.getElapsedTime();
+      timer.update();
+      const elapsedTime = timer.getElapsed();
       
       material.uniforms.uTime.value = elapsedTime;
       
@@ -184,6 +185,7 @@ export default function GlitchCanvas() {
       window.removeEventListener("resize", handleResize);
       window.removeEventListener("mousemove", handleMouseMove);
       cancelAnimationFrame(animationFrameId);
+      timer.dispose();
       renderer.dispose();
       geometry.dispose();
       material.dispose();
