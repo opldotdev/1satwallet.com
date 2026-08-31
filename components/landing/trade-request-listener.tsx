@@ -54,6 +54,7 @@ function ConnectedTradeRequestListener({
 	const terminalSession = useRef<string | null>(null);
 	const resolvingIncoming = useRef(false);
 
+	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the returned cleanup clears timer and cancelled blocks late async rescheduling.
 	useEffect(() => {
 		let cancelled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;

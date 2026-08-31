@@ -177,4 +177,23 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /BRC-100/);
 		assert.doesNotMatch(presence, /(?<!motion-safe:)animate-pulse/);
 	});
+
+	it("owns recurring timers and binds authentication to the wallet that signed it", () => {
+		const presence = read("components/landing/shared-presence.tsx");
+		const listener = read("components/landing/trade-request-listener.tsx");
+
+		assert.match(
+			presence,
+			/cancelled = true;\s*if \(refreshTimer\) clearTimeout\(refreshTimer\)/,
+		);
+		assert.match(
+			listener,
+			/cancelled = true;\s*if \(timer\) clearTimeout\(timer\)/,
+		);
+		assert.match(presence, /function AuthenticatedSharedPresence/);
+		assert.match(presence, /setAuthenticatedPresence\(\{ userId, wallet \}\)/);
+		assert.match(presence, /authenticatedPresence\?\.wallet === wallet/);
+		assert.match(presence, /identityKey && wallet \? \(/);
+		assert.doesNotMatch(presence, /setAuthenticatedUserId/);
+	});
 });
