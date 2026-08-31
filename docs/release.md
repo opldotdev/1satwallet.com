@@ -1,6 +1,8 @@
-# Omega release gate
+# Main release gate
 
-Current decision on 2026-08-30: **HOLD**. Local contracts and builds are useful
+<!-- markdownlint-disable MD013 -->
+
+Current decision on 2026-08-31: **HOLD**. Local contracts and builds are useful
 evidence, but they do not replace the open provider, hosted-wallet, mobile,
 quality, domain, secret-isolation, preview, and production checks below.
 
@@ -15,7 +17,7 @@ Do not merge or promote while any of these is true:
 - an automated check is red or did not run against the candidate commit;
 - a money flow can report a broadcast transaction as retry-safe failure;
 - a provider mode presented as supported lacks real-browser evidence;
-- Preview and Production/`omega` share CWI redirect secrets;
+- Preview and Production share CWI redirect secrets;
 - `1satwallet.com` and `www.1satwallet.com` target different releases;
 - a storage or Convex schema change lacks forward/backward compatibility and a
   restore rehearsal;
@@ -27,22 +29,24 @@ The release owner may ship a deliberately smaller surface only when the
 unfinished capability is actually hidden or rejected, the decision is named in
 the release notes, and no money/security invariant is waived.
 
-## Review path: modernization to omega
+## Review path: pull request to main
 
-The only planned review path is `codex/1sat-wallet-modernization` → `omega`.
-The workflow in `.github/workflows/verify.yml` runs for pull requests targeting
-`omega` and again after a push to `omega`. Do not push directly to `omega` or
-rewrite its history.
+The authoritative review path is a focused `codex/*` branch in
+`opldotdev/1satwallet.com` to `main`. The workflow in
+`.github/workflows/verify.yml` must run for pull requests targeting `main` and
+again after a push to `main`. Do not push directly to `main` or rewrite its
+history. `opldotdev/1sat-website:omega` is historical evidence only; never open
+a new wallet PR against it.
 
 Before opening the PR, the release owner records the candidate SHA and proves
-the branch contains the current remote `omega`:
+the branch contains the current remote `main`:
 
 ```bash
 git fetch origin
-git switch codex/1sat-wallet-modernization
+git switch <candidate-codex-branch>
 git status --short
-git merge-base --is-ancestor origin/omega HEAD
-git diff --stat origin/omega...HEAD
+git merge-base --is-ancestor origin/main HEAD
+git diff --stat origin/main...HEAD
 git rev-parse HEAD
 shasum -a 256 bun.lock
 ```
@@ -52,8 +56,8 @@ merge-base check means the branch must be updated under the team's normal Git
 policy before review. This runbook does not prescribe a force push, reset, or
 history rewrite.
 
-Open a GitHub PR with base `omega` and head
-`codex/1sat-wallet-modernization`. Required review evidence:
+Open a GitHub PR with base `main` and the focused candidate branch as head.
+Required review evidence:
 
 - candidate SHA and `bun.lock` hash;
 - green GitHub Verify run URL;
@@ -107,7 +111,7 @@ Then run in another terminal:
 ```bash
 bunx @shadscan/cli@0.17.0 --check-ui http://localhost:8255 \
   --route / --route /wallet --route /download
-bunx react-doctor@0.9.12 . --scope changed --base origin/omega \
+bunx react-doctor@0.9.12 . --scope changed --base origin/main \
   --include-untracked --no-score --blocking none
 ```
 
@@ -204,7 +208,8 @@ these rows can be checked.
 
 ## Promotion and production smoke
 
-Before merge, record the current deployments without changing them:
+Before merge, record the current dedicated-project deployment and historical
+rollback deployment without changing them:
 
 ```bash
 vercel inspect https://1satwallet.com
@@ -213,10 +218,11 @@ vercel env ls --no-color
 ```
 
 OPL-4023 must first align apex and `www` on the approved release or its
-documented canonical redirect. OPL-4022 must split Preview and
-Production/`omega` CWI secrets.
+documented canonical redirect. OPL-4022 must split Preview and Production CWI
+secrets. Production must be public without a protection-bypass cookie; Preview
+must match the protection policy recorded in the release issue.
 
-After approval, merge the reviewed PR into `omega` and let the configured
+After approval, merge the reviewed PR into `main` and let the configured
 Vercel integration build that exact commit. Record the deployment ID and prove
 it matches the merged SHA before changing or accepting aliases.
 
@@ -240,7 +246,7 @@ browser/viewport, timestamp, and result.
 ## Rollback runbook
 
 Rollback is two operations: restore traffic first, then make Git history match.
-Never force-push or reset `omega`.
+Never force-push or reset `main`.
 
 ### Before promotion
 
@@ -256,17 +262,23 @@ Record, in the release issue:
 
 ### Restore traffic
 
-Use the recorded previous deployment, never an ID copied from an old runbook:
+After the dedicated project has its own known-good production history, use its
+recorded previous deployment, never an ID copied from an old runbook:
 
 ```bash
 vercel rollback <previous-known-good-deployment-id-or-url>
-vercel rollback status 1sat-website
+vercel rollback status 1satwallet.com
 vercel inspect https://1satwallet.com
 vercel inspect https://www.1satwallet.com
 ```
 
-If the rollback operation does not restore both documented aliases, the
-authorized operator explicitly restores each one and immediately reinspects it:
+During the initial repository/project cutover, the previous known-good may
+still belong to the historical `1sat-website` Vercel project. A rollback cannot
+cross projects by running `vercel rollback` in the new project. In that case,
+the authorized operator restores both aliases directly to the recorded
+immutable historical deployment URL and immediately reinspects them. The same
+alias procedure applies if a normal rollback does not restore both documented
+hostnames:
 
 ```bash
 vercel alias set <previous-known-good-deployment-url> 1satwallet.com
@@ -280,8 +292,8 @@ failed deployment, logs, correlation IDs, and request timestamps for diagnosis.
 ### Make Git durable
 
 After traffic is safe, create a new `codex/` revert branch from current
-`origin/omega`, revert the released change without rewriting history, rerun the
-full gate, and open another reviewed PR to `omega`. Use the correct Git revert
+`origin/main`, revert the released change without rewriting history, rerun the
+full gate, and open another reviewed PR to `main`. Use the correct Git revert
 form for the repository's actual merge strategy; do not guess merge parents in
 an incident.
 
@@ -363,10 +375,10 @@ Copy this section into the release record and replace every bracket. Delete
 unused headings; never leave placeholders in published notes.
 
 ```markdown
-# 1Sat Website — [release name]
+# 1Sat Wallet — [release name]
 
 - Released: [UTC timestamp]
-- Git: [omega SHA and PR]
+- Git: [main SHA and PR]
 - Vercel: [environment and deployment ID]
 - Canonical domain: [domain and redirect behavior]
 - Rollback anchor: [previous Git SHA and deployment ID]
