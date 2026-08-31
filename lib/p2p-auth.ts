@@ -9,6 +9,7 @@ export const P2P_COMMAND_TTL_MS = 2 * 60 * 1000;
 
 export type P2PAction =
 	| "inbox.open"
+	| "presence.announce"
 	| "request.create"
 	| "request.accept"
 	| "request.decline"

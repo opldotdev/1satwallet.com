@@ -50,6 +50,32 @@ export default defineSchema({
 		.index("by_identity_nonce", ["identityKey", "nonce"])
 		.index("by_expiresAt", ["expiresAt"]),
 
+	p2pPresenceAnnouncements: defineTable({
+		roomId: v.literal("landing"),
+		userId: v.string(),
+		identityKey: v.string(),
+		chain: v.union(v.literal("main"), v.literal("test")),
+		sessionId: v.string(),
+		profile: v.optional(
+			v.object({
+				displayName: v.optional(v.string()),
+				avatarUrl: v.optional(v.string()),
+				source: v.union(
+					v.literal("bap"),
+					v.literal("certificate"),
+					v.literal("profile"),
+				),
+				sourceReference: v.optional(v.string()),
+			}),
+		),
+		profileVerification: v.optional(v.literal("unverified")),
+		issuedAt: v.number(),
+		expiresAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_userId", ["userId"])
+		.index("by_expiresAt", ["expiresAt"]),
+
 	p2pRequests: defineTable({
 		requestId: v.string(),
 		fromIdentity: v.string(),
