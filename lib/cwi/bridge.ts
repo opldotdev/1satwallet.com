@@ -1,3 +1,4 @@
+import type { PromptRequest } from "@1sat/permission-module";
 import type {
 	CounterpartyPermissions,
 	GroupedPermissions,
@@ -5,6 +6,7 @@ import type {
 import {
 	CWI_CHANNEL_NAME,
 	CWI_MAX_PENDING_PER_SESSION,
+	type CWIChannelAssetPermissionRequestMessage,
 	type CWIChannelBaseMessage,
 	type CWIChannelCounterpartyPermissionRequestMessage,
 	type CWIChannelGroupedPermissionRequestMessage,
@@ -120,6 +122,23 @@ const isCounterpartyPermissionRequest = (
 	typeof data.requestID === "string" &&
 	typeof data.counterparty === "string";
 
+const isAssetPermissionRequest = (
+	data: unknown,
+): data is CWIChannelAssetPermissionRequestMessage =>
+	isObjectRecord(data) &&
+	isSessionEnvelope(data) &&
+	data.type === "cwi-asset-permission-request" &&
+	typeof data.requestID === "string" &&
+	(data.chain === "main" || data.chain === "test") &&
+	isObjectRecord(data.request) &&
+	data.request.originator === data.originator &&
+	(data.request.kind === "transaction" ||
+		data.request.kind === "signature" ||
+		data.request.kind === "protocol" ||
+		data.request.kind === "basketAccess") &&
+	isObjectRecord(data.request.payload) &&
+	typeof data.request.summary === "string";
+
 export interface BridgePermissionRequest {
 	requestID: string;
 	permissionType: string;
@@ -137,6 +156,11 @@ export interface BridgeCounterpartyPermissionRequest {
 	counterparty: string;
 	permissions: CounterpartyPermissions;
 }
+export interface BridgeAssetPermissionRequest {
+	requestID: string;
+	chain: "main" | "test";
+	request: PromptRequest;
+}
 export interface BridgeTransportState {
 	transport: "embed";
 	fallbackRecommended: boolean;
@@ -151,6 +175,7 @@ export interface CWIBridgeCallbacks {
 	onCounterpartyPermissionRequest?: (
 		request: BridgeCounterpartyPermissionRequest,
 	) => void;
+	onAssetPermissionRequest?: (request: BridgeAssetPermissionRequest) => void;
 	onTransportStateChange?: (state: BridgeTransportState) => void;
 	onStorageAccessRequired?: () => void;
 	onSessionReset?: () => void;
@@ -281,6 +306,12 @@ export class CWIBridge {
 	}
 	denyCounterpartyPermission(requestID: string): boolean {
 		return this.postOwned("cwi-counterparty-permission-deny", { requestID });
+	}
+	respondToAssetPermission(requestID: string, approved: boolean): boolean {
+		return this.postOwned("cwi-asset-permission-response", {
+			requestID,
+			approved,
+		});
 	}
 
 	private attachChannel(channel: BroadcastChannel): void {
@@ -471,6 +502,15 @@ export class CWIBridge {
 						originator: data.originator,
 						counterparty: data.counterparty,
 						permissions: data.permissions,
+					});
+				}
+				break;
+			case "cwi-asset-permission-request":
+				if (isAssetPermissionRequest(data)) {
+					this.callbacks.onAssetPermissionRequest?.({
+						requestID: data.requestID,
+						chain: data.chain,
+						request: data.request,
 					});
 				}
 				break;

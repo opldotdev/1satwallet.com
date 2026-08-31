@@ -6,6 +6,7 @@ import type {
 	PermissionEventHandler,
 } from "@bsv/wallet-toolbox-client";
 import { useEffect, useRef } from "react";
+import { bindAssetPermissionPromptHandler } from "@/lib/cwi/asset-permission-prompt";
 import { CWIRelay } from "@/lib/cwi/relay";
 import { useWallet } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
@@ -18,7 +19,7 @@ import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
  * Permission callbacks are bound/unbound as permissionsManager changes.
  */
 export function useCWIRelay(): void {
-	const { permissionsManager } = useWalletToolbox();
+	const { chain, permissionsManager } = useWalletToolbox();
 	const { hasWallet } = useWallet();
 	const relayRef = useRef<CWIRelay | null>(null);
 
@@ -55,6 +56,14 @@ export function useCWIRelay(): void {
 			}
 		};
 	}, []);
+
+	useEffect(() => {
+		const relay = relayRef.current;
+		if (!relay) return;
+		return bindAssetPermissionPromptHandler((request) =>
+			relay.requestAssetPermission(request, chain),
+		);
+	}, [chain]);
 
 	// Bind/unbind permission callbacks when permissionsManager changes
 	useEffect(() => {

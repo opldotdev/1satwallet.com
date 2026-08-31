@@ -1,12 +1,13 @@
 "use client";
 
+import { OneSatPermissionPrompt } from "@1sat/permission-module-ui";
 import type {
 	CounterpartyPermissions,
 	GroupedPermissions,
 	PermissionRequest,
 } from "@bsv/wallet-toolbox-client";
 import { CheckCircle, ShieldAlert, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,7 +17,9 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { canApproveAssetPermission } from "@/lib/cwi/asset-permission-prompt";
 import type {
+	BridgeAssetPermissionRequest,
 	BridgeCounterpartyPermissionRequest,
 	BridgeGroupedPermissionRequest,
 	BridgePermissionRequest,
@@ -36,6 +39,57 @@ import {
 } from "@/lib/cwi/consent";
 import type { CWIIndividualGrant } from "@/lib/cwi/types";
 import { useCWIBridge } from "@/lib/hooks/use-cwi-bridge";
+import { createStackServices } from "@/lib/stack";
+
+function AssetPermissionCard({
+	permission,
+	onResponse,
+}: {
+	permission: BridgeAssetPermissionRequest;
+	onResponse: (approved: boolean) => void;
+}) {
+	const [services] = useState(() => createStackServices(permission.chain));
+	const [approvalError, setApprovalError] = useState<string | null>(null);
+	const reviewingRef = useRef(false);
+
+	useEffect(() => () => services.close(), [services]);
+
+	const approve = async () => {
+		if (reviewingRef.current) return;
+		reviewingRef.current = true;
+		setApprovalError(null);
+		try {
+			const review = await canApproveAssetPermission(
+				permission.request,
+				services,
+			);
+			if (!review.allowed) {
+				setApprovalError(review.reason ?? "Asset verification failed.");
+				return;
+			}
+			onResponse(true);
+		} finally {
+			reviewingRef.current = false;
+		}
+	};
+
+	return (
+		<div className="min-h-screen overflow-y-auto bg-background">
+			<OneSatPermissionPrompt
+				request={permission.request}
+				onApprove={() => void approve()}
+				onReject={() => onResponse(false)}
+				theme="auto"
+				services={services}
+			/>
+			{approvalError && (
+				<p className="mx-auto max-w-md px-4 pb-4 text-center text-sm text-destructive">
+					Approval blocked: {approvalError}
+				</p>
+			)}
+		</div>
+	);
+}
 
 function PermissionDetails({
 	details: request,
@@ -559,6 +613,7 @@ export default function CWIPage() {
 		activePermission,
 		activeGroupedPermission,
 		activeCounterpartyPermission,
+		activeAssetPermission,
 		queueLength,
 		transport,
 		fallbackRecommended,
@@ -570,6 +625,7 @@ export default function CWIPage() {
 		denyGroupedPermission,
 		grantCounterpartyPermission,
 		denyCounterpartyPermission,
+		respondToAssetPermission,
 		grantStorageAccess,
 	} = useCWIBridge();
 
@@ -577,6 +633,7 @@ export default function CWIPage() {
 		!!activePermission ||
 		!!activeGroupedPermission ||
 		!!activeCounterpartyPermission ||
+		!!activeAssetPermission ||
 		storageAccessRequired;
 
 	// Notify parent frame about CWI state so it can resize the iframe.
@@ -615,6 +672,18 @@ export default function CWIPage() {
 					</CardContent>
 				</Card>
 			</div>
+		);
+	}
+
+	if (activeAssetPermission) {
+		return (
+			<AssetPermissionCard
+				key={activeAssetPermission.requestID}
+				permission={activeAssetPermission}
+				onResponse={(approved) =>
+					respondToAssetPermission(activeAssetPermission.requestID, approved)
+				}
+			/>
 		);
 	}
 
