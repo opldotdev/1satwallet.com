@@ -134,7 +134,7 @@ export function OrdinalsGrid() {
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<Button variant="outline" size="sm" onClick={() => void refresh()}>
-						<RefreshCw className="mr-2 size-4" />
+						<RefreshCw className="size-4" data-icon="inline-start" />
 						Refresh
 					</Button>
 					<Button
@@ -143,7 +143,7 @@ export function OrdinalsGrid() {
 						disabled={!onlyUnlisted}
 						onClick={() => setDialogKind("send")}
 					>
-						<Send className="mr-2 size-4" />
+						<Send className="size-4" data-icon="inline-start" />
 						Send
 					</Button>
 					<Button
@@ -152,7 +152,7 @@ export function OrdinalsGrid() {
 						disabled={!oneUnlisted}
 						onClick={() => setDialogKind("sell")}
 					>
-						<Tag className="mr-2 size-4" />
+						<Tag className="size-4" data-icon="inline-start" />
 						List
 					</Button>
 					<Button
@@ -161,7 +161,7 @@ export function OrdinalsGrid() {
 						disabled={!oneListed}
 						onClick={() => setDialogKind("cancel")}
 					>
-						<X className="mr-2 size-4" />
+						<X className="size-4" data-icon="inline-start" />
 						Cancel listing
 					</Button>
 					<Button
@@ -170,7 +170,7 @@ export function OrdinalsGrid() {
 						disabled={!onlyUnlisted}
 						onClick={() => setDialogKind("burn")}
 					>
-						<Flame className="mr-2 size-4" />
+						<Flame className="size-4" data-icon="inline-start" />
 						Burn
 					</Button>
 				</div>

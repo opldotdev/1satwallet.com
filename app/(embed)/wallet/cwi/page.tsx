@@ -270,7 +270,7 @@ function PermissionCard({
 						className="flex-1"
 						onClick={() => onDeny(permission.requestID)}
 					>
-						<X className="h-4 w-4 mr-1" data-icon="inline-start" />
+						<X className="h-4 w-4" data-icon="inline-start" />
 						Deny
 					</Button>
 					{details?.type === "spending" ? (
@@ -307,7 +307,7 @@ function PermissionCard({
 								})
 							}
 						>
-							<CheckCircle className="h-4 w-4 mr-1" data-icon="inline-start" />
+							<CheckCircle className="h-4 w-4" data-icon="inline-start" />
 							Allow
 						</Button>
 					) : null}
@@ -445,7 +445,7 @@ function GroupedPermissionCard({
 						className="flex-1"
 						onClick={() => onDeny(permission.requestID)}
 					>
-						<X className="h-4 w-4 mr-1" data-icon="inline-start" />
+						<X className="h-4 w-4" data-icon="inline-start" />
 						Deny
 					</Button>
 					<Button
@@ -460,7 +460,7 @@ function GroupedPermissionCard({
 							)
 						}
 					>
-						<CheckCircle className="h-4 w-4 mr-1" data-icon="inline-start" />
+						<CheckCircle className="h-4 w-4" data-icon="inline-start" />
 						Allow Selected
 					</Button>
 				</div>
@@ -583,7 +583,7 @@ function CounterpartyPermissionCard({
 						className="flex-1"
 						onClick={() => onDeny(permission.requestID)}
 					>
-						<X className="h-4 w-4 mr-1" data-icon="inline-start" />
+						<X className="h-4 w-4" data-icon="inline-start" />
 						Deny
 					</Button>
 					<Button
@@ -598,7 +598,7 @@ function CounterpartyPermissionCard({
 							)
 						}
 					>
-						<CheckCircle className="h-4 w-4 mr-1" data-icon="inline-start" />
+						<CheckCircle className="h-4 w-4" data-icon="inline-start" />
 						Trust Selected
 					</Button>
 				</div>
@@ -666,7 +666,7 @@ export default function CWIPage() {
 					</CardHeader>
 					<CardContent>
 						<Button className="w-full" onClick={grantStorageAccess}>
-							<CheckCircle className="h-4 w-4 mr-1" data-icon="inline-start" />
+							<CheckCircle className="h-4 w-4" data-icon="inline-start" />
 							Allow Connection
 						</Button>
 					</CardContent>

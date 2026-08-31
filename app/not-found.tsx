@@ -61,7 +61,7 @@ export default function NotFound() {
 				>
 					<Link href="/">
 						<ArrowLeft
-							className="mr-2 w-4 h-4 group-hover:-translate-x-1 transition-transform"
+							className="w-4 h-4 group-hover:-translate-x-1 transition-transform"
 							data-icon="inline-start"
 						/>
 						Return to Base

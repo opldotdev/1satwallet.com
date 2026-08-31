@@ -143,7 +143,7 @@ export function WalletHomeActions() {
 			<SoundDialog>
 				<DialogTrigger asChild>
 					<Button disabled={!receiveAvailable} size="lg">
-						<ArrowDownToLine /> Receive
+						<ArrowDownToLine data-icon="inline-start" /> Receive
 					</Button>
 				</DialogTrigger>
 				<DialogContent>
@@ -200,7 +200,7 @@ export function WalletHomeActions() {
 			>
 				<DialogTrigger asChild>
 					<Button disabled={!oneSatContext} size="lg" variant="outline">
-						<Send /> Send
+						<Send data-icon="inline-start" /> Send
 					</Button>
 				</DialogTrigger>
 				<DialogContent>
@@ -262,7 +262,10 @@ export function WalletHomeActions() {
 									onClick={() => void handleSend()}
 								>
 									{sendState.status === "sending" && (
-										<Loader2 className="animate-spin" />
+										<Loader2
+											className="animate-spin"
+											data-icon="inline-start"
+										/>
 									)}
 									{sendState.status === "sending"
 										? "Sending…"

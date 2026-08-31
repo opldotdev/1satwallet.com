@@ -134,7 +134,7 @@ export default function ImportJsonPage() {
 
 								<div className="flex justify-end pt-2">
 									<Button onClick={handleContinue} className="w-full sm:w-auto">
-										<Check className="w-4 h-4 mr-2" data-icon="inline-start" />
+										<Check className="w-4 h-4" data-icon="inline-start" />
 										Continue
 									</Button>
 								</div>

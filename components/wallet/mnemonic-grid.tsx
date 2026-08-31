@@ -303,7 +303,8 @@ export function MnemonicGrid({
 						size="sm"
 						onClick={() => setProveInput(Array(12).fill(""))}
 					>
-						<RotateCcw className="mr-2 h-4 w-4" /> Start Over
+						<RotateCcw className="h-4 w-4" data-icon="inline-start" />
+						Start Over
 					</Button>
 				</>
 			) : (
@@ -342,9 +343,9 @@ export function MnemonicGrid({
 						onClick={copyMnemonic}
 					>
 						{copied ? (
-							<Check className="mr-2 h-4 w-4" />
+							<Check className="h-4 w-4" data-icon="inline-start" />
 						) : (
-							<Copy className="mr-2 h-4 w-4" />
+							<Copy className="h-4 w-4" data-icon="inline-start" />
 						)}
 						{copied ? "Copied" : "Copy to clipboard"}
 					</Button>
@@ -523,7 +524,8 @@ export function MnemonicGrid({
 							setProcessing(false);
 						}}
 					>
-						<RotateCcw className="mr-2 h-4 w-4" /> Start Over
+						<RotateCcw className="h-4 w-4" data-icon="inline-start" />
+						Start Over
 					</Button>
 				</div>
 			)}

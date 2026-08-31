@@ -217,7 +217,7 @@ function Bsv21BuyButton({ details, listing }: Bsv21BuyButtonProps) {
 									size="sm"
 									onClick={() => void refresh().then(() => setOpen(false))}
 								>
-									<RefreshCw className="size-4" data-icon="inline-start" />{" "}
+									<RefreshCw className="size-4" data-icon="inline-start" />
 									Refresh listing
 								</Button>
 							) : null}

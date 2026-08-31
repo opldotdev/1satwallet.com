@@ -74,7 +74,7 @@ export function SyncProgress({
 							disabled={!isInitialized}
 							className="h-6 px-2 text-xs"
 						>
-							<RefreshCw className="size-3 mr-1" />
+							<RefreshCw className="size-3" data-icon="inline-start" />
 							Sync
 						</Button>
 					)
@@ -142,7 +142,7 @@ export function SyncProgress({
 							onClick={syncWallet}
 							disabled={!isInitialized || syncStatus.isSyncing}
 						>
-							<RefreshCw className="size-4 mr-2" />
+							<RefreshCw className="size-4" data-icon="inline-start" />
 							Sync Now
 						</Button>
 					)}

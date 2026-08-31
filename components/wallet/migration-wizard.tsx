@@ -441,7 +441,7 @@ function IntroStep({
 					size="lg"
 				>
 					Migrate Now
-					<ArrowRight className="h-4 w-4" />
+					<ArrowRight className="h-4 w-4" data-icon="inline-end" />
 				</Button>
 				<Button
 					variant="outline"
@@ -468,7 +468,7 @@ function IntroStep({
 					onClick={onStartFresh}
 					className="w-full gap-2 text-muted-foreground hover:text-foreground"
 				>
-					<Download className="h-4 w-4" />
+					<Download className="h-4 w-4" data-icon="inline-start" />
 					Download Backup &amp; Start Fresh
 				</Button>
 				<p className="text-[11px] text-muted-foreground/50">
@@ -503,7 +503,7 @@ function ScanStep({
 					<p className="text-sm text-destructive">{error}</p>
 				</div>
 				<Button variant="outline" onClick={onRetry} className="gap-2">
-					<RefreshCw className="h-4 w-4" />
+					<RefreshCw className="h-4 w-4" data-icon="inline-start" />
 					Retry Scan
 				</Button>
 			</div>
@@ -626,7 +626,7 @@ function PreviewStep({
 					className="w-full h-12 text-base gap-2"
 					size="lg"
 				>
-					<Sparkles className="h-4 w-4" />
+					<Sparkles className="h-4 w-4" data-icon="inline-start" />
 					Begin Migration
 					{totalAssets > 0 &&
 						` (${totalAssets} asset${totalAssets !== 1 ? "s" : ""})`}
@@ -787,7 +787,7 @@ function CompleteStep({
 						className="h-12 px-8 text-base gap-2"
 						size="lg"
 					>
-						<RefreshCw className="h-4 w-4" />
+						<RefreshCw className="h-4 w-4" data-icon="inline-start" />
 						Rescan &amp; Retry Failed Sweeps
 					</Button>
 				)}
@@ -798,7 +798,7 @@ function CompleteStep({
 					size="lg"
 				>
 					Go to Wallet
-					<ArrowRight className="h-4 w-4" />
+					<ArrowRight className="h-4 w-4" data-icon="inline-end" />
 				</Button>
 			</div>
 		</div>
@@ -821,7 +821,7 @@ function ErrorStep({ error, onRetry }: { error: string; onRetry: () => void }) {
 			</div>
 
 			<Button variant="outline" onClick={onRetry} className="gap-2">
-				<RefreshCw className="h-4 w-4" />
+				<RefreshCw className="h-4 w-4" data-icon="inline-start" />
 				Retry
 			</Button>
 		</div>

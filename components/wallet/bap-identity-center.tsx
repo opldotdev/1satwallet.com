@@ -305,7 +305,10 @@ function ProfileEditor({
 					onClick={() => setReviewOpen(true)}
 				>
 					{operation === "profile" && (
-						<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+						<Loader2
+							className="h-4 w-4 animate-spin"
+							data-icon="inline-start"
+						/>
 					)}
 					Review profile transaction
 				</Button>
@@ -313,7 +316,8 @@ function ProfileEditor({
 					<AlertDialog>
 						<AlertDialogTrigger asChild>
 							<Button disabled={operation !== null} variant="outline">
-								<Fingerprint className="mr-2 h-4 w-4" /> Publish identity only
+								<Fingerprint className="h-4 w-4" data-icon="inline-start" />
+								Publish identity only
 							</Button>
 						</AlertDialogTrigger>
 						<AlertDialogContent>

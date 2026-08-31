@@ -129,7 +129,7 @@ export function OpnsBuyButton({ listing }: { listing: ListingData }) {
 	if (ownedQuery.isLoading) {
 		return (
 			<Button disabled>
-				<Loader2 className="mr-2 size-4 animate-spin" />
+				<Loader2 className="size-4 animate-spin" data-icon="inline-start" />
 				Checking ownership…
 			</Button>
 		);
@@ -215,7 +215,7 @@ export function OpnsBuyButton({ listing }: { listing: ListingData }) {
 									variant="outline"
 									onClick={() => void refresh().then(() => setOpen(false))}
 								>
-									<RefreshCw className="mr-2 size-4" />
+									<RefreshCw className="size-4" data-icon="inline-start" />
 									Refresh listing
 								</Button>
 							)}

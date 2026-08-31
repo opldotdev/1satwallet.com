@@ -113,9 +113,9 @@ function ConnectWalletHome() {
 							onClick={() => void connectExternalWallet()}
 						>
 							{isInitializing ? (
-								<Loader2 className="animate-spin" />
+								<Loader2 className="animate-spin" data-icon="inline-start" />
 							) : (
-								<Cable />
+								<Cable data-icon="inline-start" />
 							)}
 							{isInitializing ? "Connecting…" : "Connect BRC-100 wallet"}
 						</Button>
@@ -256,7 +256,7 @@ function ConnectedWalletHome() {
 							size="sm"
 							variant="ghost"
 						>
-							<LogOut /> Disconnect
+							<LogOut data-icon="inline-start" /> Disconnect
 						</Button>
 					)}
 				</div>
@@ -278,7 +278,7 @@ function ConnectedWalletHome() {
 							</p>
 						</div>
 						<Button onClick={refreshBalance} size="sm" variant="outline">
-							<RefreshCw /> Retry
+							<RefreshCw data-icon="inline-start" /> Retry
 						</Button>
 					</div>
 				)}

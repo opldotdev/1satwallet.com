@@ -89,7 +89,7 @@ const HistoryList = () => {
 					size="sm"
 					onClick={() => setRefreshRevision((revision) => revision + 1)}
 				>
-					<RefreshCw /> Retry
+					<RefreshCw data-icon="inline-start" /> Retry
 				</Button>
 			</div>
 		);
@@ -130,7 +130,7 @@ const HistoryList = () => {
 					size="sm"
 					onClick={() => setRefreshRevision((revision) => revision + 1)}
 				>
-					<RefreshCw /> Refresh
+					<RefreshCw data-icon="inline-start" /> Refresh
 				</Button>
 			</div>
 		);
@@ -148,7 +148,7 @@ const HistoryList = () => {
 					size="sm"
 					onClick={() => setRefreshRevision((revision) => revision + 1)}
 				>
-					<RefreshCw /> Refresh
+					<RefreshCw data-icon="inline-start" /> Refresh
 				</Button>
 			</div>
 			<ul className="flex flex-col divide-y divide-border/60">
