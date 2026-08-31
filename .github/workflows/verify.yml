@@ -2,9 +2,9 @@ name: Verify
 
 on:
   pull_request:
-    branches: [omega]
+    branches: [main]
   push:
-    branches: [omega]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
