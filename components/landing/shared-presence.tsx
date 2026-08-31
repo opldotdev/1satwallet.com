@@ -1,5 +1,6 @@
 "use client";
 
+import type { WalletInterface } from "@bsv/sdk";
 import usePresence from "@convex-dev/presence/react";
 import { useMutation, useQuery } from "convex/react";
 import { MousePointer2 } from "lucide-react";
@@ -263,25 +264,28 @@ function PresenceLayer({
 	);
 }
 
-export function SharedPresence() {
-	const [anonymousId, setAnonymousId] = useState<string | null>(null);
-	const [authenticatedUserId, setAuthenticatedUserId] = useState<string | null>(
-		null,
-	);
+function AuthenticatedSharedPresence({
+	anonymousId,
+	chain,
+	identityKey,
+	wallet,
+}: {
+	anonymousId: string;
+	chain: "main" | "test";
+	identityKey: string;
+	wallet: WalletInterface;
+}) {
+	const [authenticatedPresence, setAuthenticatedPresence] = useState<{
+		userId: string;
+		wallet: WalletInterface;
+	} | null>(null);
 	const announce = useMutation(api.presence.announce);
-	const { chain, connectionStatus, identityKey, wallet } = useWalletToolbox();
 
-	useEffect(() => setAnonymousId(crypto.randomUUID()), []);
-
+	// react-doctor-disable-next-line react-doctor/effect-needs-cleanup -- the returned cleanup clears refreshTimer and cancelled blocks late async rescheduling.
 	useEffect(() => {
-		if (!anonymousId || !identityKey || !wallet) {
-			setAuthenticatedUserId(null);
-			return;
-		}
 		let cancelled = false;
 		let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 		const userId = getPresenceUserId(identityKey, anonymousId, chain);
-		setAuthenticatedUserId(null);
 		const publish = async () => {
 			try {
 				const signed = await signP2PCommand(wallet, "presence.announce", {
@@ -290,9 +294,11 @@ export function SharedPresence() {
 					userId,
 				});
 				await announce(signed);
-				if (!cancelled) setAuthenticatedUserId(userId);
+				if (!cancelled) {
+					setAuthenticatedPresence({ userId, wallet });
+				}
 			} catch {
-				if (!cancelled) setAuthenticatedUserId(null);
+				if (!cancelled) setAuthenticatedPresence(null);
 			}
 			if (!cancelled) {
 				refreshTimer = setTimeout(publish, PRESENCE_ANNOUNCEMENT_REFRESH_MS);
@@ -305,6 +311,28 @@ export function SharedPresence() {
 		};
 	}, [announce, anonymousId, chain, identityKey, wallet]);
 
+	const expectedWalletUserId = getPresenceUserId(
+		identityKey,
+		anonymousId,
+		chain,
+	);
+	const userId =
+		authenticatedPresence?.wallet === wallet &&
+		authenticatedPresence.userId === expectedWalletUserId
+			? authenticatedPresence.userId
+			: `anon:${anonymousId}`;
+	return (
+		<PresenceLayer key={userId} userId={userId} identityKey={identityKey} />
+	);
+}
+
+export function SharedPresence() {
+	const [anonymousId, setAnonymousId] = useState<string | null>(null);
+	const { chain, connectionStatus, identityKey, wallet } = useWalletToolbox();
+
+	// react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- the UUID must be created after hydration so server and client markup remain identical.
+	useEffect(() => setAnonymousId(crypto.randomUUID()), []);
+
 	if (
 		!process.env.NEXT_PUBLIC_CONVEX_URL ||
 		!anonymousId ||
@@ -312,14 +340,17 @@ export function SharedPresence() {
 	) {
 		return null;
 	}
-	const expectedWalletUserId = identityKey
-		? getPresenceUserId(identityKey, anonymousId, chain)
-		: null;
-	const userId =
-		authenticatedUserId && authenticatedUserId === expectedWalletUserId
-			? authenticatedUserId
-			: `anon:${anonymousId}`;
-	return (
-		<PresenceLayer key={userId} userId={userId} identityKey={identityKey} />
+	return identityKey && wallet ? (
+		<AuthenticatedSharedPresence
+			anonymousId={anonymousId}
+			chain={chain}
+			identityKey={identityKey}
+			wallet={wallet}
+		/>
+	) : (
+		<PresenceLayer
+			identityKey={null}
+			userId={getPresenceUserId(null, anonymousId, chain)}
+		/>
 	);
 }
