@@ -1,14 +1,20 @@
 "use client";
 
-import { ArrowRight, Globe, Shield, Smartphone, Wallet } from "lucide-react";
+import { ArrowRight, CircleHelp, Wallet } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { useMediaQuery } from "usehooks-ts";
-import { EncryptionGrid } from "@/components/landing/encryption-grid";
 import { ThreeBoundary } from "@/components/landing/three-boundary";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	Popover,
+	PopoverContent,
+	PopoverDescription,
+	PopoverHeader,
+	PopoverTitle,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import { useSound } from "@/hooks/use-sound";
 import { useWallet } from "@/providers/wallet-provider";
 import { SharedPresence } from "./shared-presence";
@@ -43,47 +49,58 @@ export function LandingHero() {
 	);
 
 	return (
-		<div className="relative min-h-screen flex flex-col items-center justify-center overflow-hidden bg-background selection:bg-primary/20">
-			{/* Background Layers */}
-			<div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-background to-background z-0" />
-			<EncryptionGrid />
+		<div className="relative flex min-h-[100dvh] flex-col items-center justify-center overflow-hidden bg-background selection:bg-primary/20">
+			<div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
+			<div
+				aria-hidden="true"
+				className="absolute inset-0 z-0 opacity-25"
+				style={{
+					backgroundImage:
+						"radial-gradient(circle, color-mix(in oklab, var(--primary) 38%, transparent) 1px, transparent 1px)",
+					backgroundSize: "28px 28px",
+					maskImage:
+						"radial-gradient(ellipse at 50% 42%, black 0%, transparent 70%)",
+					WebkitMaskImage:
+						"radial-gradient(ellipse at 50% 42%, black 0%, transparent 70%)",
+				}}
+			/>
 
-			<div className="relative z-10 text-center w-full animate-in fade-in duration-1000">
-				{/* Hero Content */}
+			<div className="relative z-10 w-full px-6 text-center">
 				<div>
 					<ThreeBoundary>
 						{useStaticLogo ? <StaticLogo /> : <Logo3D />}
 					</ThreeBoundary>
 
-					<p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto leading-relaxed font-light">
+					<p className="mx-auto max-w-3xl text-xl font-light leading-relaxed text-muted-foreground md:text-2xl">
 						Satoshi's favorite asset wallet.
 						<br />
-						Use it here or connect a compatible wallet.{" "}
-						<span className="text-primary">One BRC-100 interface.</span>
+						Trade with peers.{" "}
+						<span className="text-primary">No servers. No middleman.</span>
 					</p>
 				</div>
 
-				{/* CTAs */}
-				<div className="max-w-6xl mx-auto p-4">
-					<div className="flex flex-col sm:flex-row items-center justify-center gap-6">
+				<div className="mx-auto mt-7 max-w-6xl">
+					<div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
 						<Button
-							className="shadow-[0_0_20px_-5px_var(--primary)] hover:shadow-[0_0_30px_-5px_var(--primary)] transition-all duration-300 scale-100 hover:scale-105 font-bold"
+							className="scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
 							asChild
 							onClick={() => play("click")}
 						>
 							{hasWallet ? (
 								<Link href="/wallet">
-									<Wallet className="mr-2 w-6 h-6" /> Browser Wallet
+									<Wallet className="size-6" data-icon="inline-start" /> Browser
+									Wallet
 								</Link>
 							) : (
 								<Link href="/wallet">
-									<Wallet className="mr-2 w-6 h-6" /> Choose Wallet
+									<Wallet className="size-6" data-icon="inline-start" /> Choose
+									Wallet
 								</Link>
 							)}
 						</Button>
 						<Button
 							variant="outline"
-							className="border-primary/20 hover:bg-primary/10 hover:border-primary/50 transition-all duration-300 bg-background/50 backdrop-blur-sm"
+							className="border-primary/20 bg-background/50 backdrop-blur-sm transition-colors duration-300 hover:border-primary/50 hover:bg-primary/10"
 							asChild
 							onClick={() => play("click")}
 						>
@@ -93,50 +110,37 @@ export function LandingHero() {
 							</Link>
 						</Button>
 					</div>
-
-					{/* Feature Grid */}
-					<div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-16 text-left">
-						<Card className="bg-card/50 backdrop-blur-sm border-primary/10 hover:border-primary/30 transition-colors group">
-							<CardHeader>
-								<div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-300">
-									<Globe className="w-6 h-6 text-primary" />
-								</div>
-								<CardTitle className="text-xl">Browser Wallet</CardTitle>
-							</CardHeader>
-							<CardContent className="text-muted-foreground">
-								Create a wallet in this browser. Keys stay on this device. You
-								can start now.
-							</CardContent>
-						</Card>
-
-						<Card className="bg-card/50 backdrop-blur-sm border-primary/10 hover:border-primary/30 transition-colors group">
-							<CardHeader>
-								<div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-300">
-									<Smartphone className="w-6 h-6 text-primary" />
-								</div>
-								<CardTitle className="text-xl">Apple App</CardTitle>
-							</CardHeader>
-							<CardContent className="text-muted-foreground">
-								Native app for iPhone, iPad, and Mac. Open it from TestFlight.
-								iCloud Keychain holds the seed.
-							</CardContent>
-						</Card>
-
-						<Card className="bg-card/50 backdrop-blur-sm border-primary/10 hover:border-primary/30 transition-colors group">
-							<CardHeader>
-								<div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-300">
-									<Shield className="w-6 h-6 text-primary" />
-								</div>
-								<CardTitle className="text-xl">BRC-100 Connections</CardTitle>
-							</CardHeader>
-							<CardContent className="text-muted-foreground">
-								Connect 1Sat Desktop, Yours, or another compatible wallet
-								without importing its keys into this site.
-							</CardContent>
-						</Card>
-					</div>
 				</div>
 			</div>
+
+			<Popover>
+				<PopoverTrigger asChild>
+					<Button
+						aria-label="How the P2P trading floor works"
+						className="fixed bottom-4 left-16 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
+						size="icon"
+						type="button"
+						variant="outline"
+					>
+						<CircleHelp aria-hidden="true" className="size-4" />
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent
+					align="start"
+					className="z-[70] w-72 border-primary/20 bg-background/95 backdrop-blur-md"
+					side="top"
+				>
+					<PopoverHeader>
+						<PopoverTitle>P2P trading floor</PopoverTitle>
+						<PopoverDescription className="leading-relaxed">
+							Styled pointers belong to other people here. Connect a BRC-100
+							wallet, then select a connected peer to request a trade. Guests
+							can browse but must connect before trading. Your own pointer stays
+							native.
+						</PopoverDescription>
+					</PopoverHeader>
+				</PopoverContent>
+			</Popover>
 
 			<div className="absolute inset-0 z-50 pointer-events-none">
 				<SharedPresence />
