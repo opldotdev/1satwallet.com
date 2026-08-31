@@ -131,7 +131,8 @@ export function OwnedOpns() {
 						onClick={() => void refresh()}
 					>
 						<RefreshCw
-							className={`mr-2 size-4 ${namesQuery.isFetching ? "animate-spin" : ""}`}
+							className={`size-4 ${namesQuery.isFetching ? "animate-spin" : ""}`}
+							data-icon="inline-start"
 						/>
 						Refresh
 					</Button>

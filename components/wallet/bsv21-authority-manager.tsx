@@ -317,7 +317,8 @@ export function Bsv21AuthorityManager({
 							disabled={!oneSatContext || !bsv21Available}
 							variant="outline"
 						>
-							<KeyRound className="mr-2 size-4" /> Manage authority
+							<KeyRound className="size-4" data-icon="inline-start" />
+							Manage authority
 						</Button>
 					</DialogTrigger>
 					<DialogContent showCloseButton={!busy}>
@@ -497,7 +498,12 @@ export function Bsv21AuthorityManager({
 										: "default"
 								}
 							>
-								{busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+								{busy ? (
+									<Loader2
+										className="size-4 animate-spin"
+										data-icon="inline-start"
+									/>
+								) : null}
 								{review
 									? "Authorize reviewed action"
 									: "Review authority action"}

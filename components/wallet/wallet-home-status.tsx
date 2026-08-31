@@ -116,7 +116,10 @@ export function WalletHomeStatus() {
 								size="sm"
 								variant="outline"
 							>
-								<RefreshCw className={hasActiveSync ? "animate-spin" : ""} />
+								<RefreshCw
+									className={hasActiveSync ? "animate-spin" : ""}
+									data-icon="inline-start"
+								/>
 								{syncStatus.error ? "Retry sync" : "Sync now"}
 							</Button>
 						) : (

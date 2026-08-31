@@ -92,7 +92,7 @@ export function DeleteWalletModal({
 					<SoundAlertDialogCancel>Cancel</SoundAlertDialogCancel>
 
 					<Button variant="secondary" onClick={handleExport}>
-						<Download className="mr-2 h-4 w-4" />
+						<Download className="h-4 w-4" data-icon="inline-start" />
 						{backupDownloaded ? "Backup Downloaded" : "Download Backup"}
 					</Button>
 

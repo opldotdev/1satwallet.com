@@ -106,7 +106,7 @@ export function LandingHero() {
 						>
 							<Link href="/download">
 								Apple App
-								<ArrowRight className="ml-2 w-6 h-6" data-icon="inline-end" />
+								<ArrowRight className="w-6 h-6" data-icon="inline-end" />
 							</Link>
 						</Button>
 					</div>

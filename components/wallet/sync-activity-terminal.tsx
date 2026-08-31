@@ -251,7 +251,7 @@ export function SyncActivityTerminal({
 						onClick={clearAll}
 						disabled={totalCount === 0}
 					>
-						<Trash2 className="mr-1 size-3.5" />
+						<Trash2 className="size-3.5" data-icon="inline-start" />
 						Clear
 					</Button>
 				</div>

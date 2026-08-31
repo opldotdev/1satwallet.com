@@ -197,11 +197,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 							>
 								{isInitializing ? (
 									<Loader2
-										className="h-4 w-4 mr-2 animate-spin"
+										className="h-4 w-4 animate-spin"
 										data-icon="inline-start"
 									/>
 								) : (
-									<Cable className="h-4 w-4 mr-2" data-icon="inline-start" />
+									<Cable className="h-4 w-4" data-icon="inline-start" />
 								)}
 								Connect BRC-100
 							</Button>
@@ -212,13 +212,13 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 							)}
 							<Button asChild className="w-full" variant="outline">
 								<Link href="/wallet/create" onClick={handleNav}>
-									<Plus className="h-4 w-4 mr-2" data-icon="inline-start" />{" "}
+									<Plus className="h-4 w-4" data-icon="inline-start" />
 									Create New
 								</Link>
 							</Button>
 							<Button asChild className="w-full" variant="ghost">
 								<Link href="/wallet/import" onClick={handleNav}>
-									<Import className="h-4 w-4 mr-2" data-icon="inline-start" />{" "}
+									<Import className="h-4 w-4" data-icon="inline-start" />
 									Import Existing
 								</Link>
 							</Button>

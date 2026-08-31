@@ -105,7 +105,7 @@ function AcquireCertificateDialog({
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
 				<Button>
-					<Plus /> Acquire certificate
+					<Plus data-icon="inline-start" /> Acquire certificate
 				</Button>
 			</DialogTrigger>
 			<DialogContent className="sm:max-w-2xl">
@@ -143,7 +143,9 @@ function AcquireCertificateDialog({
 					)}
 					<DialogFooter>
 						<Button disabled={!request.trim() || submitting} type="submit">
-							{submitting && <Loader2 className="animate-spin" />}
+							{submitting && (
+								<Loader2 className="animate-spin" data-icon="inline-start" />
+							)}
 							{submitting ? "Requesting…" : "Send to wallet"}
 						</Button>
 					</DialogFooter>
@@ -247,7 +249,7 @@ function CertificateProofDialog({
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogTrigger asChild>
 				<Button disabled={fields.length === 0} size="sm" variant="outline">
-					<FileKey2 /> Create proof
+					<FileKey2 data-icon="inline-start" /> Create proof
 				</Button>
 			</DialogTrigger>
 			<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -319,7 +321,8 @@ function CertificateProofDialog({
 									size="sm"
 									type="button"
 								>
-									<Copy /> {copied ? "Copied" : "Copy proof"}
+									<Copy data-icon="inline-start" />
+									{copied ? "Copied" : "Copy proof"}
 								</Button>
 							</div>
 							<Textarea
@@ -335,7 +338,9 @@ function CertificateProofDialog({
 							disabled={!verifier || selected.length === 0 || submitting}
 							type="submit"
 						>
-							{submitting && <Loader2 className="animate-spin" />}
+							{submitting && (
+								<Loader2 className="animate-spin" data-icon="inline-start" />
+							)}
 							{submitting ? "Creating…" : "Confirm disclosure"}
 						</Button>
 					</DialogFooter>
@@ -387,7 +392,7 @@ function RelinquishCertificateDialog({
 		<AlertDialog open={open} onOpenChange={setOpen}>
 			<AlertDialogTrigger asChild>
 				<Button size="sm" variant="destructive">
-					<Trash2 /> Relinquish
+					<Trash2 data-icon="inline-start" /> Relinquish
 				</Button>
 			</AlertDialogTrigger>
 			<AlertDialogContent>
@@ -531,7 +536,7 @@ export function CertificateCenter() {
 				</div>
 				<div className="flex gap-2">
 					<Button onClick={refresh} size="sm" variant="outline">
-						<RefreshCw /> Refresh
+						<RefreshCw data-icon="inline-start" /> Refresh
 					</Button>
 					<AcquireCertificateDialog
 						onAcquired={() => changed("Certificate acquired.")}

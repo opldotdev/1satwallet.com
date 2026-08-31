@@ -193,7 +193,8 @@ export function Bsv21Deploy() {
 				<Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
 					<DialogTrigger asChild>
 						<Button disabled={!oneSatContext || !bsv21Available}>
-							<Plus className="mr-2 size-4" /> Deploy token
+							<Plus className="size-4" data-icon="inline-start" />
+							Deploy token
 						</Button>
 					</DialogTrigger>
 					<DialogContent showCloseButton={!busy}>
@@ -317,7 +318,12 @@ export function Bsv21Deploy() {
 								disabled={busy}
 								onClick={() => void (review ? deploy() : prepareReview())}
 							>
-								{busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+								{busy ? (
+									<Loader2
+										className="size-4 animate-spin"
+										data-icon="inline-start"
+									/>
+								) : null}
 								{review
 									? "Authorize irreversible deployment"
 									: "Review deployment"}

@@ -84,7 +84,7 @@ export function WalletSettingsForm() {
 							onClick={() => void disconnectExternalWallet()}
 							variant="outline"
 						>
-							<LogOut className="h-4 w-4 mr-2" />
+							<LogOut className="h-4 w-4" data-icon="inline-start" />
 							Disconnect External Wallet
 						</Button>
 					</CardContent>
@@ -185,9 +185,12 @@ export function WalletSettingsForm() {
 							className="min-w-[100px]"
 						>
 							{isSyncing ? (
-								<Loader2 className="h-4 w-4 animate-spin mr-2" />
+								<Loader2
+									className="h-4 w-4 animate-spin"
+									data-icon="inline-start"
+								/>
 							) : (
-								<RefreshCw className="h-4 w-4 mr-2" />
+								<RefreshCw className="h-4 w-4" data-icon="inline-start" />
 							)}
 							{isSyncing ? "Syncing..." : "Sync Now"}
 						</Button>
@@ -210,7 +213,7 @@ export function WalletSettingsForm() {
 								onClick={() => play("click")}
 							>
 								<Link href="/wallet/permissions">
-									<Shield className="h-4 w-4 mr-2" />
+									<Shield className="h-4 w-4" data-icon="inline-start" />
 									Manage
 								</Link>
 							</Button>
@@ -249,7 +252,7 @@ export function WalletSettingsForm() {
 							onClick={() => play("click")}
 						>
 							<Link href="/wallet/diagnostics">
-								<Bug className="h-4 w-4 mr-2" />
+								<Bug className="h-4 w-4" data-icon="inline-start" />
 								Open
 							</Link>
 						</Button>
@@ -282,7 +285,7 @@ export function WalletSettingsForm() {
 								onClick={() => play("click")}
 							>
 								<Link href="/wallet/delete">
-									<LogOut className="h-4 w-4 mr-2" />
+									<LogOut className="h-4 w-4" data-icon="inline-start" />
 									Sign Out
 								</Link>
 							</Button>

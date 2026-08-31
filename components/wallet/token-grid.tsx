@@ -219,7 +219,7 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 			>
 				<DialogTrigger asChild>
 					<Button size="sm" variant="outline" disabled={!bsv21Available}>
-						<Send className="mr-2 size-4" /> Send
+						<Send className="size-4" data-icon="inline-start" /> Send
 					</Button>
 				</DialogTrigger>
 				<DialogContent showCloseButton={!busy}>
@@ -308,7 +308,12 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 								void (reviewAmount ? authorize() : prepareReview())
 							}
 						>
-							{busy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+							{busy ? (
+								<Loader2
+									className="size-4 animate-spin"
+									data-icon="inline-start"
+								/>
+							) : null}
 							{reviewAmount ? "Authorize transfer" : "Review transfer"}
 						</Button>
 					</DialogFooter>
