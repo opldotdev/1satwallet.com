@@ -358,7 +358,7 @@ const Artifact: React.FC<ArtifactProps> = ({
 			{showZoom && (
 				<button
 					type="button"
-					className="z-50 flex items-center justify-center fixed top-0 left-0 w-screen h-screen bg-background/80 overflow-hidden backdrop-blur-sm border-none p-0 cursor-default"
+					className="z-50 flex items-center justify-center fixed inset-0 bg-background/80 overflow-hidden backdrop-blur-sm border-none p-0 cursor-default"
 					onClick={() => setShowZoom(false)}
 				>
 					<div className="cursor-pointer absolute top-0 right-0 mr-4 mt-4 text-4xl z-20 p-2 text-foreground">
