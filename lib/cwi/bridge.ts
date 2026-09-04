@@ -52,6 +52,27 @@ const LEADER_LEASE_MS = 10_000;
 
 type HandshakeState = "idle" | "probing" | "connected" | "fallback-required";
 
+export const getCWIClient = (): {
+	window: WindowProxy;
+	identity: ReturnType<typeof parseBrowserOrigin>;
+} | null => {
+	if (typeof window === "undefined") return null;
+	const embedded = window.parent !== window;
+	const clientWindow = embedded ? window.parent : window.opener;
+	if (!clientWindow) return null;
+	const declaredOrigin =
+		typeof document === "undefined"
+			? null
+			: embedded
+				? document.referrer
+				: new URLSearchParams(window.location?.search ?? "").get("origin") ||
+					document.referrer;
+	return {
+		window: clientWindow,
+		identity: declaredOrigin ? parseBrowserOrigin(declaredOrigin) : null,
+	};
+};
+
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null;
 
@@ -213,12 +234,10 @@ export class CWIBridge {
 		this.handshakePolicy = isLikelyMobileRuntime()
 			? MOBILE_HANDSHAKE_POLICY
 			: DESKTOP_HANDSHAKE_POLICY;
-		if (typeof document !== "undefined" && document.referrer) {
-			const identity = parseBrowserOrigin(document.referrer);
-			if (identity) {
-				this.browserOrigin = identity.browserOrigin;
-				this.originator = identity.originator;
-			}
+		const identity = getCWIClient()?.identity;
+		if (identity) {
+			this.browserOrigin = identity.browserOrigin;
+			this.originator = identity.originator;
 		}
 	}
 
@@ -232,7 +251,11 @@ export class CWIBridge {
 
 	async retryWithGesture(): Promise<boolean> {
 		const channel = await this.tryStorageAccess();
-		if (!channel) return false;
+		if (!channel) {
+			this.callbacks.onStatusChange("no-wallet");
+			this.markFallback("channel_unavailable");
+			return false;
+		}
 		this.attachChannel(channel);
 		this.requestStatus();
 		return true;
@@ -326,6 +349,11 @@ export class CWIBridge {
 
 	private async acquireChannel(): Promise<void> {
 		if (this.isThirdPartyContext()) {
+			if (!this.supportsStorageAccess()) {
+				this.callbacks.onStatusChange("no-wallet");
+				this.markFallback("channel_unavailable");
+				return;
+			}
 			const channel = await this.tryStorageAccess();
 			if (channel) {
 				this.attachChannel(channel);
@@ -345,6 +373,7 @@ export class CWIBridge {
 	}
 
 	private async tryStorageAccess(): Promise<BroadcastChannel | null> {
+		if (!this.supportsStorageAccess()) return null;
 		try {
 			const request = document.requestStorageAccess.bind(
 				document,
@@ -356,6 +385,10 @@ export class CWIBridge {
 		} catch {
 			return null;
 		}
+	}
+
+	private supportsStorageAccess(): boolean {
+		return typeof document.requestStorageAccess === "function";
 	}
 
 	private isThirdPartyContext(): boolean {
@@ -371,9 +404,11 @@ export class CWIBridge {
 	}
 
 	private handleDAppMessage(event: MessageEvent): void {
+		const dAppWindow = getCWIClient()?.window;
 		if (
 			!event.isTrusted ||
-			event.source !== window.parent ||
+			!dAppWindow ||
+			event.source !== dAppWindow ||
 			event.origin === "null"
 		)
 			return;
