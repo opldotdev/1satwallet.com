@@ -232,8 +232,8 @@ export function useCWIBridge(): CWIBridgeState {
 	const grantStorageAccess = useCallback(() => {
 		const bridge = bridgeRef.current;
 		if (!bridge) return;
-		void bridge.retryWithGesture().then((granted) => {
-			if (granted) setStorageAccessRequired(false);
+		void bridge.retryWithGesture().then(() => {
+			setStorageAccessRequired(false);
 		});
 	}, []);
 
