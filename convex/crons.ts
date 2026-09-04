@@ -16,6 +16,12 @@ crons.interval(
 );
 
 crons.interval(
+	"purge terminal P2P settlement coordination records",
+	{ minutes: 5 },
+	internal.settlement.deletePurged,
+);
+
+crons.interval(
 	"delete expired signed P2P presence announcements",
 	{ minutes: 5 },
 	internal.presence.deleteExpiredAnnouncements,
