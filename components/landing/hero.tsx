@@ -66,10 +66,13 @@ export function LandingHero() {
 			/>
 
 			<div className="relative z-10 w-full px-6 text-center">
+				<h1 className="sr-only">1Sat Wallet</h1>
 				<div>
-					<ThreeBoundary>
-						{useStaticLogo ? <StaticLogo /> : <Logo3D />}
-					</ThreeBoundary>
+					<div aria-hidden="true">
+						<ThreeBoundary>
+							{useStaticLogo ? <StaticLogo /> : <Logo3D />}
+						</ThreeBoundary>
+					</div>
 
 					<p className="mx-auto max-w-3xl text-xl font-light leading-relaxed text-muted-foreground md:text-2xl">
 						Satoshi's favorite asset wallet.
@@ -126,13 +129,20 @@ export function LandingHero() {
 					</Button>
 				</PopoverTrigger>
 				<PopoverContent
+					aria-describedby="hero-p2p-popover-description"
+					aria-labelledby="hero-p2p-popover-title"
 					align="start"
 					className="z-[70] w-72 border-primary/20 bg-background/95 backdrop-blur-md"
 					side="top"
 				>
 					<PopoverHeader>
-						<PopoverTitle>P2P trading floor</PopoverTitle>
-						<PopoverDescription className="leading-relaxed">
+						<PopoverTitle id="hero-p2p-popover-title">
+							P2P trading floor
+						</PopoverTitle>
+						<PopoverDescription
+							className="leading-relaxed"
+							id="hero-p2p-popover-description"
+						>
 							Styled pointers belong to other people here. Connect a BRC-100
 							wallet, then select a connected peer to request a trade. Guests
 							can browse but must connect before trading. Your own pointer stays
