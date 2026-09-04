@@ -58,6 +58,7 @@ function AuthorizeContent() {
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [passphrase, setPassphrase] = useState("");
 	const [unlockError, setUnlockError] = useState<string | null>(null);
+	const [isUnlocking, setIsUnlocking] = useState(false);
 
 	const isExpired = useMemo(
 		() => (requestData ? requestData.expiresAt <= Date.now() : false),
@@ -235,14 +236,22 @@ function AuthorizeContent() {
 	const handleUnlock = useCallback(
 		async (event: React.FormEvent) => {
 			event.preventDefault();
+			if (isUnlocking) return;
+			setIsUnlocking(true);
 			setUnlockError(null);
-			const success = await unlockWallet(passphrase);
-			if (!success) {
-				setUnlockError("Invalid passphrase");
+			try {
+				const success = await unlockWallet(passphrase);
+				if (!success) {
+					setUnlockError("Invalid passphrase");
+				}
+			} catch {
+				setUnlockError("Unable to unlock wallet. Please try again.");
+			} finally {
+				setPassphrase("");
+				setIsUnlocking(false);
 			}
-			setPassphrase("");
 		},
-		[passphrase, unlockWallet],
+		[isUnlocking, passphrase, unlockWallet],
 	);
 
 	if (isLoadingRequest) {
@@ -324,10 +333,14 @@ function AuthorizeContent() {
 								onChange={(event) => setPassphrase(event.target.value)}
 								placeholder="Passphrase"
 								required
+								disabled={isUnlocking}
+								aria-invalid={unlockError ? true : undefined}
+								aria-describedby={unlockError ? "cwi-unlock-error" : undefined}
 								className="w-full px-3 py-2 rounded-md border bg-background"
 							/>
 							{unlockError && (
 								<p
+									id="cwi-unlock-error"
 									aria-live="polite"
 									className="text-sm text-destructive"
 									role="alert"
@@ -335,8 +348,18 @@ function AuthorizeContent() {
 									{unlockError}
 								</p>
 							)}
-							<Button type="submit" className="w-full">
-								Unlock
+							<Button type="submit" className="w-full" disabled={isUnlocking}>
+								{isUnlocking ? (
+									<>
+										<Loader2
+											className="h-4 w-4 animate-spin"
+											data-icon="inline-start"
+										/>
+										Unlocking…
+									</>
+								) : (
+									"Unlock"
+								)}
 							</Button>
 						</form>
 					</CardContent>

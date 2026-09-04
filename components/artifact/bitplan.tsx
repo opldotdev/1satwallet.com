@@ -73,6 +73,7 @@ export function BitPlanArtifact({ origin }: { origin: string }) {
 	};
 
 	if (view.phase === "decrypted") {
+		const isEmpty = view.plaintext.html.trim().length === 0;
 		return (
 			<div className="flex size-full min-h-0 flex-col">
 				<div className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-2 text-sm">
@@ -81,12 +82,27 @@ export function BitPlanArtifact({ origin }: { origin: string }) {
 					</p>
 					<span className="text-muted-foreground">BPLN v{view.version}</span>
 				</div>
-				<iframe
-					className="min-h-0 w-full flex-1 border-0 bg-background"
-					sandbox=""
-					srcDoc={view.plaintext.html}
-					title={view.plaintext.meta?.title || "BitPlan Document"}
-				/>
+				{isEmpty ? (
+					<div className="flex min-h-0 w-full flex-1 items-center justify-center p-8">
+						<div className="w-full max-w-md space-y-5 text-center">
+							<FileWarning className="mx-auto size-8 text-muted-foreground" />
+							<p
+								aria-live="polite"
+								className="mt-1 text-muted-foreground text-sm"
+								role="status"
+							>
+								This BitPlan document is empty.
+							</p>
+						</div>
+					</div>
+				) : (
+					<iframe
+						className="min-h-0 w-full flex-1 border-0 bg-background"
+						sandbox=""
+						srcDoc={view.plaintext.html}
+						title={view.plaintext.meta?.title || "BitPlan Document"}
+					/>
+				)}
 			</div>
 		);
 	}

@@ -47,6 +47,7 @@ export function MnemonicGrid({
 	const [processing, setProcessing] = useState(false);
 	const [useCustomPaths, setUseCustomPaths] = useState(false);
 	const [ready, setReady] = useState(false);
+	const [detectionFailed, setDetectionFailed] = useState(false);
 	const [pendingPaths, setPendingPaths] = useState<
 		| {
 				changeAddressPath: string;
@@ -141,6 +142,7 @@ export function MnemonicGrid({
 			.map((w) => w.toLowerCase());
 
 		if (words.length > 0) {
+			setDetectionFailed(false);
 			setInputMnemonic((prev) => {
 				const newMnemonic = [...prev];
 				words.forEach((word, i) => {
@@ -158,11 +160,13 @@ export function MnemonicGrid({
 		const newMnemonic = [...inputMnemonic];
 		newMnemonic[index] = value.trim().toLowerCase();
 		setInputMnemonic(newMnemonic);
+		setDetectionFailed(false);
 	};
 
 	const toggleCustomPaths = () => {
 		setUseCustomPaths(!useCustomPaths);
 		setReady(!useCustomPaths);
+		setDetectionFailed(false);
 	};
 
 	// Effect to process mnemonic automatically if valid and not using custom paths (only in edit mode)
@@ -179,8 +183,12 @@ export function MnemonicGrid({
 						changeAddressPath: (keys.changeAddressPath as string) || "m/0",
 						ordAddressPath: keys.ordAddressPath as string,
 					});
+					setDetectionFailed(false);
+				} else {
+					setDetectionFailed(true);
 				}
 			} catch {
+				setDetectionFailed(true);
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
@@ -197,11 +205,19 @@ export function MnemonicGrid({
 			!useCustomPaths &&
 			!processing &&
 			!pendingPaths &&
+			!detectionFailed &&
 			inputMnemonic.every((w) => !!w)
 		) {
 			process();
 		}
-	}, [inputMnemonic, ready, useCustomPaths, processing, pendingPaths]);
+	}, [
+		inputMnemonic,
+		ready,
+		useCustomPaths,
+		processing,
+		pendingPaths,
+		detectionFailed,
+	]);
 
 	const isValid =
 		inputMnemonic.every((w) => bip39words.includes(w)) &&
@@ -364,7 +380,10 @@ export function MnemonicGrid({
 							<div className="text-sm text-muted-foreground font-mono flex items-center">
 								Ordinals Path:{" "}
 								{processing ? (
-									<Loader2 className="h-3 w-3 animate-spin ml-2" />
+									<span role="status" className="flex items-center">
+										<Loader2 className="h-3 w-3 animate-spin ml-2" />
+										<span className="ml-2">Searching wallet paths…</span>
+									</span>
 								) : (
 									pendingPaths?.ordAddressPath
 								)}
@@ -379,6 +398,22 @@ export function MnemonicGrid({
 							onCheckedChange={toggleCustomPaths}
 						/>
 					</div>
+				</div>
+			)}
+
+			{mode === "edit" && detectionFailed && !useCustomPaths && (
+				<div
+					role="alert"
+					className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm flex items-center justify-between gap-3"
+				>
+					<p>Automatic wallet-path detection failed.</p>
+					<Button
+						variant="outline"
+						size="sm"
+						onClick={() => setDetectionFailed(false)}
+					>
+						Try again
+					</Button>
 				</div>
 			)}
 
@@ -522,6 +557,7 @@ export function MnemonicGrid({
 							setInputMnemonic(Array(12).fill(""));
 							setPendingPaths(undefined);
 							setProcessing(false);
+							setDetectionFailed(false);
 						}}
 					>
 						<RotateCcw className="h-4 w-4" data-icon="inline-start" />

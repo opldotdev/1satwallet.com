@@ -207,55 +207,57 @@ export function LeftSidebar({
 			</SidebarHeader>
 
 			<SidebarContent>
-				{navData.map((group) => (
-					<SidebarGroup key={group.title}>
-						<SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+				<nav aria-label="Application navigation">
+					{navData.map((group) => (
+						<SidebarGroup key={group.title}>
+							<SidebarGroupLabel>{group.title}</SidebarGroupLabel>
 
-						<SidebarGroupContent>
-							<SidebarMenu>
-								{group.items.map((item) => {
-									const available =
-										!item.feature ||
-										featuresQuery.data?.features[item.feature] === true;
-									return (
-										<SidebarMenuItem key={item.title}>
-											{available ? (
-												<SidebarMenuButton asChild tooltip={item.title}>
-													<Link href={item.url} onClick={() => play("click")}>
+							<SidebarGroupContent>
+								<SidebarMenu>
+									{group.items.map((item) => {
+										const available =
+											!item.feature ||
+											featuresQuery.data?.features[item.feature] === true;
+										return (
+											<SidebarMenuItem key={item.title}>
+												{available ? (
+													<SidebarMenuButton asChild tooltip={item.title}>
+														<Link href={item.url} onClick={() => play("click")}>
+															<item.icon className="h-4 w-4" />
+															<span>{item.title}</span>
+															{item.shortcut && (
+																<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground group-data-[collapsible=icon]:hidden md:block">
+																	{item.shortcut}
+																</span>
+															)}
+														</Link>
+													</SidebarMenuButton>
+												) : (
+													<SidebarMenuButton
+														disabled
+														tooltip={`${item.title} ${featuresQuery.isLoading ? "checking" : "unavailable"}`}
+													>
 														<item.icon className="h-4 w-4" />
 														<span>{item.title}</span>
-														{item.shortcut && (
-															<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground group-data-[collapsible=icon]:hidden md:block">
-																{item.shortcut}
-															</span>
-														)}
-													</Link>
-												</SidebarMenuButton>
-											) : (
-												<SidebarMenuButton
-													disabled
-													tooltip={`${item.title} ${featuresQuery.isLoading ? "checking" : "unavailable"}`}
-												>
-													<item.icon className="h-4 w-4" />
-													<span>{item.title}</span>
-													<span
-														aria-live="polite"
-														className="ml-auto text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden"
-														role="status"
-													>
-														{featuresQuery.isLoading
-															? "Checking"
-															: "Unavailable"}
-													</span>
-												</SidebarMenuButton>
-											)}
-										</SidebarMenuItem>
-									);
-								})}
-							</SidebarMenu>
-						</SidebarGroupContent>
-					</SidebarGroup>
-				))}
+														<span
+															aria-live="polite"
+															className="ml-auto text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden"
+															role="status"
+														>
+															{featuresQuery.isLoading
+																? "Checking"
+																: "Unavailable"}
+														</span>
+													</SidebarMenuButton>
+												)}
+											</SidebarMenuItem>
+										);
+									})}
+								</SidebarMenu>
+							</SidebarGroupContent>
+						</SidebarGroup>
+					))}
+				</nav>
 			</SidebarContent>
 
 			<SidebarFooter>
