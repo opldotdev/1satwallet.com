@@ -11,20 +11,26 @@ or none of them.
 ## The protocol is the transaction
 
 The existing trading floor already authenticates trade requests and offer
-updates with BRC-77. After both offers are locked, the parties negotiate one
-candidate transaction back and forth:
+updates with BRC-77. Locking both offers confirms the terms; it is not a
+transaction signature. Each wallet then resolves its offer to current asset
+outpoints, token change, fees, and receiver-approved destinations.
 
-1. The builder asks its BRC-100 wallet to construct and fund an unsigned action
+1. If ordinary BSV is offered, its payer is the builder. Without a BSV leg, the
+   first confirmer or initiator may build. Builder selection never causes an
+   early signature.
+2. After both concrete contributions are available, the builder asks its
+   BRC-100 wallet to construct and fund one unsigned action
    with `signAndProcess: false` and `randomizeOutputs: false`.
-2. The builder keeps the returned action reference local and sends the
+3. The builder keeps the returned action reference local and sends the
    candidate transaction plus its validation data to the peer.
-3. Each wallet independently reconstructs and reviews the same candidate.
-4. Each wallet signs only its own asset inputs with
+4. Each wallet independently reconstructs and reviews the same candidate.
+5. Each asset owner signs only its own asset inputs with
    `SIGHASH_ALL | SIGHASH_FORKID` and returns the unlocking scripts or an
    equivalent partially signed transaction.
-5. The builder verifies the scripts, signs its funding inputs, and broadcasts
-   the unchanged transaction.
-6. Both wallets independently observe the result and internalize their received
+6. The builder verifies the scripts, signs its funding inputs, and broadcasts
+   the unchanged transaction. A BSV-only builder has no separate asset
+   authorization; its wallet authorizes the funding inputs in this step.
+7. Both wallets independently observe the result and internalize their received
    outputs.
 
 The Bitcoin input signatures are the spend authorization. The website does not
@@ -41,7 +47,8 @@ A future direct peer transport may use BRC-103 instead.
 The minimal relay should reuse the existing ready `p2pSessions` record and carry
 only:
 
-- one bounded candidate transaction revision from the deterministic builder;
+- each party's bounded concrete contribution;
+- one final candidate transaction from the selected builder;
 - one signature response from each asset owner for that exact candidate; and
 - the final transaction ID or an outcome-unknown marker needed for reconnect.
 
@@ -53,6 +60,13 @@ The removed draft coordinator was intentionally not retained: its prepare,
 contribution, manifest, authorization, attempt, lease, and receipt state machine
 duplicated the existing offer negotiation and the transaction checks performed
 by the wallets.
+
+Historical asynchronous 1Sat listings use
+`SIGHASH_SINGLE | SIGHASH_ANYONECANPAY` because a seller signs before a buyer
+adds funding. This live trade flow waits for both contributions and the final
+funded transaction, so it uses `SIGHASH_ALL | SIGHASH_FORKID`. A BIP-174 PSBT
+can transport metadata and partial signatures but does not change those
+signature commitments; Atomic BEEF is the preferred BSV transaction container.
 
 ## Required wallet validation
 
