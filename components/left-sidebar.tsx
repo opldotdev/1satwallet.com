@@ -195,7 +195,7 @@ export function LeftSidebar({
 								<div className="grid flex-1 text-left text-sm leading-tight">
 									<span className="truncate font-semibold font-sans">
 										<span className="text-primary">1Sat</span>{" "}
-										<span className="text-secondary">Wallet</span>
+										<span className="text-sidebar-foreground">Wallet</span>
 									</span>
 
 									<span className="truncate text-xs">BRC-100 Wallet</span>

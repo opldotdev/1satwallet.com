@@ -164,18 +164,45 @@ describe("landing presence restoration", () => {
 		assert.match(generatedApi, /ComponentApi<"presence">/);
 	});
 
-	it("counts only live peers and keeps cursors mobile- and motion-safe", () => {
+	it("counts only live peers, keeps desktop cursors, and exposes a touch peer control", () => {
 		const presence = read("components/landing/shared-presence.tsx");
 
 		assert.match(
 			presence,
 			/presenceState\?\.filter\(\(entry\) => entry\.online\)/,
 		);
+		// Desktop/fine-pointer cursors stay at the live peer position while the
+		// separate touch tray covers narrow and coarse-pointer screens.
 		assert.match(presence, /hidden[^"]*md:block/);
+		assert.match(presence, /\[@media\(pointer:coarse\)\]:hidden/);
 		assert.match(presence, /motion-safe:transition-/);
 		assert.match(presence, /startTrade/);
 		assert.match(presence, /BRC-100/);
 		assert.doesNotMatch(presence, /(?<!motion-safe:)animate-pulse/);
+
+		// Touch/mobile peer control: only when peers exist, keyboard
+		// accessible, >=44px tap target, reuses the startTrade path.
+		assert.match(presence, /cursors\.length > 0/);
+		assert.match(presence, /md:hidden/);
+		assert.match(presence, /\[@media\(pointer:coarse\)\]:!block/);
+		assert.match(presence, /min-h-\[44px\]/);
+		assert.match(presence, /min-w-\[44px\]/);
+		assert.match(presence, /Start a trade with/);
+		assert.match(
+			presence,
+			/onClick=\{\(\) => void startTrade\(cursor\.userId\)\}/,
+		);
+	});
+
+	it("stacks trade offers on narrow screens and restores two columns at a breakpoint", () => {
+		const dialog = read("components/landing/trade-dialog.tsx");
+
+		assert.match(dialog, /grid-cols-1/);
+		assert.match(dialog, /sm:grid-cols-2/);
+		assert.match(dialog, /overflow-y-auto/);
+		assert.match(dialog, /max-h-\[90dvh\]/);
+		assert.match(dialog, /w-\[calc\(100vw-2rem\)\]/);
+		assert.match(dialog, /flex-col[\s\S]*sm:flex-row/);
 	});
 
 	it("owns recurring timers and binds authentication to the wallet that signed it", () => {
