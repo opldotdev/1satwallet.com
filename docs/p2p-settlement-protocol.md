@@ -4,17 +4,17 @@ Status: draft implementation plan for OPL-4156
 
 Standards authority: [draft BRC-178](https://github.com/opldotdev/BRCs/pull/6)
 
-The trading floor settles two-party Ordinal, BSV21, BSV, and mixed trades with
-the collaborative atomic exchange profile in draft BRC-178. This document only
-records how `1satwallet.com` coordinates that standard. It does not define a
-second transaction or signing protocol.
+The trading floor settles two-party NFT (1Sat Ordinal), BSV21, BSV, and mixed
+trades with the collaborative atomic exchange profile in draft BRC-178. This
+document only records how `1satwallet.com` coordinates that standard. It does
+not define a second transaction or signing protocol.
 
 ## Required boundaries
 
 - `@1sat/actions` constructs and reconstructs the final funded transaction,
-  traces Ordinal satoshis, validates BSV21 conservation and overlay fees, signs
-  contributed inputs, verifies scripts, and completes the retained BRC-100
-  action.
+  traces 1Sat Ordinal NFT satoshis, validates BSV21 conservation and overlay
+  fees, signs contributed inputs, verifies scripts, and completes the retained
+  BRC-100 action.
 - Each connected wallet independently reviews the final transaction and signs
   only its own asset inputs with `SIGHASH_ALL | SIGHASH_FORKID`.
 - Convex authenticates and orders coordination messages, records bounded
@@ -32,8 +32,8 @@ lowercase canonical encodings. Unknown fields fail closed.
 1. Both participants authenticate and lock the same offer.
 2. The fixed builder and fee payer create one settlement attempt.
 3. Each wallet selects fresh, unspent assets and supplies receiver-controlled
-   destinations. BSV21 selection uses the ordinary `bsv21` basket; Ordinals use
-   the ordinary `1sat` basket.
+   destinations. BSV21 selection uses the ordinary `bsv21` basket; Ordinal
+   NFTs use the ordinary `1sat` basket.
 4. The builder wallet creates an unfixed BRC-100 action with
    `signAndProcess: false` and `randomizeOutputs: false`, then retains the action
    reference locally.
@@ -98,7 +98,7 @@ Atomic trading remains disabled until all of these are complete:
 - the wallet UI displays exact sends, receives, change, mining fees, overlay
   fees, counterparty identity, and expiry from the final transaction;
 - built-in, Yours-injected, 1Sat Desktop, and embedded mobile providers pass
-  two-device certification for Ordinal and BSV21 exchanges;
+  two-device certification for Ordinal NFT and BSV21 exchanges;
 - the evidence service proves exact transaction acceptance and BSV21 overlay
   admission; and
 - receipt-driven internalization is idempotent and recovery-tested.

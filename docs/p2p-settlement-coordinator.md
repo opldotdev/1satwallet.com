@@ -53,7 +53,7 @@ store BRC-100 action references, BEEF payloads, unlocking scripts, private keys,
 seeds, derivation data, or permission grants.
 
 The template intake validates contiguous indexes, participant roles, exact
-ordinal input-to-receipt mapping, uint64-safe BSV21 conservation, per-token
+Ordinal NFT input-to-receipt mapping, uint64-safe BSV21 conservation, per-token
 overlay output counts, and overlay fee totals. Wallets still independently
 reconstruct and validate the transaction before signing; Convex validation is
 not a substitute for the wallet boundary.
