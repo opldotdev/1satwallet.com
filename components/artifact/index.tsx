@@ -198,8 +198,8 @@ const Artifact: React.FC<ArtifactProps> = ({
 			>
 				{src !== "" && src !== undefined && (
 					<ImageWithFallback
-						width={size || 0}
-						height={size || 0}
+						width={size || 300}
+						height={size || 300}
 						priority={priority || false}
 						className={`${
 							showZoom ? "h-auto w-auto max-h-screen" : ""
