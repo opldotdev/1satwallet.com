@@ -51,6 +51,32 @@ describe("sidebar wordmark contrast", () => {
 	});
 });
 
+describe("navigation landmarks", () => {
+	it("names the application link group without nesting landmarks", () => {
+		const source = read("components/left-sidebar.tsx");
+		assert.match(source, /<nav aria-label="Application navigation">/);
+		assert.equal(source.match(/<nav/g)?.length, 1);
+		assert.doesNotMatch(source, /<nav[^>]*>\s*<nav/);
+	});
+	it("names only the unlocked wallet link group", () => {
+		const source = read("components/app-sidebar.tsx");
+		assert.match(source, /<nav aria-label="Wallet navigation">/);
+		assert.equal(source.match(/<nav/g)?.length, 1);
+		assert.doesNotMatch(source, /<nav[^>]*>\s*<nav/);
+		// Loading and no-wallet placeholders must not create labeled landmarks.
+		const loadingBranch = source.slice(
+			source.indexOf("if (!isWalletInitialized)"),
+			source.indexOf("if (!hasWallet"),
+		);
+		assert.doesNotMatch(loadingBranch, /<nav/);
+		const noWalletBranch = source.slice(
+			source.indexOf("if (!hasWallet"),
+			source.indexOf("const activeAddress"),
+		);
+		assert.doesNotMatch(noWalletBranch, /<nav/);
+	});
+});
+
 describe("landing hero accessibility", () => {
 	it("exposes one level-one heading and treats the 3D logo as decorative", () => {
 		const source = read("components/landing/hero.tsx");

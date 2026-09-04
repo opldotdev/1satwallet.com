@@ -480,7 +480,11 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{!bapId && (
-					<p className="text-muted-foreground text-sm">
+					<p
+						aria-live="polite"
+						className="text-muted-foreground text-sm"
+						role="status"
+					>
 						Publish this wallet’s BAP identity first.
 					</p>
 				)}
@@ -511,7 +515,9 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 					/>
 				</div>
 				{reviewError && (
-					<p className="text-destructive text-sm">{reviewError}</p>
+					<p className="text-destructive text-sm" role="alert">
+						{reviewError}
+					</p>
 				)}
 				<StatusMessage status={status} />
 				<Button disabled={!bapId || submitting} onClick={prepareReview}>
@@ -626,12 +632,20 @@ function DiscoveryPanel() {
 					</Button>
 				</div>
 				{stackFeatures.isLoading && (
-					<p className="text-muted-foreground text-sm">
+					<p
+						aria-live="polite"
+						className="text-muted-foreground text-sm"
+						role="status"
+					>
 						Checking stack capabilities…
 					</p>
 				)}
 				{stackFeatures.isError && (
-					<p className="text-muted-foreground text-sm">
+					<p
+						aria-live="polite"
+						className="text-muted-foreground text-sm"
+						role="status"
+					>
 						The stack capability manifest is unavailable. Discovery stays
 						disabled until it can be verified.
 					</p>
@@ -639,19 +653,27 @@ function DiscoveryPanel() {
 				{!stackFeatures.isLoading &&
 					!stackFeatures.isError &&
 					!indexAvailable && (
-						<p className="text-muted-foreground text-sm">
+						<p
+							aria-live="polite"
+							className="text-muted-foreground text-sm"
+							role="status"
+						>
 							This stack does not advertise the BAP capability.
 						</p>
 					)}
 				{searchQuery.isLoading && (
-					<p className="flex items-center gap-2 text-muted-foreground text-sm">
+					<p
+						aria-live="polite"
+						className="flex items-center gap-2 text-muted-foreground text-sm"
+						role="status"
+					>
 						<Loader2 className="h-4 w-4 animate-spin" /> Searching the public
 						index…
 					</p>
 				)}
 				{searchQuery.isError && (
 					<div className="space-y-2">
-						<p className="text-destructive text-sm">
+						<p className="text-destructive text-sm" role="alert">
 							The BAP index search failed. Try again.
 						</p>
 						<Button
@@ -664,7 +686,11 @@ function DiscoveryPanel() {
 					</div>
 				)}
 				{submittedQuery && searchQuery.isSuccess && results.length === 0 && (
-					<p className="text-muted-foreground text-sm">
+					<p
+						aria-live="polite"
+						className="text-muted-foreground text-sm"
+						role="status"
+					>
 						No indexed identities matched this page.
 					</p>
 				)}
@@ -699,7 +725,11 @@ function DiscoveryPanel() {
 						>
 							Previous
 						</Button>
-						<span className="text-muted-foreground text-xs">
+						<span
+							aria-live="polite"
+							className="text-muted-foreground text-xs"
+							role="status"
+						>
 							Results {offset + 1}–{offset + results.length}
 						</span>
 						<Button
@@ -746,21 +776,33 @@ export function BapIdentityCenter() {
 
 	if (isInitializing) {
 		return (
-			<p className="flex items-center gap-2 text-muted-foreground text-sm">
+			<p
+				aria-live="polite"
+				className="flex items-center gap-2 text-muted-foreground text-sm"
+				role="status"
+			>
 				<Loader2 className="h-4 w-4 animate-spin" /> Loading wallet identity…
 			</p>
 		);
 	}
 	if (!isInitialized || !oneSatContext || !identityKey) {
 		return (
-			<p className="text-muted-foreground text-sm">
+			<p
+				aria-live="polite"
+				className="text-muted-foreground text-sm"
+				role="status"
+			>
 				Connect or unlock a wallet to manage its identity.
 			</p>
 		);
 	}
 	if (profileQuery.isLoading) {
 		return (
-			<p className="flex items-center gap-2 text-muted-foreground text-sm">
+			<p
+				aria-live="polite"
+				className="flex items-center gap-2 text-muted-foreground text-sm"
+				role="status"
+			>
 				<Loader2 className="h-4 w-4 animate-spin" /> Reading wallet identity…
 			</p>
 		);
@@ -768,7 +810,7 @@ export function BapIdentityCenter() {
 	if (profileQuery.isError) {
 		return (
 			<div className="space-y-2">
-				<p className="text-destructive text-sm">
+				<p className="text-destructive text-sm" role="alert">
 					The wallet identity could not be read safely.
 				</p>
 				<Button onClick={() => void profileQuery.refetch()} variant="outline">

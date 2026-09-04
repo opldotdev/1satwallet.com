@@ -315,49 +315,51 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 			<SidebarSeparator className="my-4" />
 			<SidebarContent>
 				<LegacySweepBanner />
-				{navData.map((group) => (
-					<SidebarGroup key={group.title}>
-						<SidebarGroupLabel>{group.title}</SidebarGroupLabel>
-						<SidebarGroupContent>
-							<SidebarMenu>
-								{group.items.map((item) => {
-									const available =
-										!item.feature ||
-										featuresQuery.data?.features[item.feature] === true;
-									return (
-										<SidebarMenuItem key={item.title}>
-											{available ? (
-												<SidebarMenuButton asChild>
-													<Link href={item.url} onClick={handleNav}>
-														{item.title}
-														{item.shortcut && (
-															<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground md:block">
-																{item.shortcut}
-															</span>
-														)}
-													</Link>
-												</SidebarMenuButton>
-											) : (
-												<SidebarMenuButton disabled>
-													<span>{item.title}</span>
-													<span
-														aria-live="polite"
-														className="ml-auto text-[10px] text-muted-foreground"
-														role="status"
-													>
-														{featuresQuery.isLoading
-															? "Checking"
-															: "Unavailable"}
-													</span>
-												</SidebarMenuButton>
-											)}
-										</SidebarMenuItem>
-									);
-								})}
-							</SidebarMenu>
-						</SidebarGroupContent>
-					</SidebarGroup>
-				))}
+				<nav aria-label="Wallet navigation">
+					{navData.map((group) => (
+						<SidebarGroup key={group.title}>
+							<SidebarGroupLabel>{group.title}</SidebarGroupLabel>
+							<SidebarGroupContent>
+								<SidebarMenu>
+									{group.items.map((item) => {
+										const available =
+											!item.feature ||
+											featuresQuery.data?.features[item.feature] === true;
+										return (
+											<SidebarMenuItem key={item.title}>
+												{available ? (
+													<SidebarMenuButton asChild>
+														<Link href={item.url} onClick={handleNav}>
+															{item.title}
+															{item.shortcut && (
+																<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground md:block">
+																	{item.shortcut}
+																</span>
+															)}
+														</Link>
+													</SidebarMenuButton>
+												) : (
+													<SidebarMenuButton disabled>
+														<span>{item.title}</span>
+														<span
+															aria-live="polite"
+															className="ml-auto text-[10px] text-muted-foreground"
+															role="status"
+														>
+															{featuresQuery.isLoading
+																? "Checking"
+																: "Unavailable"}
+														</span>
+													</SidebarMenuButton>
+												)}
+											</SidebarMenuItem>
+										);
+									})}
+								</SidebarMenu>
+							</SidebarGroupContent>
+						</SidebarGroup>
+					))}
+				</nav>
 			</SidebarContent>
 			<SidebarFooter>
 				<NavUser
