@@ -18,11 +18,12 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { canApproveAssetPermission } from "@/lib/cwi/asset-permission-prompt";
-import type {
-	BridgeAssetPermissionRequest,
-	BridgeCounterpartyPermissionRequest,
-	BridgeGroupedPermissionRequest,
-	BridgePermissionRequest,
+import {
+	type BridgeAssetPermissionRequest,
+	type BridgeCounterpartyPermissionRequest,
+	type BridgeGroupedPermissionRequest,
+	type BridgePermissionRequest,
+	getCWIClientWindow,
 } from "@/lib/cwi/bridge";
 import {
 	counterpartyConsentEntries,
@@ -638,8 +639,9 @@ export default function CWIPage() {
 
 	// Notify parent frame about CWI state so it can resize the iframe.
 	useEffect(() => {
-		if (!window.parent || window.parent === window) return;
-		window.parent.postMessage(
+		const dAppWindow = getCWIClientWindow();
+		if (!dAppWindow) return;
+		dAppWindow.postMessage(
 			{
 				type: "CWI",
 				cwiState: {
