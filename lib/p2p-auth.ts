@@ -1,6 +1,5 @@
 import { signRequest } from "@1sat/connect";
 import { Hash, SignedMessage, Utils, type WalletInterface } from "@bsv/sdk";
-import type { SettlementAction } from "./p2p-settlement";
 
 const { toArray, toHex } = Utils;
 
@@ -16,8 +15,7 @@ export type P2PAction =
 	| "request.decline"
 	| "request.cancel"
 	| "session.offer"
-	| "session.cancel"
-	| SettlementAction;
+	| "session.cancel";
 
 export interface P2PCommand<T = unknown> {
 	v: typeof P2P_COMMAND_VERSION;
@@ -48,11 +46,7 @@ export function parseP2PCommand(
 	expectedAction: P2PAction,
 	now = Date.now(),
 ): P2PCommand {
-	const maximumBodySize = expectedAction.startsWith("settlement.")
-		? 96_000
-		: 24_000;
-	const bodySize = toArray(body, "utf8").length;
-	if (bodySize === 0 || bodySize > maximumBodySize) {
+	if (body.length === 0 || body.length > 24_000) {
 		throw new Error("Invalid signed command size");
 	}
 	let value: unknown;

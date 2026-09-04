@@ -12,7 +12,6 @@ import type * as crons from "../crons.js";
 import type * as cwiAuth from "../cwiAuth.js";
 import type * as p2p from "../p2p.js";
 import type * as presence from "../presence.js";
-import type * as settlement from "../settlement.js";
 
 import type {
   ApiFromModules,
@@ -25,7 +24,6 @@ declare const fullApi: ApiFromModules<{
   cwiAuth: typeof cwiAuth;
   p2p: typeof p2p;
   presence: typeof presence;
-  settlement: typeof settlement;
 }>;
 
 /**

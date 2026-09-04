@@ -28,49 +28,6 @@ const p2pTradeItem = v.union(
 	}),
 );
 
-const settlementStatus = v.union(
-	v.literal("preparing"),
-	v.literal("contributing"),
-	v.literal("constructing"),
-	v.literal("reviewing"),
-	v.literal("partially_authorized"),
-	v.literal("authorized"),
-	v.literal("broadcasting"),
-	v.literal("verifying"),
-	v.literal("overlay_pending"),
-	v.literal("internalizing"),
-	v.literal("outcome_unknown"),
-	v.literal("settled"),
-	v.literal("conflicted"),
-	v.literal("expired"),
-	v.literal("cancelled"),
-	v.literal("failed"),
-);
-
-const settlementPrepare = v.object({
-	walletIdentity: v.string(),
-	providerInstanceId: v.string(),
-	prepareHash: v.string(),
-});
-
-const settlementContribution = v.object({
-	contributionHash: v.string(),
-	reservationId: v.string(),
-	reservationExpiresAt: v.number(),
-});
-
-const settlementAuthorization = v.object({
-	authorizationHash: v.string(),
-	contributionHash: v.string(),
-	authorizationExpiresAt: v.number(),
-});
-
-const settlementInternalization = v.object({
-	status: v.union(v.literal("complete"), v.literal("failed")),
-	checkedAt: v.number(),
-	receiptHash: v.optional(v.string()),
-});
-
 export default defineSchema({
 	p2pInboxTokens: defineTable({
 		identityKey: v.string(),
@@ -86,15 +43,11 @@ export default defineSchema({
 		nonce: v.string(),
 		action: v.string(),
 		bodyHash: v.string(),
-		signatureHash: v.optional(v.string()),
 		result: v.string(),
 		createdAt: v.number(),
 		expiresAt: v.number(),
-		settlementId: v.optional(v.string()),
-		settlementAttempt: v.optional(v.number()),
 	})
 		.index("by_identity_nonce", ["identityKey", "nonce"])
-		.index("by_settlement_attempt", ["settlementId", "settlementAttempt"])
 		.index("by_expiresAt", ["expiresAt"]),
 
 	p2pPresenceAnnouncements: defineTable({
@@ -175,85 +128,6 @@ export default defineSchema({
 		.index("by_participant", ["participantIdentity"])
 		.index("by_status_expiresAt", ["status", "expiresAt"])
 		.index("by_expiresAt", ["expiresAt"])
-		.index("by_purgeAt", ["purgeAt"]),
-
-	p2pSettlements: defineTable({
-		protocol: v.literal("brc-178"),
-		wireVersion: v.literal(1),
-		chain: v.union(v.literal("main"), v.literal("test")),
-		sessionId: v.string(),
-		settlementId: v.string(),
-		attempt: v.number(),
-		offerDigest: v.string(),
-		lockedInitiatorRevision: v.number(),
-		lockedParticipantRevision: v.number(),
-		partyA: v.string(),
-		partyB: v.string(),
-		builder: v.string(),
-		feePayer: v.string(),
-		status: settlementStatus,
-		stateVersion: v.number(),
-		lastPartyARevision: v.number(),
-		lastPartyBRevision: v.number(),
-		lastVerifierRevision: v.number(),
-		partyAPrepare: v.optional(settlementPrepare),
-		partyBPrepare: v.optional(settlementPrepare),
-		partyAContribution: v.optional(settlementContribution),
-		partyBContribution: v.optional(settlementContribution),
-		templateHash: v.optional(v.string()),
-		manifestHash: v.optional(v.string()),
-		signableBeefHash: v.optional(v.string()),
-		overlayTokenIds: v.optional(v.array(v.string())),
-		partyAInputIndexes: v.optional(v.array(v.number())),
-		partyBInputIndexes: v.optional(v.array(v.number())),
-		partyAAuthorization: v.optional(settlementAuthorization),
-		partyBAuthorization: v.optional(settlementAuthorization),
-		broadcastLease: v.optional(
-			v.object({
-				leaseId: v.string(),
-				leaseExpiresAt: v.number(),
-				broadcaster: v.string(),
-			}),
-		),
-		rawTxHash: v.optional(v.string()),
-		txid: v.optional(v.string()),
-		broadcastEvidenceHash: v.optional(v.string()),
-		providerResult: v.optional(
-			v.union(
-				v.literal("accepted"),
-				v.literal("already-known"),
-				v.literal("unknown"),
-				v.literal("rejected"),
-			),
-		),
-		chainEvidenceHash: v.optional(v.string()),
-		overlayEvidence: v.optional(
-			v.array(
-				v.object({
-					tokenId: v.string(),
-					status: v.union(
-						v.literal("accepted"),
-						v.literal("pending"),
-						v.literal("rejected"),
-					),
-					checkedAt: v.number(),
-					evidenceHash: v.string(),
-				}),
-			),
-		),
-		partyAInternalization: v.optional(settlementInternalization),
-		partyBInternalization: v.optional(settlementInternalization),
-		failureHash: v.optional(v.string()),
-		createdAt: v.number(),
-		updatedAt: v.number(),
-		expiresAt: v.number(),
-		terminalAt: v.optional(v.number()),
-		purgeAt: v.optional(v.number()),
-	})
-		.index("by_settlement_attempt", ["settlementId", "attempt"])
-		.index("by_settlement", ["settlementId"])
-		.index("by_session", ["sessionId"])
-		.index("by_status_expiresAt", ["status", "expiresAt"])
 		.index("by_purgeAt", ["purgeAt"]),
 
 	// CWI redirect fallback auth requests (OAuth-style)
