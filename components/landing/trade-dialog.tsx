@@ -211,10 +211,10 @@ export function TradeDialog({
 				open={inventoryOpen}
 			/>
 			<SoundDialog open={open} onOpenChange={onOpenChange}>
-				<DialogContent className="flex h-[min(650px,90dvh)] max-w-[800px] flex-col gap-0 overflow-hidden p-0 shadow-2xl">
-					<DialogHeader className="border-b bg-muted/40 p-6 pr-12">
+				<DialogContent className="flex h-[min(650px,90dvh)] max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[800px] flex-col gap-0 overflow-hidden p-0 shadow-2xl">
+					<DialogHeader className="border-b bg-muted/40 p-4 pr-12 sm:p-6 sm:pr-12">
 						<div className="flex items-center justify-between gap-4">
-							<DialogTitle className="flex items-center gap-3 text-xl">
+							<DialogTitle className="flex items-center gap-3 text-lg sm:text-xl">
 								<ArrowRightLeft className="size-5 text-primary" />
 								P2P Trade Session
 							</DialogTitle>
@@ -224,7 +224,7 @@ export function TradeDialog({
 									: "Negotiating"}
 							</Badge>
 						</div>
-						<DialogDescription className="flex items-center gap-2">
+						<DialogDescription className="flex flex-wrap items-center gap-2">
 							<Fingerprint className="size-4 text-primary" /> Trading with
 							<span className="font-mono font-bold text-primary">
 								{shortIdentity(peerIdentity)}
@@ -233,9 +233,9 @@ export function TradeDialog({
 						</DialogDescription>
 					</DialogHeader>
 
-					<div className="grid min-h-0 flex-1 grid-cols-2 divide-x bg-background">
+					<div className="grid min-h-0 flex-1 grid-cols-1 divide-y overflow-y-auto bg-background sm:grid-cols-2 sm:divide-x sm:divide-y-0 sm:overflow-hidden">
 						<section
-							className="flex min-h-0 flex-col p-5"
+							className="flex min-h-0 flex-col p-4 sm:p-5"
 							aria-label="Your offer"
 						>
 							<div className="mb-4 flex items-center justify-between">
@@ -297,7 +297,7 @@ export function TradeDialog({
 						</section>
 
 						<section
-							className="flex min-h-0 flex-col p-5"
+							className="flex min-h-0 flex-col p-4 sm:p-5"
 							aria-label="Peer offer"
 						>
 							<div className="mb-4 flex items-center justify-between">
@@ -325,12 +325,12 @@ export function TradeDialog({
 						</section>
 					</div>
 
-					<div className="flex items-center justify-between border-t bg-muted/30 px-6 py-4">
+					<div className="flex flex-col gap-3 border-t bg-muted/30 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
 						<p className="text-muted-foreground text-xs">
 							Session expires automatically. Closing cancels it for both
 							parties.
 						</p>
-						<Button disabled variant="secondary">
+						<Button className="w-full sm:w-auto" disabled variant="secondary">
 							{myLocked && peerLocked
 								? "Settlement handoff pending"
 								: "Lock both offers to continue"}

@@ -292,6 +292,11 @@ export default function PermissionsPage() {
 													variant="ghost"
 													size="icon"
 													className="shrink-0 text-destructive hover:text-destructive"
+													aria-label={
+														revoking === key
+															? `Revoking ${tokenLabel(ct)} permission`
+															: `Revoke ${tokenLabel(ct)} permission`
+													}
 													disabled={revoking === key}
 													onClick={() => handleRevoke(ct)}
 												>

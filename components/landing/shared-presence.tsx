@@ -216,7 +216,7 @@ function PresenceLayer({
 								? `Start a trade with ${label}`
 								: `${label} has unverified presence`
 						}
-						className="group absolute z-50 hidden border-none bg-transparent p-0 pointer-events-auto md:block motion-safe:transition-[left,top,transform] motion-safe:duration-100 motion-safe:ease-out hover:scale-110"
+						className="group absolute z-50 hidden border-none bg-transparent p-0 pointer-events-auto md:block motion-safe:transition-[left,top,transform] motion-safe:duration-100 motion-safe:ease-out hover:scale-110 [@media(pointer:coarse)]:hidden"
 						disabled={requestingPeer === cursor.userId}
 						key={cursor.userId}
 						onClick={() => void startTrade(cursor.userId)}
@@ -260,6 +260,48 @@ function PresenceLayer({
 					</button>
 				);
 			})}
+
+			{cursors.length > 0 && (
+				<div className="absolute bottom-16 left-1/2 z-50 -translate-x-1/2 pointer-events-auto md:hidden [@media(pointer:coarse)]:!block">
+					<div className="flex max-w-[calc(100vw-2rem)] items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-background/80 p-1 backdrop-blur-sm">
+						{cursors.map((cursor, index) => {
+							const publicIdentity = identityByUserId.get(cursor.userId);
+							const peerIdentity = publicIdentity?.identityKey ?? null;
+							const label =
+								publicIdentity?.label ?? labelForUserId(cursor.userId);
+							const color = CURSOR_COLORS[index % CURSOR_COLORS.length];
+							return (
+								<button
+									aria-label={
+										peerIdentity
+											? `Start a trade with ${label}`
+											: `${label} has unverified presence`
+									}
+									className="flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-sm text-foreground"
+									disabled={requestingPeer === cursor.userId}
+									key={cursor.userId}
+									onClick={() => void startTrade(cursor.userId)}
+									title={
+										publicIdentity
+											? `Wallet signature verified; ${publicIdentity.profile ? `${publicIdentity.profile.source} profile ${publicIdentity.profile.verification}` : "no verified public profile"}`
+											: "Wallet identity unverified"
+									}
+									type="button"
+								>
+									<MousePointer2
+										className="size-4 -rotate-12"
+										style={{ color }}
+									/>
+									<span className="font-mono text-xs font-medium">{label}</span>
+									<span className="text-xs opacity-75">
+										{peerIdentity ? "· verified" : "· unverified"}
+									</span>
+								</button>
+							);
+						})}
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }
