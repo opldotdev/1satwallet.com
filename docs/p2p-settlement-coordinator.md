@@ -1,8 +1,9 @@
 # P2P settlement coordinator
 
-The Convex coordinator implements the durable control-plane state machine from
-[`p2p-settlement-protocol.md`](./p2p-settlement-protocol.md). It does not build,
-sign, broadcast, or prove a transaction by itself.
+The Convex coordinator implements the application control-plane state machine
+around [draft BRC-178](https://github.com/opldotdev/BRCs/pull/6), as summarized
+in [`p2p-settlement-protocol.md`](./p2p-settlement-protocol.md). It does not
+build, sign, broadcast, or prove a transaction by itself.
 
 ## Deployment configuration
 

@@ -178,7 +178,7 @@ export default defineSchema({
 		.index("by_purgeAt", ["purgeAt"]),
 
 	p2pSettlements: defineTable({
-		protocol: v.literal("1sat-p2p-settlement"),
+		protocol: v.literal("brc-178"),
 		wireVersion: v.literal(1),
 		chain: v.union(v.literal("main"), v.literal("test")),
 		sessionId: v.string(),

@@ -3,7 +3,7 @@ import type { P2PTradeItem } from "./types/p2p";
 
 const { toArray, toHex } = Utils;
 
-export const SETTLEMENT_PROTOCOL = "1sat-p2p-settlement" as const;
+export const SETTLEMENT_PROTOCOL = "brc-178" as const;
 export const SETTLEMENT_WIRE_VERSION = 1 as const;
 export const SETTLEMENT_RETENTION_MS = 24 * 60 * 60 * 1000;
 export const MAX_SETTLEMENT_TTL_MS = 30 * 60 * 1000;

@@ -61,7 +61,7 @@ function lockedSession() {
 
 function payload(overrides: Record<string, unknown> = {}) {
 	return {
-		protocol: "1sat-p2p-settlement",
+		protocol: "brc-178",
 		version: 1,
 		chain: "main",
 		sessionId: SESSION_ID,
