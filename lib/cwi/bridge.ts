@@ -52,9 +52,25 @@ const LEADER_LEASE_MS = 10_000;
 
 type HandshakeState = "idle" | "probing" | "connected" | "fallback-required";
 
-export const getCWIClientWindow = (): WindowProxy | null => {
+export const getCWIClient = (): {
+	window: WindowProxy;
+	identity: ReturnType<typeof parseBrowserOrigin>;
+} | null => {
 	if (typeof window === "undefined") return null;
-	return window.parent !== window ? window.parent : window.opener;
+	const embedded = window.parent !== window;
+	const clientWindow = embedded ? window.parent : window.opener;
+	if (!clientWindow) return null;
+	const declaredOrigin =
+		typeof document === "undefined"
+			? null
+			: embedded
+				? document.referrer
+				: new URLSearchParams(window.location?.search ?? "").get("origin") ||
+					document.referrer;
+	return {
+		window: clientWindow,
+		identity: declaredOrigin ? parseBrowserOrigin(declaredOrigin) : null,
+	};
 };
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
@@ -218,12 +234,10 @@ export class CWIBridge {
 		this.handshakePolicy = isLikelyMobileRuntime()
 			? MOBILE_HANDSHAKE_POLICY
 			: DESKTOP_HANDSHAKE_POLICY;
-		if (typeof document !== "undefined" && document.referrer) {
-			const identity = parseBrowserOrigin(document.referrer);
-			if (identity) {
-				this.browserOrigin = identity.browserOrigin;
-				this.originator = identity.originator;
-			}
+		const identity = getCWIClient()?.identity;
+		if (identity) {
+			this.browserOrigin = identity.browserOrigin;
+			this.originator = identity.originator;
 		}
 	}
 
@@ -390,7 +404,7 @@ export class CWIBridge {
 	}
 
 	private handleDAppMessage(event: MessageEvent): void {
-		const dAppWindow = getCWIClientWindow();
+		const dAppWindow = getCWIClient()?.window;
 		if (
 			!event.isTrusted ||
 			!dAppWindow ||

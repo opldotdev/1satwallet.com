@@ -23,7 +23,7 @@ import {
 	type BridgeCounterpartyPermissionRequest,
 	type BridgeGroupedPermissionRequest,
 	type BridgePermissionRequest,
-	getCWIClientWindow,
+	getCWIClient,
 } from "@/lib/cwi/bridge";
 import {
 	counterpartyConsentEntries,
@@ -637,11 +637,11 @@ export default function CWIPage() {
 		!!activeAssetPermission ||
 		storageAccessRequired;
 
-	// Notify parent frame about CWI state so it can resize the iframe.
+	// Notify the verified dApp window about bridge and permission state.
 	useEffect(() => {
-		const dAppWindow = getCWIClientWindow();
-		if (!dAppWindow) return;
-		dAppWindow.postMessage(
+		const client = getCWIClient();
+		if (!client?.identity) return;
+		client.window.postMessage(
 			{
 				type: "CWI",
 				cwiState: {
@@ -652,7 +652,7 @@ export default function CWIPage() {
 					reason,
 				},
 			},
-			"*",
+			client.identity.browserOrigin,
 		);
 	}, [status, showOverlay, transport, fallbackRecommended, reason]);
 
