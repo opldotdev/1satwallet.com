@@ -26,7 +26,7 @@ states mean:
 | Sync | supported | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
 | Local keys, backup, migration | supported | unsupported | unsupported | unsupported | unsupported | unsupported |
 
-The installed `@1sat/connect@0.0.89` returns `provider: string` and identifies
+The installed `@1sat/connect@0.0.91` returns `provider: string` and identifies
 every successful auto-detected `WalletClient("auto")` substrate as `brc100`.
 It therefore cannot distinguish desktop HTTP, injected/XDM, and React Native
 after the race, cannot target one of them for reconnect, and cannot prove that
