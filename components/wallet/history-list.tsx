@@ -2,12 +2,12 @@
 
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toBitcoin } from "satoshi-token";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	ACTION_HISTORY_PAGE_SIZE,
 	type ActionHistoryState,
+	actionAmountLabel,
 	actionExplorerUrl,
 	actionHistoryForIdentity,
 	actionReferenceLabel,
@@ -189,16 +189,19 @@ const HistoryList = () => {
 									</Badge>
 								))}
 								<Badge variant="outline" className="text-[10px]">
-									{action.isOutgoing ? "Outgoing" : "Incoming"}
+									{action.satoshis < 0
+										? "Sent"
+										: action.satoshis > 0
+											? "Received"
+											: "No net change"}
 								</Badge>
 								<Badge variant="secondary" className="text-[10px]">
 									{action.status}
 								</Badge>
 								<span
-									className={`font-mono text-sm ${action.isOutgoing ? "text-muted-foreground" : "text-primary"}`}
+									className={`font-mono text-sm ${action.satoshis <= 0 ? "text-muted-foreground" : "text-primary"}`}
 								>
-									{action.isOutgoing ? "−" : "+"}
-									{toBitcoin(action.satoshis)} BSV
+									{actionAmountLabel(action.satoshis)}
 								</span>
 							</div>
 						</li>

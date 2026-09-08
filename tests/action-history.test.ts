@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import type { WalletAction, WalletInterface } from "@bsv/sdk";
 import {
 	ACTION_HISTORY_PAGE_SIZE,
+	actionAmountLabel,
 	actionExplorerUrl,
 	actionHistoryForIdentity,
 	actionReferenceLabel,
@@ -22,6 +23,11 @@ const action = {
 } satisfies WalletAction;
 
 describe("action history", () => {
+	test("formats signed wallet deltas once without scientific notation", () => {
+		assert.equal(actionAmountLabel(-79), "−0.00000079 BSV");
+		assert.equal(actionAmountLabel(8368156), "+0.08368156 BSV");
+		assert.equal(actionAmountLabel(0), "0.00000000 BSV");
+	});
 	test("requests one truthful page with BRC-100 offset pagination", async () => {
 		let args: unknown;
 		const wallet = {

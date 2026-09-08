@@ -63,8 +63,8 @@ export function profileDraftFromRecord(
 }
 
 export function isSafePublicImageUrl(value: string): boolean {
-	if (value.startsWith("ord://")) {
-		return /^ord:\/\/[a-fA-F0-9]{64}(?:[._]\d+)?$/.test(value);
+	if (value.startsWith("ord://") || value.startsWith("1sat://")) {
+		return /^(?:ord|1sat):\/\/[a-fA-F0-9]{64}(?:[._]\d+)?$/.test(value);
 	}
 	try {
 		return new URL(value).protocol === "https:";
@@ -91,7 +91,7 @@ export function validateBapProfile(
 			continue;
 		}
 		if (field === "image" && !isSafePublicImageUrl(value)) {
-			errors[field] = "Use an https:// or ord:// image URL.";
+			errors[field] = "Use an https://, ord://, or 1sat:// image URL.";
 			continue;
 		}
 		if (field === "email" && !EMAILISH.test(value)) {

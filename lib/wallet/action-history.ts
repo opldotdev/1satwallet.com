@@ -10,6 +10,11 @@ import {
 
 export const ACTION_HISTORY_PAGE_SIZE = 25;
 
+export function actionAmountLabel(satoshis: number): string {
+	const sign = satoshis < 0 ? "−" : satoshis > 0 ? "+" : "";
+	return `${sign}${(Math.abs(satoshis) / 100_000_000).toFixed(8)} BSV`;
+}
+
 export interface ActionHistoryState {
 	identityKey: string | null;
 	actions: WalletAction[] | null;

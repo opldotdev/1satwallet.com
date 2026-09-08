@@ -3,10 +3,23 @@ import test from "node:test";
 import {
 	buildBapAttestationReview,
 	identityActionMessage,
+	isSafePublicImageUrl,
 	normalizeBapDiscovery,
 	profileDraftFromRecord,
 	validateBapProfile,
 } from "../lib/wallet/bap-identity";
+
+test("accepts wallet 1sat image references but rejects non-content targets", () => {
+	const image = `1sat://${"ab".repeat(32)}.0`;
+	assert.equal(isSafePublicImageUrl(image), true);
+	assert.equal(isSafePublicImageUrl("1sat://wallet/settings"), false);
+	assert.equal(isSafePublicImageUrl(`${image}/../../settings`), false);
+	const result = validateBapProfile(
+		profileDraftFromRecord({ name: "Satchmo", image }),
+	);
+	assert.deepEqual(result.errors, {});
+	assert.equal(result.profile.image, image);
+});
 
 test("validates and trims the fixed public BAP profile schema", () => {
 	const result = validateBapProfile({
@@ -38,7 +51,10 @@ test("rejects unsafe profile URLs and malformed contact fields", () => {
 		email: "not-an-email",
 		paymail: "not-paymail",
 	});
-	assert.equal(result.errors.image, "Use an https:// or ord:// image URL.");
+	assert.equal(
+		result.errors.image,
+		"Use an https://, ord://, or 1sat:// image URL.",
+	);
 	assert.equal(result.errors.email, "Enter a valid email address.");
 	assert.equal(result.errors.paymail, "Enter a valid Paymail address.");
 });
