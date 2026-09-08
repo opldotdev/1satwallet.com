@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 const TESTFLIGHT_APP_URL = "https://apps.apple.com/app/testflight/id899247664";
+const TESTFLIGHT_BETA_URL = "https://testflight.apple.com/join/9N4jc7Qm";
 
 function AppleLogo({ className }: { className?: string }) {
 	return (
@@ -32,13 +33,29 @@ export function AppleAppPage() {
 							iCloud Keychain holds the seed.
 						</p>
 
+						<aside
+							className="mx-auto mb-8 max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-left"
+							aria-label="Beta risk warning"
+						>
+							<h2 className="font-semibold">
+								Beta software — risk of permanent loss
+							</h2>
+							<p className="mt-2 text-sm text-muted-foreground">
+								Do not import or connect a wallet holding significant funds or
+								valuable assets. Bugs may permanently lose money, NFTs, or other
+								assets. Use a separate test wallet with only small amounts and
+								assets you can afford to lose. Keep an independent key backup;
+								backups cannot reverse transactions or recover assets lost
+								through a software bug.
+							</p>
+						</aside>
 						<div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
 							<Button size="lg" className="gap-3 h-14 px-8 text-base" asChild>
-								<a href={TESTFLIGHT_APP_URL}>
+								<a href={TESTFLIGHT_BETA_URL}>
 									<AppleLogo className="h-5 w-5" />
 									<div className="text-left">
-										<div className="text-xs opacity-80">Get</div>
-										<div className="font-semibold">TestFlight</div>
+										<div className="text-xs opacity-80">1Sat Wallet</div>
+										<div className="font-semibold">Join the beta</div>
 									</div>
 								</a>
 							</Button>
@@ -59,8 +76,8 @@ export function AppleAppPage() {
 						</div>
 
 						<p className="text-sm text-muted-foreground">
-							The Apple app is a TestFlight beta. Install TestFlight, then open
-							1Sat Wallet.
+							Join through our public invitation—no email request needed.
+							Installation requires an approved build for your device.
 						</p>
 					</div>
 				</div>
@@ -79,7 +96,10 @@ export function AppleAppPage() {
 							</div>
 							<h3 className="font-semibold mb-2">Install TestFlight</h3>
 							<p className="text-sm text-muted-foreground">
-								Get TestFlight from the App Store on iPhone, iPad, or Mac.
+								<a href={TESTFLIGHT_APP_URL} className="underline">
+									Get TestFlight from the App Store
+								</a>{" "}
+								on iPhone, iPad, or Mac.
 							</p>
 						</div>
 
@@ -87,9 +107,12 @@ export function AppleAppPage() {
 							<div className="h-12 w-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mx-auto mb-4 text-xl font-bold">
 								2
 							</div>
-							<h3 className="font-semibold mb-2">Open 1Sat Wallet</h3>
+							<h3 className="font-semibold mb-2">Accept the invitation</h3>
 							<p className="text-sm text-muted-foreground">
-								Find 1Sat Wallet in TestFlight and install it.
+								<a href={TESTFLIGHT_BETA_URL} className="underline">
+									Open the 1Sat Wallet beta invitation
+								</a>
+								, accept it in TestFlight, then choose Install.
 							</p>
 						</div>
 
@@ -230,8 +253,10 @@ export function AppleAppPage() {
 						<div className="border-b pb-6">
 							<h3 className="font-medium mb-2">How do I get the Apple app?</h3>
 							<p className="text-sm text-muted-foreground">
-								Install TestFlight, then open 1Sat Wallet from TestFlight. There
-								is no Mac disk image and no Windows build.
+								Install TestFlight, then follow our public beta invitation to
+								accept and install 1Sat Wallet. Installing TestFlight alone does
+								not add the wallet. If Apple says the beta is not accepting
+								testers, check back when an approved build is available.
 							</p>
 						</div>
 
@@ -270,9 +295,9 @@ export function AppleAppPage() {
 						</p>
 						<div className="flex flex-col sm:flex-row items-center justify-center gap-4">
 							<Button size="lg" className="gap-2" asChild>
-								<a href={TESTFLIGHT_APP_URL}>
+								<a href={TESTFLIGHT_BETA_URL}>
 									<AppleLogo className="h-5 w-5" />
-									Open TestFlight
+									Join the beta
 								</a>
 							</Button>
 							<Button variant="outline" size="lg" className="gap-2" asChild>
