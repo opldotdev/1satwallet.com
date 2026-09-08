@@ -39,9 +39,6 @@ bun run build
 - `@1sat/client` connects the UI to the public services at `api.1sat.app`.
 - `wallet.1sat.app` stores and synchronizes the built-in BRC-100 wallet.
 
-See [docs/BRC100_GAP_ANALYSIS.md](docs/BRC100_GAP_ANALYSIS.md) for the standards
-comparison, supported connection modes, and remaining product work.
-
 ## Deployment
 
 See [docs/deployment.md](docs/deployment.md) for hosting configuration and
