@@ -285,6 +285,11 @@ export function AppleAppPage() {
 					</div>
 				</div>
 			</section>
+			<footer className="px-6 py-8 text-center text-sm text-muted-foreground">
+				<Link className="underline" href="/privacy">
+					Privacy Policy
+				</Link>
+			</footer>
 		</div>
 	);
 }
