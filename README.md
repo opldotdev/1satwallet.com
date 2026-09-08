@@ -1,18 +1,9 @@
 # 1Sat Wallet
 
-The BRC-100 web wallet served at [1satwallet.com](https://1satwallet.com).
-
-The app can use a BRC-100 wallet supplied by 1Sat Wallet Desktop, an injected
-wallet such as Yours, or an embedded mobile host. It also includes its own web
-wallet and exposes that wallet to other websites through the CWI bridge.
-
-Manage balances, send and receive payments, view owned assets and activity,
-and manage identity, certificates, permissions, backups, and wallet providers.
+A web wallet for Bitcoin SV and 1Sat assets at [1satwallet.com](https://1satwallet.com).
+Use the built-in browser wallet or connect a compatible BRC-100 wallet.
 
 ## Getting started
-
-Install dependencies, configure the environment, and start the development
-server:
 
 ```bash
 bun install
@@ -22,24 +13,10 @@ bun run dev
 
 Open [http://localhost:8255](http://localhost:8255).
 
-Before submitting changes, run:
+## Checks
 
 ```bash
 bun run lint
 bunx tsc --noEmit
 bun run build
 ```
-
-## Architecture
-
-- `@1sat/connect` discovers and monitors external BRC-100 wallets.
-- `@1sat/wallet-browser` supplies the built-in browser wallet.
-- `@1sat/actions` implements 1Sat asset and payment operations over a standard
-  BRC-100 `WalletInterface`.
-- `@1sat/client` connects the UI to the public services at `api.1sat.app`.
-- `wallet.1sat.app` stores and synchronizes the built-in BRC-100 wallet.
-
-## Deployment
-
-See [docs/deployment.md](docs/deployment.md) for hosting configuration and
-[docs/release.md](docs/release.md) for release and rollback procedures.
