@@ -104,7 +104,7 @@ function AcquireCertificateDialog({
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
 			<DialogTrigger asChild>
-				<Button>
+				<Button size="sm">
 					<Plus data-icon="inline-start" /> Acquire certificate
 				</Button>
 			</DialogTrigger>
