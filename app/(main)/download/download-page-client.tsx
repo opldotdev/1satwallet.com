@@ -33,6 +33,22 @@ export function AppleAppPage() {
 							iCloud Keychain holds the seed.
 						</p>
 
+						<aside
+							className="mx-auto mb-8 max-w-2xl rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-left"
+							aria-label="Beta risk warning"
+						>
+							<h2 className="font-semibold">
+								Beta software — risk of permanent loss
+							</h2>
+							<p className="mt-2 text-sm text-muted-foreground">
+								Do not import or connect a wallet holding significant funds or
+								valuable assets. Bugs may permanently lose money, NFTs, or other
+								assets. Use a separate test wallet with only small amounts and
+								assets you can afford to lose. Keep an independent key backup;
+								backups cannot reverse transactions or recover assets lost
+								through a software bug.
+							</p>
+						</aside>
 						<div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
 							<Button size="lg" className="gap-3 h-14 px-8 text-base" asChild>
 								<a href={TESTFLIGHT_BETA_URL}>

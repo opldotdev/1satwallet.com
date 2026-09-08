@@ -15,4 +15,14 @@ test("Apple download offers the wallet invitation separately from TestFlight", (
 	);
 	assert.ok(html.includes("Accept the invitation"));
 	assert.ok(!html.includes("Find 1Sat Wallet in TestFlight"));
+	assert.ok(html.includes("Beta software — risk of permanent loss"));
+	assert.ok(
+		html.includes(
+			"Do not import or connect a wallet holding significant funds",
+		),
+	);
+	assert.ok(
+		html.indexOf("Beta risk warning") <
+			html.indexOf('href="https://testflight.apple.com/join/'),
+	);
 });
