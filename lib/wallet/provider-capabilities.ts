@@ -115,3 +115,13 @@ export function providerCapability(
 ): CapabilityState {
 	return PROVIDER_CAPABILITIES[surface].actions[action];
 }
+
+export function surfaceForConnection(
+	mode: "none" | "built-in" | "external",
+	option?: string | null,
+): ProviderSurface {
+	if (mode !== "external") return "built-in-direct";
+	if (option === "injected") return "injected";
+	if (option === "desktop") return "desktop-http";
+	return "desktop-http";
+}

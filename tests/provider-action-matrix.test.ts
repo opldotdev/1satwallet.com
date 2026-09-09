@@ -6,6 +6,7 @@ import type { ConnectWalletConfig, ConnectWalletResult } from "@1sat/connect";
 import {
 	PROVIDER_CAPABILITIES,
 	providerCapability,
+	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
@@ -51,6 +52,12 @@ describe("provider action matrix", () => {
 			providerCapability("built-in-direct", "send-bsv"),
 			"supported",
 		);
+	});
+
+	it("maps connection mode onto the capability surface", () => {
+		assert.equal(surfaceForConnection("built-in"), "built-in-direct");
+		assert.equal(surfaceForConnection("external", "injected"), "injected");
+		assert.equal(surfaceForConnection("external", "desktop"), "desktop-http");
 	});
 
 	it("matches the installed connector type and export boundary", () => {
@@ -153,10 +160,7 @@ describe("provider action matrix", () => {
 			identityEnd,
 			source.indexOf("session.start()", identityEnd),
 		);
-		assert.match(
-			disconnect,
-			/teardownWallet\(statusAfterDisconnect\(reason\)\)/,
-		);
+		assert.match(disconnect, /teardownWallet\(statusAfterDisconnect\(reason\)/);
 
 		const syncSource = read("providers/hooks/use-sync-engine.ts");
 		assert.match(

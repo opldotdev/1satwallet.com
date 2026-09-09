@@ -4,6 +4,8 @@ import type { WalletClient } from "@bsv/sdk";
 import {
 	connectSelectedWallet,
 	isConnectionAvailable,
+	prepareWalletSwitch,
+	WalletSwitchError,
 } from "@/lib/wallet/connection-options";
 
 it("discovers availability without requesting authentication or identity", async () => {
@@ -77,4 +79,33 @@ it("does not fall back to another wallet after denied authentication", async () 
 		/denied/,
 	);
 	assert.equal(clients, 1);
+});
+it("refuses an unavailable switch target before connecting", async () => {
+	let connected = 0;
+	await assert.rejects(
+		() =>
+			prepareWalletSwitch("desktop", {
+				probe: async () => false,
+				connect: async () => {
+					connected++;
+					throw new Error("must not connect");
+				},
+			}),
+		(error: unknown) =>
+			error instanceof WalletSwitchError && error.reason === "unavailable",
+	);
+	assert.equal(connected, 0);
+});
+it("keeps identity derivation failures distinct from a missing wallet", async () => {
+	await assert.rejects(
+		() =>
+			prepareWalletSwitch("injected", {
+				probe: async () => true,
+				connect: async () => {
+					throw new Error("identity key missing");
+				},
+			}),
+		(error: unknown) =>
+			error instanceof WalletSwitchError && error.reason === "identity-failed",
+	);
 });
