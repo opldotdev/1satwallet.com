@@ -52,6 +52,16 @@ describe("provider action matrix", () => {
 			providerCapability("built-in-direct", "send-bsv"),
 			"supported",
 		);
+		assert.equal(providerCapability("desktop-http", "asset-read"), "supported");
+		assert.equal(providerCapability("injected", "asset-read"), "supported");
+		assert.equal(
+			providerCapability("native-webview", "asset-read"),
+			"supported",
+		);
+		assert.equal(
+			providerCapability("desktop-http", "asset-write"),
+			"contract-only",
+		);
 	});
 
 	it("maps connection mode onto the capability surface", () => {
@@ -94,6 +104,7 @@ describe("provider action matrix", () => {
 			"components/wallet/wallet-home-status.tsx",
 			"components/wallet/history-list.tsx",
 			"components/wallet/token-grid.tsx",
+			"components/wallet/ordinals-grid.tsx",
 			"app/(main)/wallet/identity/page.tsx",
 			"app/(main)/wallet/opns/page.tsx",
 			"app/(main)/inscribe/page.tsx",

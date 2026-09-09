@@ -20,7 +20,8 @@ states mean:
 | Action history | supported | contract-only | contract-only | contract-only | experimental | experimental |
 | Send BSV | supported | contract-only | contract-only | contract-only | experimental | experimental |
 | Receive address | supported | uncertified | uncertified | uncertified | experimental | experimental |
-| Asset read/write | supported | contract-only | contract-only | contract-only | experimental | experimental |
+| Asset read | supported | supported | supported | supported | experimental | experimental |
+| Asset write | supported | contract-only | contract-only | contract-only | experimental | experimental |
 | Identity | supported | contract-only | contract-only | contract-only | experimental | experimental |
 | Permission administration | supported | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
 | Sync | supported | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |

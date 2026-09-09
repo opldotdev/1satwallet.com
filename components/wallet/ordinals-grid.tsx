@@ -24,6 +24,7 @@ import {
 } from "@/components/wallet/ordinal-action-dialog";
 import { OrdinalsGridSkeleton } from "@/components/wallet/ordinals-grid-skeleton";
 import { useOrdinalMetadata } from "@/hooks/use-ordinal-metadata";
+import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { isOrdinalListed, ordinalAssetId } from "@/lib/wallet/ordinal-actions";
 import { getOrdinalPresentation } from "@/lib/wallet/ordinal-presentation";
 import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
@@ -34,8 +35,10 @@ export function OrdinalsGrid() {
 	const queryClient = useQueryClient();
 	const {
 		ordinals,
+		ordinalsState,
 		isInitialized,
 		isInitializing,
+		isBalanceLoading,
 		identityKey,
 		refreshBalance,
 	} = useWalletToolbox();
@@ -106,6 +109,7 @@ export function OrdinalsGrid() {
 
 	if (
 		isInitializing ||
+		isBalanceLoading ||
 		(metadataRequests.length > 0 && metadataQuery.isPending)
 	) {
 		return <OrdinalsGridSkeleton />;
@@ -124,7 +128,9 @@ export function OrdinalsGrid() {
 			<div className="flex flex-wrap items-center justify-between gap-3">
 				<div>
 					<h3 className="text-lg font-medium">
-						{ordinals.length} Ordinal{ordinals.length === 1 ? "" : "s"}
+						{ordinalsState.kind === "ready" || ordinalsState.kind === "empty"
+							? `${ordinals.length} Ordinal${ordinals.length === 1 ? "" : "s"}`
+							: "Ordinals"}
 					</h3>
 					<p className="text-sm text-muted-foreground">
 						{selectedOutpoints.size === 0
@@ -193,7 +199,11 @@ export function OrdinalsGrid() {
 				</p>
 			)}
 
-			{ordinals.length === 0 ? (
+			{ordinalsState.kind !== "ready" && ordinalsState.kind !== "empty" ? (
+				<div className="py-16 text-center text-muted-foreground">
+					{describeAssetSurface(ordinalsState, "inscription")}
+				</div>
+			) : ordinals.length === 0 ? (
 				<div className="py-16 text-center text-muted-foreground">
 					No ordinals found in the active wallet.
 				</div>

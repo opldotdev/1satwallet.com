@@ -58,6 +58,8 @@ describe("wallet home amount parsing", () => {
 		assert.match(status, /describeAssetSurface/);
 		assert.doesNotMatch(status, /balanceError\s*\n\s*\? "Unavailable"/);
 		assert.match(read("components/nav-user.tsx"), /switchWallet/);
+		assert.match(read("components/wallet/token-grid.tsx"), /bsv21State/);
+		assert.match(read("components/wallet/token-grid.tsx"), /isBalanceLoading/);
 	});
 
 	it("keeps the provider-neutral action path isolated and invalidates history", () => {

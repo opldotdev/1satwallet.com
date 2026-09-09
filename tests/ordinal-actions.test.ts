@@ -158,6 +158,11 @@ describe("canonical ordinal action dispatch", () => {
 		assert.match(source, /executeOrdinalOperation\(oneSatContext/);
 		assert.match(source, /queryKey: \["wallet-balance"\]/);
 		assert.match(source, /queryKey: \["market-flow"\]/);
+		assert.match(read("components/wallet/ordinals-grid.tsx"), /ordinalsState/);
+		assert.match(
+			read("components/wallet/ordinals-grid.tsx"),
+			/isBalanceLoading/,
+		);
 		assert.doesNotMatch(
 			source,
 			/@\/providers\/wallet-provider|createContext\(|wallet-storage|wallet-backup|indexedDB|rootKey|seedPhrase/,
