@@ -53,6 +53,13 @@ describe("wallet home amount parsing", () => {
 		);
 	});
 
+	it("does not collapse asset rows into a generic Unavailable label", () => {
+		const status = read("components/wallet/wallet-home-status.tsx");
+		assert.match(status, /describeAssetSurface/);
+		assert.doesNotMatch(status, /balanceError\s*\n\s*\? "Unavailable"/);
+		assert.match(read("components/nav-user.tsx"), /switchWallet/);
+	});
+
 	it("keeps the provider-neutral action path isolated and invalidates history", () => {
 		const source = read("components/wallet/wallet-home-actions.tsx");
 		assert.doesNotMatch(

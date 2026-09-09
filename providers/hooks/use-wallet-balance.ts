@@ -9,6 +9,12 @@ import {
 } from "@1sat/actions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	type AssetSurfaceState,
+	assetSurfaceFromCount,
+	shouldQueryAssetSurface,
+} from "@/lib/wallet/asset-query-state";
+import type { CapabilityState } from "@/lib/wallet/provider-capabilities";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 
 interface WalletBalance {
@@ -28,11 +34,14 @@ interface LegacyFundingUtxo {
 }
 
 interface BalanceQueryResult {
-	balance: WalletBalance;
+	balance: WalletBalance | null;
+	balanceFailed: boolean;
 	ordinals: WalletOutput[];
 	bsv21Balances: Bsv21Balance[];
 	legacyBalance: number;
 	legacyFundingUtxos: LegacyFundingUtxo[];
+	ordinalsState: AssetSurfaceState;
+	bsv21State: AssetSurfaceState;
 }
 
 interface UseWalletBalanceOptions {
@@ -41,6 +50,7 @@ interface UseWalletBalanceOptions {
 	identityKey: string | null;
 	trackedAddresses: string[];
 	includeLegacyFunding: boolean;
+	assetRead: CapabilityState;
 }
 
 interface SyncStatus {
@@ -56,11 +66,20 @@ export interface WalletBalanceResult {
 	bsv21Balances: Bsv21Balance[];
 	legacyBalance: number;
 	legacyFundingUtxos: LegacyFundingUtxo[];
+	ordinalsState: AssetSurfaceState;
+	bsv21State: AssetSurfaceState;
 	isBalanceLoading: boolean;
 	balanceError: Error | null;
 	refreshBalance: () => void;
 	syncStatus: SyncStatus;
-	balanceQueryKey: readonly [string, string, string | null, string, boolean];
+	balanceQueryKey: readonly [
+		string,
+		string,
+		string | null,
+		string,
+		boolean,
+		CapabilityState,
+	];
 }
 
 export function useWalletBalance({
@@ -69,6 +88,7 @@ export function useWalletBalance({
 	identityKey,
 	trackedAddresses,
 	includeLegacyFunding,
+	assetRead,
 }: UseWalletBalanceOptions): WalletBalanceResult {
 	const queryClient = useQueryClient();
 
@@ -86,8 +106,9 @@ export function useWalletBalance({
 				identityKey,
 				addressesKey,
 				includeLegacyFunding,
+				assetRead,
 			] as const,
-		[chain, identityKey, addressesKey, includeLegacyFunding],
+		[chain, identityKey, addressesKey, includeLegacyFunding, assetRead],
 	);
 
 	const balanceQuery = useQuery({
@@ -136,14 +157,66 @@ export function useWalletBalance({
 					)
 				: Promise.resolve([]);
 
-			const [legacyResults, balanceResult, ordinalsResult, bsv21Balances] =
+			const readAssets = shouldQueryAssetSurface(assetRead);
+			const [legacyResults, balanceResult, ordinalsResult, bsv21Result] =
 				await Promise.all([
 					legacyResultsPromise,
-					ctx.wallet.listOutputs({ basket: WALLET_BALANCE_BASKET }),
-					listOrdinals.execute(ctx, {}),
-					getBsv21Balances.execute(ctx, {}),
+					ctx.wallet.listOutputs({ basket: WALLET_BALANCE_BASKET }).then(
+						(result) => ({ ok: true as const, result }),
+						(error: unknown) => ({ ok: false as const, error }),
+					),
+					readAssets
+						? listOrdinals.execute(ctx, {}).then(
+								(result) => ({ ok: true as const, result }),
+								(error: unknown) => ({ ok: false as const, error }),
+							)
+						: Promise.resolve({
+								ok: false as const,
+								skipped: true as const,
+							}),
+					readAssets
+						? getBsv21Balances.execute(ctx, {}).then(
+								(result) => ({ ok: true as const, result }),
+								(error: unknown) => ({ ok: false as const, error }),
+							)
+						: Promise.resolve({
+								ok: false as const,
+								skipped: true as const,
+							}),
 				]);
-			const total = balanceResult.totalOutputs;
+
+			if (!balanceResult.ok) {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.balance.list-outputs",
+					recoverable: true,
+					context: { retryable: true },
+				});
+			}
+
+			const total = balanceResult.ok ? balanceResult.result.totalOutputs : 0;
+			const ordinals = ordinalsResult.ok ? ordinalsResult.result.outputs : [];
+			const bsv21Balances = bsv21Result.ok ? bsv21Result.result : [];
+			const ordinalsState: AssetSurfaceState = !readAssets
+				? { kind: "unsupported", capability: assetRead }
+				: ordinalsResult.ok
+					? assetSurfaceFromCount(ordinals.length)
+					: { kind: "error", message: "Couldn't load. Try again." };
+			const bsv21State: AssetSurfaceState = !readAssets
+				? { kind: "unsupported", capability: assetRead }
+				: bsv21Result.ok
+					? assetSurfaceFromCount(bsv21Balances.length)
+					: { kind: "error", message: "Couldn't load. Try again." };
+			if (ordinalsState.kind === "error" || bsv21State.kind === "error") {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.balance.asset-read",
+					recoverable: true,
+					context: { retryable: true, capability: assetRead },
+				});
+			}
 
 			const legacyFundingUtxos = legacyResults.flat().map((u) => ({
 				outpoint: u.outpoint,
@@ -155,11 +228,16 @@ export function useWalletBalance({
 			);
 
 			return {
-				balance: { confirmed: total, unconfirmed: 0, total },
-				ordinals: ordinalsResult.outputs,
+				balance: balanceResult.ok
+					? { confirmed: total, unconfirmed: 0, total }
+					: null,
+				balanceFailed: !balanceResult.ok,
+				ordinals,
 				bsv21Balances,
 				legacyBalance,
 				legacyFundingUtxos,
+				ordinalsState,
+				bsv21State,
 			};
 		},
 		enabled: isInitialized && !!ctx && trackedAddresses.length > 0,
@@ -191,10 +269,19 @@ export function useWalletBalance({
 			isSyncing: balanceQuery.isFetching,
 			progress: null,
 			lastSync,
-			error: balanceQuery.error ? "Balance refresh failed. Try again." : null,
+			error: balanceQuery.data?.balanceFailed
+			? "Balance refresh failed. Try again."
+			: balanceQuery.error
+				? "Balance refresh failed. Try again."
+				: null,
 		}),
 		[balanceQuery.isFetching, balanceQuery.error, lastSync],
 	);
+
+	const unsupportedAssets: AssetSurfaceState = {
+		kind: "unsupported",
+		capability: assetRead,
+	};
 
 	return {
 		balance: balanceQuery.data?.balance ?? null,
@@ -202,10 +289,13 @@ export function useWalletBalance({
 		bsv21Balances: balanceQuery.data?.bsv21Balances ?? [],
 		legacyBalance: balanceQuery.data?.legacyBalance ?? 0,
 		legacyFundingUtxos: balanceQuery.data?.legacyFundingUtxos ?? [],
+		ordinalsState: balanceQuery.data?.ordinalsState ?? unsupportedAssets,
+		bsv21State: balanceQuery.data?.bsv21State ?? unsupportedAssets,
 		isBalanceLoading: balanceQuery.isLoading,
-		balanceError: balanceQuery.error
-			? new Error("Balance refresh failed. Try again.")
-			: null,
+		balanceError:
+			balanceQuery.data?.balanceFailed || balanceQuery.error
+				? new Error("Balance refresh failed. Try again.")
+				: null,
 		refreshBalance,
 		syncStatus,
 		balanceQueryKey,

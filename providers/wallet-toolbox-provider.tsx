@@ -64,8 +64,14 @@ import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import {
 	connectSelectedWallet,
+	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
+import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
+import {
+	providerCapability,
+	surfaceForConnection,
+} from "@/lib/wallet/provider-capabilities";
 import {
 	diagnoseNoWalletResult,
 	statusAfterDisconnect,
@@ -227,11 +233,14 @@ interface WalletToolboxContextValue {
 	}[];
 	isBalanceLoading: boolean;
 	balanceError: Error | null;
+	ordinalsState: AssetSurfaceState;
+	bsv21State: AssetSurfaceState;
 
 	exchangeRate: number | null;
 
 	initializeWallet: (rootKeyHex: string) => Promise<boolean>;
 	connectExternalWallet: (option?: WalletConnectionOption) => Promise<boolean>;
+	switchWallet: (option: WalletConnectionOption) => Promise<boolean>;
 	disconnectExternalWallet: () => Promise<void>;
 	destroyWallet: () => Promise<void>;
 	refreshBalance: () => void;
@@ -334,12 +343,28 @@ export function WalletToolboxProvider({
 	}, [wallet, services, chain]);
 
 	// -- Balance hook --
+	const savedConnectionOption =
+		typeof window === "undefined"
+			? null
+			: localStorage.getItem(CONNECTION_OPTION_KEY);
+	const assetRead = providerCapability(
+		surfaceForConnection(
+			connectionMode,
+			savedConnectionOption === "injected" ||
+				savedConnectionOption === "desktop" ||
+				savedConnectionOption === "embedded"
+				? savedConnectionOption
+				: providerType,
+		),
+		"asset-read",
+	);
 	const balanceResult = useWalletBalance({
 		ctx: oneSatContext,
 		isInitialized,
 		identityKey,
 		trackedAddresses,
 		includeLegacyFunding: connectionMode === "built-in",
+		assetRead,
 	});
 	const {
 		refreshBalance,
@@ -348,6 +373,8 @@ export function WalletToolboxProvider({
 		bsv21Balances,
 		legacyBalance,
 		legacyFundingUtxos,
+		ordinalsState,
+		bsv21State,
 		isBalanceLoading,
 		balanceError,
 		syncStatus: balanceSyncStatus,
@@ -538,7 +565,10 @@ export function WalletToolboxProvider({
 	);
 
 	const teardownWallet = useCallback(
-		(status: WalletConnectionStatus): Promise<void> => {
+		(
+			status: WalletConnectionStatus,
+			options?: { destroyLocal?: boolean },
+		): Promise<void> => {
 			if (teardownPromiseRef.current) return teardownPromiseRef.current;
 
 			connectionGenerationRef.current += 1;
@@ -557,13 +587,18 @@ export function WalletToolboxProvider({
 				session?.stop();
 			}
 
-			const webWallet = walletResultRef.current;
-			walletResultRef.current = null;
-			for (const module of assetPermissionModulesRef.current) module.dispose();
-			assetPermissionModulesRef.current = [];
+			const destroyLocal = options?.destroyLocal !== false;
+			const webWallet = destroyLocal ? walletResultRef.current : null;
+			if (destroyLocal) {
+				walletResultRef.current = null;
+				for (const module of assetPermissionModulesRef.current)
+					module.dispose();
+				assetPermissionModulesRef.current = [];
+			}
+			localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
+			localStorage.removeItem(CONNECTION_OPTION_KEY);
 			externalServicesRef.current?.close();
 			externalServicesRef.current = null;
-			localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
 			resetWalletState(status);
 
 			const teardown = (async () => {
@@ -915,8 +950,115 @@ export function WalletToolboxProvider({
 
 	const disconnectExternalWallet = useCallback(async () => {
 		if (connectionMode !== "external") return;
-		await destroyWallet();
-	}, [connectionMode, destroyWallet]);
+		await teardownWallet("disconnected", { destroyLocal: false });
+	}, [connectionMode, teardownWallet]);
+
+	const switchWallet = useCallback(
+		async (option: WalletConnectionOption): Promise<boolean> => {
+			if (option === "embedded") {
+				const local = walletResultRef.current;
+				if (!local) {
+					setInitError(
+						"Create or import a built-in wallet before switching back. The current wallet is unchanged.",
+					);
+					return false;
+				}
+				const session = walletSessionRef.current;
+				walletSessionRef.current = null;
+				walletSessionCleanupRef.current();
+				walletSessionCleanupRef.current = () => {};
+				if (session?.status === "connected") session.disconnect("manual");
+				else session?.stop();
+				externalServicesRef.current?.close();
+				externalServicesRef.current = null;
+				setWallet(local.wallet);
+				setServices(local.services);
+				setConnectionMode("built-in");
+				setProviderType("1sat-web");
+				setConnectionStatus("ready");
+				setIsInitialized(true);
+				setInitError(null);
+				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "built-in");
+				localStorage.removeItem(CONNECTION_OPTION_KEY);
+				return true;
+			}
+
+			setIsInitializing(true);
+			try {
+				const result = await prepareWalletSwitch(option);
+				const externalServices = createStackServices(chain);
+				let addresses: string[];
+				try {
+					addresses = await deriveExternalAddresses(
+						result.wallet,
+						externalServices,
+					);
+				} catch (error) {
+					externalServices.close();
+					result.disconnect();
+					throw error;
+				}
+
+				const session = walletSessionRef.current;
+				walletSessionCleanupRef.current();
+				walletSessionCleanupRef.current = () => {};
+				walletSessionRef.current = null;
+				if (session?.status === "connected") session.disconnect("manual");
+				else session?.stop();
+				externalServicesRef.current?.close();
+				externalServicesRef.current = externalServices;
+
+				setWallet(result.wallet);
+				setServices(externalServices);
+				setPermissionsManager(null);
+				setIdentityKey(result.identityKey);
+				setDepositAddress(addresses[0] ?? null);
+				setReceiveAddresses(addresses);
+				setTrackedAddresses(addresses);
+				setAddressManagerReady(false);
+				setConnectionMode("external");
+				setConnectionStatus("ready");
+				setProviderType(result.provider);
+				setIsInitialized(true);
+				setInitError(null);
+				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "external");
+				localStorage.setItem(CONNECTION_OPTION_KEY, option);
+
+				const nextSession = createWalletSession(result);
+				walletSessionRef.current = nextSession;
+				const unsubscribeIdentity = nextSession.on(
+					"identityChange",
+					({ next }) => {
+						if (walletSessionRef.current !== nextSession) return;
+						setIdentityKey(next);
+					},
+				);
+				const unsubscribeDisconnected = nextSession.on(
+					"disconnected",
+					({ reason }) => {
+						if (walletSessionRef.current !== nextSession) return;
+						void teardownWallet(statusAfterDisconnect(reason), {
+							destroyLocal: false,
+						});
+					},
+				);
+				walletSessionCleanupRef.current = () => {
+					unsubscribeIdentity();
+					unsubscribeDisconnected();
+				};
+				nextSession.start();
+				return true;
+			} catch {
+				setInitError(
+					"Wallet switch failed. The current wallet is unchanged.",
+				);
+				return false;
+			} finally {
+				setIsInitializing(false);
+			}
+		},
+		[chain, deriveExternalAddresses, teardownWallet],
+	);
 
 	useEffect(() => () => void teardownWallet("disconnected"), [teardownWallet]);
 
@@ -985,9 +1127,12 @@ export function WalletToolboxProvider({
 			legacyFundingUtxos,
 			isBalanceLoading: isBalanceLoading,
 			balanceError: balanceError,
+			ordinalsState,
+			bsv21State,
 			exchangeRate,
 			initializeWallet,
 			connectExternalWallet,
+			switchWallet,
 			disconnectExternalWallet,
 			destroyWallet,
 			refreshBalance: refreshBalance,
@@ -1025,9 +1170,12 @@ export function WalletToolboxProvider({
 			legacyFundingUtxos,
 			isBalanceLoading,
 			balanceError,
+			ordinalsState,
+			bsv21State,
 			exchangeRate,
 			initializeWallet,
 			connectExternalWallet,
+			switchWallet,
 			disconnectExternalWallet,
 			destroyWallet,
 			refreshBalance,

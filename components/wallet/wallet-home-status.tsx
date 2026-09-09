@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
+import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import styles from "./wallet-home.module.css";
 
@@ -29,13 +30,12 @@ function describeSyncTask(task: SyncTaskState) {
 
 export function WalletHomeStatus() {
 	const {
-		balanceError,
-		bsv21Tokens,
+		bsv21State,
 		connectionMode,
 		hasActiveSync,
 		identityKey,
 		isBalanceLoading,
-		ordinals,
+		ordinalsState,
 		syncStatus,
 		syncTasks,
 		syncWallet,
@@ -59,17 +59,17 @@ export function WalletHomeStatus() {
 							title: "Ordinals",
 							href: "/wallet/ordinals",
 							icon: Gem,
-							count: ordinals.length,
+							state: ordinalsState,
 							noun: "inscription",
 						},
 						{
 							title: "BSV21",
 							href: "/wallet/bsv21",
 							icon: CircleDollarSign,
-							count: bsv21Tokens.length,
+							state: bsv21State,
 							noun: "token",
 						},
-					].map(({ title, href, icon: Icon, count, noun }) => (
+					].map(({ title, href, icon: Icon, state, noun }) => (
 						<Link key={title} href={href} className={styles.assetRow}>
 							<Icon className={styles.accent} aria-hidden="true" />
 							<div>
@@ -78,9 +78,7 @@ export function WalletHomeStatus() {
 									<Skeleton className="mt-2 h-4 w-24" />
 								) : (
 									<p className={styles.description}>
-										{balanceError
-											? "Unavailable"
-											: `${count} ${noun}${count === 1 ? "" : "s"}`}
+										{describeAssetSurface(state, noun)}
 									</p>
 								)}
 							</div>
