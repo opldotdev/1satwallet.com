@@ -41,7 +41,7 @@ const externalActions: Record<ProductAction, CapabilityState> = {
 	"action-history": "contract-only",
 	"send-bsv": "contract-only",
 	"receive-address": "uncertified",
-	"asset-read": "contract-only",
+	"asset-read": "supported",
 	"asset-write": "contract-only",
 	identity: "contract-only",
 	"permission-admin": "provider-managed",

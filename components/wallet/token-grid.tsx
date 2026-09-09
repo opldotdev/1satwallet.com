@@ -23,6 +23,7 @@ import { useSound } from "@/hooks/use-sound";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import {
 	bsv21ActionFailureMessage,
 	executeBsv21Send,
@@ -335,13 +336,15 @@ interface TokenGridProps {
 export default function TokenGrid({ className = "" }: TokenGridProps) {
 	const {
 		bsv21Tokens: tokens,
+		bsv21State,
 		isInitialized,
 		isInitializing,
+		isBalanceLoading,
 	} = useWalletToolbox();
 	const features = useStackFeatures();
 	const bsv21Available = features.data?.features.bsv21 === true;
 
-	if (isInitializing) {
+	if (isInitializing || isBalanceLoading) {
 		return (
 			<div className="flex items-center justify-center py-12">
 				<Loader2 className="size-8 animate-spin text-muted-foreground" />
@@ -373,7 +376,12 @@ export default function TokenGrid({ className = "" }: TokenGridProps) {
 					</p>
 				</div>
 			) : null}
-			{tokens.length === 0 ? (
+			{bsv21State.kind !== "ready" && bsv21State.kind !== "empty" ? (
+				<div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+					<Coins className="mb-4 size-12 opacity-50" />
+					<p>{describeAssetSurface(bsv21State, "token")}</p>
+				</div>
+			) : tokens.length === 0 ? (
 				<div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
 					<Coins className="mb-4 size-12 opacity-50" />
 					<p>No BSV21 tokens found in your wallet.</p>
