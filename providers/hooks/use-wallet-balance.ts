@@ -9,13 +9,13 @@ import {
 } from "@1sat/actions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	type AssetSurfaceState,
 	assetSurfaceFromCount,
 	shouldQueryAssetSurface,
 } from "@/lib/wallet/asset-query-state";
 import type { CapabilityState } from "@/lib/wallet/provider-capabilities";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 
 interface WalletBalance {
 	confirmed: number;
@@ -270,12 +270,17 @@ export function useWalletBalance({
 			progress: null,
 			lastSync,
 			error: balanceQuery.data?.balanceFailed
-			? "Balance refresh failed. Try again."
-			: balanceQuery.error
 				? "Balance refresh failed. Try again."
-				: null,
+				: balanceQuery.error
+					? "Balance refresh failed. Try again."
+					: null,
 		}),
-		[balanceQuery.isFetching, balanceQuery.error, lastSync],
+		[
+			balanceQuery.isFetching,
+			balanceQuery.error,
+			lastSync,
+			balanceQuery.data?.balanceFailed,
+		],
 	);
 
 	const unsupportedAssets: AssetSurfaceState = {

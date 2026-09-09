@@ -160,10 +160,7 @@ describe("provider action matrix", () => {
 			identityEnd,
 			source.indexOf("session.start()", identityEnd),
 		);
-		assert.match(
-			disconnect,
-			/teardownWallet\(statusAfterDisconnect\(reason\)/,
-		);
+		assert.match(disconnect, /teardownWallet\(statusAfterDisconnect\(reason\)/);
 
 		const syncSource = read("providers/hooks/use-sync-engine.ts");
 		assert.match(

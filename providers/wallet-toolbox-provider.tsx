@@ -62,12 +62,12 @@ import {
 } from "@/lib/receive-address-state";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
+import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
 	connectSelectedWallet,
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
-import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -1049,9 +1049,7 @@ export function WalletToolboxProvider({
 				nextSession.start();
 				return true;
 			} catch {
-				setInitError(
-					"Wallet switch failed. The current wallet is unchanged.",
-				);
+				setInitError("Wallet switch failed. The current wallet is unchanged.");
 				return false;
 			} finally {
 				setIsInitializing(false);

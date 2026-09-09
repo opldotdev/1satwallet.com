@@ -14,8 +14,8 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
-import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import styles from "./wallet-home.module.css";
 

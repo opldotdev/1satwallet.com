@@ -1,6 +1,13 @@
 "use client";
 
-import { ChevronsUpDown, Laptop, LogOut, Puzzle, Smartphone, Wallet } from "lucide-react";
+import {
+	ChevronsUpDown,
+	Laptop,
+	LogOut,
+	Puzzle,
+	Smartphone,
+	Wallet,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 

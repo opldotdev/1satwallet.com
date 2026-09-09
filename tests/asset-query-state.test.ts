@@ -31,7 +31,10 @@ describe("asset query states", () => {
 	it("keeps empty, ready, and transport-failed copy distinct", () => {
 		assert.equal(assetSurfaceFromCount(0).kind, "empty");
 		assert.deepEqual(assetSurfaceFromCount(2), { kind: "ready", count: 2 });
-		assert.equal(describeAssetSurface({ kind: "empty" }, "inscription"), "No inscriptions");
+		assert.equal(
+			describeAssetSurface({ kind: "empty" }, "inscription"),
+			"No inscriptions",
+		);
 		assert.equal(
 			describeAssetSurface({ kind: "ready", count: 1 }, "inscription"),
 			"1 inscription",
