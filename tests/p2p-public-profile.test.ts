@@ -18,7 +18,7 @@ describe("public profile claims", () => {
 		);
 		assert.equal(publicAvatarUrl("javascript:alert(1)", "main"), undefined);
 		assert.equal(publicDisplayName("  Alice  "), "Alice");
-		assert.equal(publicDisplayName("Alice\nAdmin"), "AliceAdmin");
+		assert.equal(publicDisplayName("Alice\nAdmin"), undefined);
 		assert.equal(publicDisplayName("A".repeat(80)), "A".repeat(64));
 		assert.equal(publicDisplayName("   "), undefined);
 	});

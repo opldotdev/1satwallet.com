@@ -1,23 +1,18 @@
 import { getProfile, type OneSatContext } from "@1sat/actions";
+import { createStackServices } from "@/lib/stack";
 import {
+	hasControlCharacter,
 	isSafePublicImageUrl,
 	profileDraftFromRecord,
 } from "@/lib/wallet/bap-identity";
-import type { PublicProfileClaim } from "./p2p-presence";
+import { type PublicProfileClaim, safeHttpsUrl } from "./p2p-presence";
 
 const DISPLAY_NAME_LIMIT = 64;
-const AVATAR_URL_LIMIT = 512;
 
 export function publicDisplayName(value: string): string | undefined {
-	const name = [...value.trim()]
-		.filter((character) => {
-			const code = character.charCodeAt(0);
-			return code >= 32 && code !== 127;
-		})
-		.join("")
-		.slice(0, DISPLAY_NAME_LIMIT)
-		.trim();
-	return name || undefined;
+	const name = value.trim().slice(0, DISPLAY_NAME_LIMIT).trim();
+	if (!name || hasControlCharacter(name)) return undefined;
+	return name;
 }
 
 export function publicAvatarUrl(
@@ -28,23 +23,13 @@ export function publicAvatarUrl(
 		image,
 	);
 	if (match) {
-		const host =
-			chain === "test"
-				? "https://testnet.api.1sat.app"
-				: "https://api.1sat.app";
-		const vout = match[2] ?? "0";
-		const url = `${host}/content/${match[1].toLowerCase()}_${vout}`;
-		return url.length <= AVATAR_URL_LIMIT ? url : undefined;
+		return createStackServices(chain).ordfs.getContentUrl(
+			`${match[1].toLowerCase()}_${match[2] ?? "0"}`,
+		);
 	}
-	if (!isSafePublicImageUrl(image) || !image.startsWith("https:")) {
-		return undefined;
-	}
+	if (!isSafePublicImageUrl(image)) return undefined;
 	try {
-		const url = new URL(image);
-		url.search = "";
-		url.hash = "";
-		const href = url.toString();
-		return href.length <= AVATAR_URL_LIMIT ? href : undefined;
+		return safeHttpsUrl(image, "avatarUrl");
 	} catch {
 		return undefined;
 	}

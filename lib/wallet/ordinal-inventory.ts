@@ -3,9 +3,17 @@ import {
 	type OneSatContext,
 	type WalletOutput,
 } from "@1sat/actions";
+import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
 
-/** Leftover Yours / theme-token basket names. Preferred inventory is `1sat`. */
-export const LEGACY_ORDINAL_BASKETS = ["p 1sat ordinals", "ordinals"] as const;
+/** Leftover theme-token basket. JS mapping only lists `p 1sat ordinals`. */
+const LEFTOVER_ORDINALS_BASKET = "ordinals";
+
+export const LEGACY_ORDINAL_BASKETS = [
+	...LEGACY_P1SAT_BASKET_MIGRATIONS.filter(
+		(migration) => migration.to === ONESAT_BASKET,
+	).map((migration) => migration.from),
+	LEFTOVER_ORDINALS_BASKET,
+] as const;
 
 export function mergeWalletOutputs(groups: WalletOutput[][]): WalletOutput[] {
 	const seen = new Set<string>();
