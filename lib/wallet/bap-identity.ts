@@ -39,7 +39,7 @@ export interface ValidatedBapProfile {
 	errors: Partial<Record<keyof BapProfileDraft, string>>;
 }
 
-const hasControlCharacter = (value: string): boolean =>
+export const hasControlCharacter = (value: string): boolean =>
 	[...value].some((character) => {
 		const code = character.charCodeAt(0);
 		return code < 32 || code === 127;

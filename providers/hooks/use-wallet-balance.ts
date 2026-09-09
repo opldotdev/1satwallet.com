@@ -3,7 +3,6 @@
 import {
 	type Bsv21Balance,
 	getBsv21Balances,
-	listOrdinals,
 	type OneSatContext,
 	type WalletOutput,
 } from "@1sat/actions";
@@ -15,6 +14,7 @@ import {
 	assetSurfaceFromCount,
 	shouldQueryAssetSurface,
 } from "@/lib/wallet/asset-query-state";
+import { listOrdinalInventory } from "@/lib/wallet/ordinal-inventory";
 import type { CapabilityState } from "@/lib/wallet/provider-capabilities";
 
 interface WalletBalance {
@@ -166,8 +166,11 @@ export function useWalletBalance({
 						(error: unknown) => ({ ok: false as const, error }),
 					),
 					readAssets
-						? listOrdinals.execute(ctx, {}).then(
-								(result) => ({ ok: true as const, result }),
+						? listOrdinalInventory(ctx).then(
+								(outputs) => ({
+									ok: true as const,
+									result: { outputs },
+								}),
 								(error: unknown) => ({ ok: false as const, error }),
 							)
 						: Promise.resolve({

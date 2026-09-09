@@ -15,7 +15,7 @@ describe("wallet provider React lifecycle contracts", () => {
 		assert.match(parallelBatch, /await Promise\.all/);
 		assert.match(parallelBatch, /legacyResultsPromise/);
 		assert.match(parallelBatch, /ctx\.wallet\.listOutputs/);
-		assert.match(parallelBatch, /listOrdinals\.execute/);
+		assert.match(parallelBatch, /listOrdinalInventory/);
 		assert.match(parallelBatch, /getBsv21Balances\.execute/);
 	});
 

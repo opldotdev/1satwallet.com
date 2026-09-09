@@ -88,7 +88,7 @@ function boundedText(value: unknown, limit: number, field: string): string {
 	return value;
 }
 
-function safeHttpsUrl(value: unknown, field: string): string {
+export function safeHttpsUrl(value: unknown, field: string): string {
 	const text = boundedText(value, 512, field);
 	let url: URL;
 	try {

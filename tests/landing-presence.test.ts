@@ -185,13 +185,24 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /cursors\.length > 0/);
 		assert.match(presence, /md:hidden/);
 		assert.match(presence, /\[@media\(pointer:coarse\)\]:!block/);
+		assert.match(presence, /fixed bottom-4 left-1\/2/);
+		assert.match(presence, /max-w-\[min\(calc\(100vw-8rem\),28rem\)\]/);
+		assert.match(presence, /fixed right-4 top-20/);
+		assert.match(presence, /md:top-auto md:bottom-4/);
 		assert.match(presence, /min-h-\[44px\]/);
 		assert.match(presence, /min-w-\[44px\]/);
+		assert.match(presence, /publicProfileClaimFromWallet/);
+		assert.match(presence, /profileLoaded/);
+		assert.match(presence, /profile\?\.displayName/);
 		assert.match(presence, /Start a trade with/);
+		assert.match(presence, /PeerContextMenu/);
+		assert.match(presence, /Request trade/);
+		assert.match(presence, /Copy identity key/);
 		assert.match(
 			presence,
 			/onClick=\{\(\) => void startTrade\(cursor\.userId\)\}/,
 		);
+		assert.doesNotMatch(presence, /onContextMenu=\{\(event\) => \{/);
 	});
 
 	it("stacks trade offers on narrow screens and restores two columns at a breakpoint", () => {
@@ -220,7 +231,7 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /function AuthenticatedSharedPresence/);
 		assert.match(presence, /setAuthenticatedPresence\(\{ userId, wallet \}\)/);
 		assert.match(presence, /authenticatedPresence\?\.wallet === wallet/);
-		assert.match(presence, /identityKey && wallet \? \(/);
+		assert.match(presence, /identityKey && wallet && oneSatContext \? \(/);
 		assert.doesNotMatch(presence, /setAuthenticatedUserId/);
 	});
 });

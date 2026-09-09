@@ -23,5 +23,7 @@ describe("landing hero copy", () => {
 		assert.doesNotMatch(heroSource, /min-h-\[100dvh\]/);
 		assert.match(heroSource, /min-h-0 flex-1/);
 		assert.match(heroSource, /P2P trading floor/);
+		assert.match(heroSource, /pb-28/);
+		assert.match(heroSource, /left-4/);
 	});
 });
