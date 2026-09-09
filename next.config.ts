@@ -43,6 +43,9 @@ const nextConfig: NextConfig = {
 	},
 	images: {
 		localPatterns: [
+			{ pathname: "/images/wallet/radar.png", search: "" },
+			{ pathname: "/oneSatLogoDark.png", search: "" },
+			{ pathname: "/download/*.png", search: "" },
 			{
 				pathname: "/api/image",
 			},

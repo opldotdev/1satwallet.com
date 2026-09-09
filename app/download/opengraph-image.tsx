@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-export const alt = "1Sat Wallet — Apple App Beta for iPhone, iPad, and Mac";
+export const alt = "1Sat Wallet: Apple App Beta for iPhone, iPad, and Mac";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 

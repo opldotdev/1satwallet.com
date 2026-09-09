@@ -43,6 +43,7 @@
         "clsx": "^2.1.1",
         "cmdk": "^1.1.1",
         "convex": "^1.45.0",
+        "geist": "^1.7.2",
         "leva": "^0.10.1",
         "lucide-react": "^1.41.0",
         "next": "16.3.4",
@@ -697,6 +698,8 @@
     "file-selector": ["file-selector@0.5.0", "", { "dependencies": { "tslib": "^2.0.3" } }, "sha512-s8KNnmIDTBoD0p9uJ9uD0XY38SCeBOtj0UMXyQSLg1Ypfrfj8+dAvwsLjYQkQ2GjhVtp2HrnF5cJzMhBjfD8HA=="],
 
     "for-in": ["for-in@1.0.2", "", {}, "sha512-7EwmXrOjyL+ChxMhmG5lnW9MPt1aIeZEwKhQzoBUdTV0N3zuwWDZYVJatDvZ2OyzPUvdIAZDsCetk3coyMfcnQ=="],
+
+    "geist": ["geist@1.7.2", "", { "peerDependencies": { "next": ">=13.2.0" } }, "sha512-Gu5lDFa3pLRyoBlBPf0QIFHVdWAnpco7fS1bJm41jyLPFoguBgiubseUN2oLXMgqZ7uxAxDoXcHMhCY/fOTTgg=="],
 
     "get-nonce": ["get-nonce@1.0.1", "", {}, "sha512-FJhYRoDaiatfEkUK8HKlicmu/3SGFD51q3itKDGoSTysQJBnfOcxU5GxnhE1E6soB76MbT0MBtnKJuXyAx+96Q=="],
 

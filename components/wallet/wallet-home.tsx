@@ -11,6 +11,7 @@ import {
 	Smartphone,
 	Wallet,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import {
 	Page,
@@ -38,6 +39,7 @@ import {
 	useWalletToolbox,
 	type WalletConnectionMode,
 } from "@/providers/wallet-toolbox-provider";
+import styles from "./wallet-home.module.css";
 
 function LoadingHome({ message }: { message: string }) {
 	return (
@@ -237,16 +239,19 @@ function ConnectedWalletHome() {
 		totalBsv !== null && exchangeRate !== null ? totalBsv * exchangeRate : null;
 
 	return (
-		<Page>
+		<Page className={styles.home}>
 			<PageHeader className="flex-wrap gap-3">
 				<div>
-					<PageTitle>Wallet</PageTitle>
+					<PageTitle className={styles.title}>Wallet</PageTitle>
 					<p className="mt-1 text-muted-foreground text-sm">
 						Your money, assets, and connection at a glance.
 					</p>
 				</div>
 				<div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-					<Badge className="gap-1.5" variant="outline">
+					<Badge
+						className="gap-2 border-0 bg-transparent font-normal text-muted-foreground"
+						variant="outline"
+					>
 						<span className="size-1.5 rounded-full bg-emerald-500" />
 						{connectionLabel(connectionMode, providerType)}
 					</Badge>
@@ -283,14 +288,14 @@ function ConnectedWalletHome() {
 					</div>
 				)}
 
-				<section aria-labelledby="wallet-balance-heading">
-					<Card className="overflow-hidden border-primary/20 bg-gradient-to-br from-primary/10 via-card to-card">
-						<CardContent className="grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+				<section
+					className={styles.hero}
+					aria-labelledby="wallet-balance-heading"
+				>
+					<div className={styles.balanceContent}>
+						<div className={styles.balanceStack}>
 							<div>
-								<p
-									className="text-muted-foreground text-sm"
-									id="wallet-balance-heading"
-								>
+								<p className={styles.eyebrow} id="wallet-balance-heading">
 									Spendable balance
 								</p>
 								{!balanceSupported ? (
@@ -315,8 +320,9 @@ function ConnectedWalletHome() {
 									</p>
 								) : (
 									<>
-										<p className="mt-2 font-mono text-3xl font-semibold tracking-tight sm:text-4xl">
-											{privacyMode ? "••••••••" : `${totalBsv?.toFixed(8)} BSV`}
+										<p className={styles.amount}>
+											{privacyMode ? "••••••••" : totalBsv?.toFixed(8)}
+											{!privacyMode && <span className={styles.unit}>BSV</span>}
 										</p>
 										{!privacyMode && totalUsd !== null && (
 											<p className="mt-1 text-muted-foreground text-sm">
@@ -327,8 +333,17 @@ function ConnectedWalletHome() {
 								)}
 							</div>
 							<WalletHomeActions />
-						</CardContent>
-					</Card>
+						</div>
+					</div>
+					<div className={styles.radar} aria-hidden="true">
+						<Image
+							src="/images/wallet/radar.png"
+							alt=""
+							width={1254}
+							height={1254}
+							sizes="(max-width: 767px) 180px, 380px"
+						/>
+					</div>
 				</section>
 
 				{connectionMode === "built-in" && legacyBalance > 0 && (

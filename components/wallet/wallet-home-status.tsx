@@ -1,6 +1,7 @@
 "use client";
 
 import {
+	ArrowRight,
 	CircleDollarSign,
 	Copy,
 	Gem,
@@ -10,19 +11,12 @@ import {
 	RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import styles from "./wallet-home.module.css";
 
 function describeSyncTask(task: SyncTaskState) {
 	if (task.status === "provider-managed") return "Managed by connected wallet";
@@ -53,167 +47,140 @@ export function WalletHomeStatus() {
 
 	return (
 		<>
-			<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-				<Card>
-					<CardHeader>
-						<Gem className="size-5 text-primary" />
-						<CardTitle>Ordinals</CardTitle>
-						<CardDescription>Indexed inscriptions</CardDescription>
-					</CardHeader>
-					<CardContent>
-						{isBalanceLoading ? (
-							<Skeleton className="h-8 w-16" />
-						) : balanceError ? (
-							<span className="text-muted-foreground text-sm">Unavailable</span>
-						) : (
-							<p className="font-mono text-2xl font-semibold">
-								{ordinals.length}
-							</p>
-						)}
-						<Button asChild className="mt-4 px-0" size="sm" variant="link">
-							<Link href="/wallet/ordinals">View ordinals</Link>
-						</Button>
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader>
-						<CircleDollarSign className="size-5 text-primary" />
-						<CardTitle>BSV21</CardTitle>
-						<CardDescription>Distinct token balances</CardDescription>
-					</CardHeader>
-					<CardContent>
-						{isBalanceLoading ? (
-							<Skeleton className="h-8 w-16" />
-						) : balanceError ? (
-							<span className="text-muted-foreground text-sm">Unavailable</span>
-						) : (
-							<p className="font-mono text-2xl font-semibold">
-								{bsv21Tokens.length}
-							</p>
-						)}
-						<Button asChild className="mt-4 px-0" size="sm" variant="link">
-							<Link href="/wallet/bsv21">View tokens</Link>
-						</Button>
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader>
-						<RefreshCw
-							className={`size-5 text-primary ${syncTasks.addresses.status === "running" ? "animate-spin" : ""}`}
-						/>
-						<CardTitle>Address sync</CardTitle>
-						<CardDescription>
-							{describeSyncTask(syncTasks.addresses)}
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						{connectionMode === "built-in" ? (
-							<Button
-								disabled={hasActiveSync}
-								onClick={syncWallet}
-								size="sm"
-								variant="outline"
-							>
-								<RefreshCw
-									className={hasActiveSync ? "animate-spin" : ""}
-									data-icon="inline-start"
+			<div className={styles.details}>
+				<section
+					className={styles.assets}
+					aria-labelledby="wallet-assets-heading"
+				>
+					<h2 id="wallet-assets-heading">Assets</h2>
+					<p className={styles.description}>Your on-chain assets and tokens.</p>
+					{[
+						{
+							title: "Ordinals",
+							href: "/wallet/ordinals",
+							icon: Gem,
+							count: ordinals.length,
+							noun: "inscription",
+						},
+						{
+							title: "BSV21",
+							href: "/wallet/bsv21",
+							icon: CircleDollarSign,
+							count: bsv21Tokens.length,
+							noun: "token",
+						},
+					].map(({ title, href, icon: Icon, count, noun }) => (
+						<Link key={title} href={href} className={styles.assetRow}>
+							<Icon className={styles.accent} aria-hidden="true" />
+							<div>
+								<h3>{title}</h3>
+								{isBalanceLoading ? (
+									<Skeleton className="mt-2 h-4 w-24" />
+								) : (
+									<p className={styles.description}>
+										{balanceError
+											? "Unavailable"
+											: `${count} ${noun}${count === 1 ? "" : "s"}`}
+									</p>
+								)}
+							</div>
+							<ArrowRight className={styles.arrow} aria-hidden="true" />
+						</Link>
+					))}
+				</section>
+				<section
+					className={styles.connection}
+					aria-labelledby="wallet-connection-heading"
+				>
+					<h2 id="wallet-connection-heading">Wallet connection</h2>
+					<p className={styles.description}>
+						{connectionMode === "external"
+							? "Services managed by your connected wallet."
+							: "Sync and delivery status for your wallet."}
+					</p>
+					<div className={styles.services}>
+						{[
+							{
+								title: "Address sync",
+								icon: RefreshCw,
+								task: syncTasks.addresses,
+							},
+							{ title: "Payment inbox", icon: Inbox, task: syncTasks.payments },
+							{
+								title: "Token inbox",
+								icon: Inbox,
+								task: syncTasks.cosignDeliveries,
+							},
+						].map(({ title, icon: Icon, task }) => (
+							<div key={title} className={styles.serviceRow}>
+								<Icon
+									className={`${styles.accent} ${task.status === "running" ? "motion-safe:animate-spin" : ""}`}
+									aria-hidden="true"
 								/>
-								{syncStatus.error ? "Retry sync" : "Sync now"}
-							</Button>
-						) : (
-							<Badge variant="secondary">Provider managed</Badge>
-						)}
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader>
-						<Inbox className="size-5 text-primary" />
-						<CardTitle>Payment inbox</CardTitle>
-						<CardDescription>
-							{describeSyncTask(syncTasks.payments)}
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<Badge
-							variant={
-								syncTasks.payments.status === "failed"
-									? "destructive"
-									: "secondary"
-							}
-						>
-							{syncTasks.payments.status === "failed"
-								? "Retry available"
-								: syncTasks.payments.status}
-						</Badge>
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader>
-						<Inbox className="size-5 text-primary" />
-						<CardTitle>Token inbox</CardTitle>
-						<CardDescription>
-							{describeSyncTask(syncTasks.cosignDeliveries)}
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<Badge
-							variant={
-								syncTasks.cosignDeliveries.status === "failed"
-									? "destructive"
-									: "secondary"
-							}
-						>
-							{syncTasks.cosignDeliveries.status === "failed"
-								? "Retry available"
-								: syncTasks.cosignDeliveries.status}
-						</Badge>
-					</CardContent>
-				</Card>
-			</div>
-
-			<div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-				<Card>
-					<CardHeader>
-						<LockKeyhole className="size-5 text-primary" />
-						<CardTitle>Authenticated identity</CardTitle>
-						<CardDescription>
-							BRC-100 identity currently authorizing this wallet session.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="flex min-w-0 items-center gap-2">
-						<code className="min-w-0 flex-1 break-all rounded-md bg-muted p-3 text-xs">
-							{shortenedIdentity}
-						</code>
+								<div className="min-w-0">
+									<h3>{title}</h3>
+									<p className={`${styles.description} break-words`}>
+										{describeSyncTask(task)}
+									</p>
+								</div>
+								<span
+									className={`${styles.taskStatus} ${task.status === "failed" ? styles.failed : ""}`}
+								>
+									{task.status === "provider-managed"
+										? "Provider managed"
+										: task.status === "failed"
+											? "Retry available"
+											: task.status}
+								</span>
+							</div>
+						))}
+					</div>
+					{connectionMode === "built-in" && (
 						<Button
-							aria-label="Copy authenticated identity key"
-							disabled={!identityKey}
-							onClick={() => identityKey && void copy(identityKey)}
-							size="icon"
-							variant="outline"
+							disabled={hasActiveSync}
+							onClick={syncWallet}
+							size="sm"
+							variant="ghost"
 						>
-							<Copy />
+							<RefreshCw
+								className={hasActiveSync ? "motion-safe:animate-spin" : ""}
+							/>
+							{syncStatus.error ? "Retry sync" : "Sync now"}
 						</Button>
-					</CardContent>
-				</Card>
-
-				<Card>
-					<CardHeader>
-						<History className="size-5 text-primary" />
-						<CardTitle>Activity</CardTitle>
-						<CardDescription>
+					)}
+				</section>
+				<Link href="/wallet/history" className={styles.activity}>
+					<History className={styles.accent} aria-hidden="true" />
+					<div>
+						<h3>Activity</h3>
+						<p className={styles.description}>
 							Review wallet actions and transaction status.
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<Button asChild variant="outline">
-							<Link href="/wallet/history">Open history</Link>
-						</Button>
-					</CardContent>
-				</Card>
+						</p>
+					</div>
+					<span className={styles.historyLink}>
+						Open history <ArrowRight aria-hidden="true" />
+					</span>
+				</Link>
+			</div>
+			<div className={styles.identity}>
+				<LockKeyhole className={styles.accent} aria-hidden="true" />
+				<div>
+					<h3>Authenticated identity</h3>
+					<p className={styles.description}>
+						BRC-100 identity currently authorizing this wallet session.
+					</p>
+				</div>
+				<code>{shortenedIdentity}</code>
+				<Button
+					aria-label="Copy authenticated identity key"
+					disabled={!identityKey}
+					onClick={() => identityKey && void copy(identityKey)}
+					size="icon"
+					variant="ghost"
+				>
+					<Copy />
+				</Button>
+				<span className={styles.protocol}>BRC-100</span>
 			</div>
 		</>
 	);

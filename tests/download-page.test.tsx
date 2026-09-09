@@ -1,28 +1,29 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { renderToStaticMarkup } from "react-dom/server";
-import { AppleAppPage } from "../app/(main)/download/download-page-client";
 
 test("Apple download offers the wallet invitation separately from TestFlight", () => {
-	const html = renderToStaticMarkup(<AppleAppPage />);
+	const html = readFileSync(
+		new URL("../app/download/download-page-client.tsx", import.meta.url),
+		"utf8",
+	);
+	const notice = readFileSync(
+		new URL("../app/download/beta-notice.tsx", import.meta.url),
+		"utf8",
+	);
 	assert.equal(
 		html.match(/href="https:\/\/testflight.apple.com\/join\/9N4jc7Qm"/g)
 			?.length,
-		3,
+		1,
 	);
-	assert.ok(
-		html.includes('href="https://apps.apple.com/app/testflight/id899247664"'),
-	);
-	assert.ok(html.includes("Accept the invitation"));
+	assert.ok(html.includes('href="/wallet"'));
+	assert.ok(!html.includes('href="/wallet/create"'));
+	assert.ok(html.includes('href="mailto:luke@opl.dev"'));
 	assert.ok(!html.includes("Find 1Sat Wallet in TestFlight"));
-	assert.ok(html.includes("Beta software — risk of permanent loss"));
-	assert.ok(
-		html.includes(
-			"Do not import or connect a wallet holding significant funds",
-		),
-	);
-	assert.ok(
-		html.indexOf("Beta risk warning") <
-			html.indexOf('href="https://testflight.apple.com/join/'),
-	);
+	assert.ok(notice.includes("permanent loss"));
+	assert.ok(notice.includes("Dialog.Trigger"));
+	assert.ok(notice.includes("Dialog.Close"));
+	assert.ok(html.includes("/oneSatLogoDark.png"));
+	assert.ok(html.includes("<MacPreview"));
+	assert.ok(html.includes("Beta in review"));
 });

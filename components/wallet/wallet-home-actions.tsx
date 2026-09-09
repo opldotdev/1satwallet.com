@@ -19,6 +19,7 @@ import {
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import styles from "./wallet-home.module.css";
 import {
 	formatSatoshisAsBsv,
 	isP2pkhAddressForChain,
@@ -142,7 +143,12 @@ export function WalletHomeActions() {
 		<div className="grid grid-cols-2 gap-2 sm:flex">
 			<SoundDialog>
 				<DialogTrigger asChild>
-					<Button disabled={!receiveAvailable} size="lg">
+					<Button
+						className={styles.action}
+						disabled={!receiveAvailable}
+						size="lg"
+						variant="ghost"
+					>
 						<ArrowDownToLine data-icon="inline-start" /> Receive
 					</Button>
 				</DialogTrigger>
@@ -199,7 +205,12 @@ export function WalletHomeActions() {
 				open={sendOpen}
 			>
 				<DialogTrigger asChild>
-					<Button disabled={!oneSatContext} size="lg" variant="outline">
+					<Button
+						className={styles.action}
+						disabled={!oneSatContext}
+						size="lg"
+						variant="ghost"
+					>
 						<Send data-icon="inline-start" /> Send
 					</Button>
 				</DialogTrigger>

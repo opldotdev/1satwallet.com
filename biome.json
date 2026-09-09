@@ -10,6 +10,7 @@
 		"includes": [
 			"**",
 			"!!**/convex/_generated",
+			"!!public/download/draco",
 			"!node_modules",
 			"!.next",
 			"!dist",
