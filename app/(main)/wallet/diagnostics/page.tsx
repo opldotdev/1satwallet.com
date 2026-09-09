@@ -3,12 +3,6 @@
 import { ArrowLeft, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -112,8 +106,8 @@ export default function WalletDiagnosticsPage() {
 	};
 
 	return (
-		<Page>
-			<PageHeader className="justify-start gap-2">
+		<section className="space-y-6">
+			<div className="flex items-center justify-start gap-2">
 				<Button variant="ghost" size="icon" asChild className="-ml-2">
 					<Link href="/wallet/settings">
 						<span className="sr-only">Back to wallet settings</span>
@@ -121,7 +115,7 @@ export default function WalletDiagnosticsPage() {
 					</Link>
 				</Button>
 				<div className="flex-1">
-					<PageTitle>Wallet Diagnostics</PageTitle>
+					<h2 className="font-mono text-xl font-medium">Wallet Diagnostics</h2>
 					<p className="text-muted-foreground">
 						Redacted provider, action, and route health
 					</p>
@@ -129,9 +123,9 @@ export default function WalletDiagnosticsPage() {
 				<Badge variant={toolbox.isInitialized ? "default" : "secondary"}>
 					{toolbox.connectionStatus}
 				</Badge>
-			</PageHeader>
+			</div>
 
-			<PageContent className="space-y-6">
+			<div className="space-y-6">
 				{(toolbox.initError || failedSyncTasks.length > 0) && (
 					<div
 						role="alert"
@@ -274,7 +268,7 @@ export default function WalletDiagnosticsPage() {
 						)}
 					</CardContent>
 				</Card>
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

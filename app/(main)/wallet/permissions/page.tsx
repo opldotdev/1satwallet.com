@@ -5,12 +5,6 @@ import { ArrowLeft, Key, Loader2, Shield, Trash2, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -186,17 +180,17 @@ export default function PermissionsPage() {
 	);
 
 	return (
-		<Page>
-			<PageHeader className="gap-2 justify-start">
+		<section className="space-y-6">
+			<div className="flex items-center gap-2 justify-start">
 				<Button variant="ghost" size="icon" asChild className="-ml-2">
 					<Link href="/wallet/settings">
 						<span className="sr-only">Back to wallet settings</span>
 						<ArrowLeft className="h-4 w-4" />
 					</Link>
 				</Button>
-				<PageTitle>Connected Apps</PageTitle>
-			</PageHeader>
-			<PageContent>
+				<h2 className="font-mono text-xl font-medium">Connected Apps</h2>
+			</div>
+			<div>
 				{!isInitialized ? (
 					<div className="flex items-center justify-center py-12">
 						<Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -314,7 +308,7 @@ export default function PermissionsPage() {
 						))}
 					</div>
 				)}
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

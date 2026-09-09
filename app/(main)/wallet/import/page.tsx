@@ -3,12 +3,6 @@
 import { FileUp, Key } from "lucide-react";
 import Link from "next/link";
 import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
-import {
 	Card,
 	CardContent,
 	CardDescription,
@@ -21,11 +15,11 @@ export default function ImportSelectPage() {
 	const { play } = useSound();
 
 	return (
-		<Page className="max-w-2xl">
-			<PageHeader>
-				<PageTitle>Import Wallet</PageTitle>
-			</PageHeader>
-			<PageContent className="grid gap-6 md:grid-cols-2">
+		<section className="space-y-6">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-xl font-medium">Import Wallet</h2>
+			</div>
+			<div className="grid gap-6 md:grid-cols-2">
 				<Link
 					href="/wallet/import/json"
 					className="block"
@@ -63,7 +57,7 @@ export default function ImportSelectPage() {
 						</CardContent>
 					</Card>
 				</Link>
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

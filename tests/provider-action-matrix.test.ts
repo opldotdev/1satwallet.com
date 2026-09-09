@@ -131,7 +131,7 @@ describe("provider action matrix", () => {
 
 		const identityStart = source.indexOf('session.on("identityChange"');
 		const identityEnd = source.indexOf(
-			'session.on(\n\t\t\t\t"disconnected"',
+			"const unsubscribeDisconnected",
 			identityStart,
 		);
 		const identityChange = source.slice(identityStart, identityEnd);

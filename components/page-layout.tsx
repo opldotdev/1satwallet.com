@@ -6,7 +6,7 @@ export function Page({ children, className, ...props }: PageProps) {
 	return (
 		<div
 			className={cn(
-				"flex flex-col gap-6 p-4 max-w-6xl mx-auto w-full",
+				"mx-auto flex w-full min-w-0 max-w-[1320px] flex-col gap-6 px-4 py-5 md:p-6 xl:px-8 xl:py-7",
 				className,
 			)}
 			{...props}
@@ -34,7 +34,10 @@ export function PageTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>) {
 	return (
 		<h1
-			className={cn("text-2xl font-bold tracking-tight", className)}
+			className={cn(
+				"font-mono text-3xl font-semibold tracking-tight",
+				className,
+			)}
 			{...props}
 		>
 			{children}

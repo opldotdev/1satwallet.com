@@ -3,12 +3,6 @@
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -92,13 +86,13 @@ export default function ImportPassphrasePage() {
 	};
 
 	return (
-		<Page className="max-w-2xl">
-			<PageHeader>
-				<PageTitle>
+		<section className="space-y-6">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-xl font-medium">
 					{mode === "encrypt" ? "Set Password" : "Unlock Backup"}
-				</PageTitle>
-			</PageHeader>
-			<PageContent>
+				</h2>
+			</div>
+			<div>
 				<Card>
 					<CardHeader>
 						<CardTitle>
@@ -208,7 +202,7 @@ export default function ImportPassphrasePage() {
 						</form>
 					</CardContent>
 				</Card>
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

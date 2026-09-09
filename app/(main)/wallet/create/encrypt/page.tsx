@@ -4,12 +4,6 @@ import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type React from "react";
 import { useState } from "react";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -61,11 +55,11 @@ export default function EncryptWalletPage() {
 	};
 
 	return (
-		<Page className="max-w-2xl">
-			<PageHeader>
-				<PageTitle>Create New Wallet</PageTitle>
-			</PageHeader>
-			<PageContent>
+		<section className="space-y-6">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-xl font-medium">Create New Wallet</h2>
+			</div>
+			<div>
 				<Card>
 					<CardHeader>
 						<CardTitle>Set Password</CardTitle>
@@ -132,7 +126,7 @@ export default function EncryptWalletPage() {
 						</form>
 					</CardContent>
 				</Card>
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }
