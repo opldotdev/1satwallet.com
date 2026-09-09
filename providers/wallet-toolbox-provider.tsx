@@ -63,6 +63,10 @@ import {
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import {
+	connectSelectedWallet,
+	type WalletConnectionOption,
+} from "@/lib/wallet/connection-options";
+import {
 	diagnoseNoWalletResult,
 	statusAfterDisconnect,
 	type WalletConnectionStatus,
@@ -76,6 +80,7 @@ type Chain = "main" | "test";
 export type WalletConnectionMode = "none" | "built-in" | "external";
 
 export const WALLET_CONNECTION_MODE_KEY = "1sat-wallet-connection-mode";
+const CONNECTION_OPTION_KEY = "1sat-wallet-connection-option";
 
 const ADMIN_ORIGINATOR =
 	typeof window !== "undefined"
@@ -226,7 +231,7 @@ interface WalletToolboxContextValue {
 	exchangeRate: number | null;
 
 	initializeWallet: (rootKeyHex: string) => Promise<boolean>;
-	connectExternalWallet: () => Promise<boolean>;
+	connectExternalWallet: (option?: WalletConnectionOption) => Promise<boolean>;
 	disconnectExternalWallet: () => Promise<void>;
 	destroyWallet: () => Promise<void>;
 	refreshBalance: () => void;
@@ -584,151 +589,158 @@ export function WalletToolboxProvider({
 		[resetWalletState, stopSyncWorkers],
 	);
 
-	const connectExternalWallet = useCallback(async (): Promise<boolean> => {
-		const pendingTeardown = teardownPromiseRef.current;
-		if (pendingTeardown) await pendingTeardown;
-		if (initGuardRef.current) {
-			return false;
-		}
-
-		const generation = ++connectionGenerationRef.current;
-		initGuardRef.current = true;
-		setIsInitializing(true);
-		setConnectionStatus("authenticating");
-		setInitError(null);
-
-		let pendingResult: Awaited<ReturnType<typeof connectWallet>> = null;
-		try {
-			const result = await connectWallet({ autoDetect: true });
-			pendingResult = result;
-			if (generation !== connectionGenerationRef.current) {
-				result?.disconnect();
+	const connectExternalWallet = useCallback(
+		async (option?: WalletConnectionOption): Promise<boolean> => {
+			const pendingTeardown = teardownPromiseRef.current;
+			if (pendingTeardown) await pendingTeardown;
+			if (initGuardRef.current) {
 				return false;
 			}
-			if (!result) {
-				const diagnostic = await diagnoseNoWalletResult();
+
+			const generation = ++connectionGenerationRef.current;
+			initGuardRef.current = true;
+			setIsInitializing(true);
+			setConnectionStatus("authenticating");
+			setInitError(null);
+
+			let pendingResult: Awaited<ReturnType<typeof connectWallet>> = null;
+			try {
+				const result = option
+					? await connectSelectedWallet(option)
+					: await connectWallet({ autoDetect: true });
+				pendingResult = result;
+				if (generation !== connectionGenerationRef.current) {
+					result?.disconnect();
+					return false;
+				}
+				if (!result) {
+					const diagnostic = await diagnoseNoWalletResult();
+					if (generation !== connectionGenerationRef.current) return false;
+					localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
+					setConnectionStatus(diagnostic.status);
+					setInitError(diagnostic.message);
+					initGuardRef.current = false;
+					return false;
+				}
+
+				const externalServices = createStackServices(chain);
+				let addresses: string[];
+				try {
+					addresses = await deriveExternalAddresses(
+						result.wallet,
+						externalServices,
+					);
+				} catch (error) {
+					externalServices.close();
+					result.disconnect();
+					throw error;
+				}
+				if (generation !== connectionGenerationRef.current) {
+					externalServices.close();
+					result.disconnect();
+					return false;
+				}
+				externalServicesRef.current = externalServices;
+
+				setWallet(result.wallet);
+				setServices(externalServices);
+				setPermissionsManager(null);
+				setIdentityKey(result.identityKey);
+				setDepositAddress(addresses[0] ?? null);
+				setReceiveAddresses(addresses);
+				setTrackedAddresses(addresses);
+				setAddressManagerReady(false);
+				setConnectionMode("external");
+				setConnectionStatus("ready");
+				setProviderType(result.provider);
+				setIsInitialized(true);
+
+				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "external");
+				if (option) localStorage.setItem(CONNECTION_OPTION_KEY, option);
+
+				const session = createWalletSession(result);
+				walletSessionRef.current = session;
+				const unsubscribeIdentity = session.on("identityChange", ({ next }) => {
+					if (walletSessionRef.current !== session) return;
+					const identityGeneration = ++connectionGenerationRef.current;
+					clearIdentityQueries();
+					setIsInitialized(false);
+					setIdentityKey(null);
+					setDepositAddress(null);
+					setReceiveAddresses([]);
+					setTrackedAddresses([]);
+					setConnectionStatus("authenticating");
+					void deriveExternalAddresses(result.wallet, externalServices)
+						.then((nextAddresses) => {
+							if (
+								identityGeneration !== connectionGenerationRef.current ||
+								walletSessionRef.current !== session
+							) {
+								return;
+							}
+							setIdentityKey(next);
+							setDepositAddress(nextAddresses[0] ?? null);
+							setReceiveAddresses(nextAddresses);
+							setTrackedAddresses(nextAddresses);
+							setConnectionStatus("ready");
+							setIsInitialized(true);
+							setInitError(null);
+						})
+						.catch(() => {
+							if (identityGeneration !== connectionGenerationRef.current)
+								return;
+							setInitError(
+								"Wallet identity refresh failed. Reconnect and try again.",
+							);
+							void teardownWallet("disconnected");
+						});
+				});
+				const unsubscribeDisconnected = session.on(
+					"disconnected",
+					({ reason }) => {
+						if (walletSessionRef.current !== session) return;
+						void teardownWallet(statusAfterDisconnect(reason));
+					},
+				);
+				walletSessionCleanupRef.current = () => {
+					unsubscribeIdentity();
+					unsubscribeDisconnected();
+				};
+				session.start();
+
+				return true;
+			} catch {
 				if (generation !== connectionGenerationRef.current) return false;
+				connectionGenerationRef.current += 1;
+				walletSessionCleanupRef.current();
+				walletSessionCleanupRef.current = () => {};
+				walletSessionRef.current?.stop();
+				walletSessionRef.current = null;
+				pendingResult?.disconnect();
+				externalServicesRef.current?.close();
+				externalServicesRef.current = null;
 				localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
-				setConnectionStatus(diagnostic.status);
-				setInitError(diagnostic.message);
+				resetWalletState("disconnected");
+				setInitError(
+					"Wallet connection failed. Check the provider and try again.",
+				);
+				setIsInitializing(false);
 				initGuardRef.current = false;
 				return false;
+			} finally {
+				if (generation === connectionGenerationRef.current) {
+					setIsInitializing(false);
+				}
 			}
-
-			const externalServices = createStackServices(chain);
-			let addresses: string[];
-			try {
-				addresses = await deriveExternalAddresses(
-					result.wallet,
-					externalServices,
-				);
-			} catch (error) {
-				externalServices.close();
-				result.disconnect();
-				throw error;
-			}
-			if (generation !== connectionGenerationRef.current) {
-				externalServices.close();
-				result.disconnect();
-				return false;
-			}
-			externalServicesRef.current = externalServices;
-
-			setWallet(result.wallet);
-			setServices(externalServices);
-			setPermissionsManager(null);
-			setIdentityKey(result.identityKey);
-			setDepositAddress(addresses[0] ?? null);
-			setReceiveAddresses(addresses);
-			setTrackedAddresses(addresses);
-			setAddressManagerReady(false);
-			setConnectionMode("external");
-			setConnectionStatus("ready");
-			setProviderType(result.provider);
-			setIsInitialized(true);
-
-			localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "external");
-
-			const session = createWalletSession(result);
-			walletSessionRef.current = session;
-			const unsubscribeIdentity = session.on("identityChange", ({ next }) => {
-				if (walletSessionRef.current !== session) return;
-				const identityGeneration = ++connectionGenerationRef.current;
-				clearIdentityQueries();
-				setIsInitialized(false);
-				setIdentityKey(null);
-				setDepositAddress(null);
-				setReceiveAddresses([]);
-				setTrackedAddresses([]);
-				setConnectionStatus("authenticating");
-				void deriveExternalAddresses(result.wallet, externalServices)
-					.then((nextAddresses) => {
-						if (
-							identityGeneration !== connectionGenerationRef.current ||
-							walletSessionRef.current !== session
-						) {
-							return;
-						}
-						setIdentityKey(next);
-						setDepositAddress(nextAddresses[0] ?? null);
-						setReceiveAddresses(nextAddresses);
-						setTrackedAddresses(nextAddresses);
-						setConnectionStatus("ready");
-						setIsInitialized(true);
-						setInitError(null);
-					})
-					.catch(() => {
-						if (identityGeneration !== connectionGenerationRef.current) return;
-						setInitError(
-							"Wallet identity refresh failed. Reconnect and try again.",
-						);
-						void teardownWallet("disconnected");
-					});
-			});
-			const unsubscribeDisconnected = session.on(
-				"disconnected",
-				({ reason }) => {
-					if (walletSessionRef.current !== session) return;
-					void teardownWallet(statusAfterDisconnect(reason));
-				},
-			);
-			walletSessionCleanupRef.current = () => {
-				unsubscribeIdentity();
-				unsubscribeDisconnected();
-			};
-			session.start();
-
-			return true;
-		} catch {
-			if (generation !== connectionGenerationRef.current) return false;
-			connectionGenerationRef.current += 1;
-			walletSessionCleanupRef.current();
-			walletSessionCleanupRef.current = () => {};
-			walletSessionRef.current?.stop();
-			walletSessionRef.current = null;
-			pendingResult?.disconnect();
-			externalServicesRef.current?.close();
-			externalServicesRef.current = null;
-			localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
-			resetWalletState("disconnected");
-			setInitError(
-				"Wallet connection failed. Check the provider and try again.",
-			);
-			setIsInitializing(false);
-			initGuardRef.current = false;
-			return false;
-		} finally {
-			if (generation === connectionGenerationRef.current) {
-				setIsInitializing(false);
-			}
-		}
-	}, [
-		chain,
-		clearIdentityQueries,
-		deriveExternalAddresses,
-		resetWalletState,
-		teardownWallet,
-	]);
+		},
+		[
+			chain,
+			clearIdentityQueries,
+			deriveExternalAddresses,
+			resetWalletState,
+			teardownWallet,
+		],
+	);
 
 	useEffect(() => {
 		if (
@@ -738,7 +750,14 @@ export function WalletToolboxProvider({
 		) {
 			return;
 		}
-		void connectExternalWallet();
+		const savedOption = localStorage.getItem(CONNECTION_OPTION_KEY);
+		void connectExternalWallet(
+			savedOption === "injected" ||
+				savedOption === "desktop" ||
+				savedOption === "embedded"
+				? savedOption
+				: undefined,
+		);
 	}, [connectExternalWallet, isInitialized, isInitializing]);
 
 	// -- Wallet init --

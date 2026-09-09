@@ -11,11 +11,11 @@ export type WalletConnectionStatus =
 	| "disconnected";
 
 const NO_WALLET_MESSAGE =
-	"No BRC-100 wallet responded. Open 1Sat Wallet Desktop, enable a compatible extension, or use an embedded wallet browser and try again.";
+	"No wallet responded. Open 1Sat Wallet Desktop, enable a compatible extension, or use an embedded wallet browser and try again.";
 const AUTHORIZATION_REQUIRED_MESSAGE =
-	"A BRC-100 wallet responded, but it did not grant identity access to 1satwallet.com. Unlock or approve the request in your wallet, then try again.";
+	"A wallet responded, but it did not grant identity access to 1satwallet.com. Unlock or approve the request in your wallet, then try again.";
 const PROVIDER_ERROR_MESSAGE =
-	"A BRC-100 wallet responded and is unlocked, but it failed while providing its identity key. This is a wallet/provider error; update or restart the wallet, then try again.";
+	"A wallet responded and is unlocked, but it failed while providing its identity key. This is a wallet error; update or restart the wallet, then try again.";
 
 export type WalletConnectionProbeResult =
 	| { state: "unreachable" }

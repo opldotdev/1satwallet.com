@@ -12,22 +12,11 @@ describe("wallet loading skeleton", () => {
 		assert.match(source, /aria-live="polite"/);
 		assert.match(source, /sr-only/);
 		assert.match(source, /Loading wallet/);
-		// Tabs row matching the loaded WalletTabs region.
-		assert.match(source, /h-9/);
-		// Balance region matching the spendable-balance card.
-		assert.match(source, /h-10 w-60/);
-		// Five status cards matching WalletHomeStatus (ordinals, BSV21,
-		// address sync, payment inbox, token inbox).
-		assert.match(source, /xl:grid-cols-5/);
-		const fiveCardGrid = source.match(/xl:grid-cols-5[\s\S]*?<\/div>/);
-		assert.ok(fiveCardGrid);
-		assert.equal(
-			fiveCardGrid[0].match(/<Skeleton/g)?.length,
-			5,
-			"expected five status-card skeletons",
-		);
-		// Identity + activity regions matching the loaded two-column grid.
-		assert.match(source, /lg:grid-cols-\[minmax\(0,2fr\)_minmax\(0,1fr\)\]/);
+		const layout = read("app/(main)/wallet/layout.tsx");
+		assert.match(layout, /<WalletHeader\s*\/>/);
+		assert.match(layout, /<WalletTabs\s*\/>/);
+		assert.doesNotMatch(source, /WalletHeader|WalletTabs|PageTitle/);
+		assert.match(source, /max-w-full/);
 	});
 });
 

@@ -24,7 +24,7 @@ describe("wallet provider lifecycle", () => {
 			state: "unreachable",
 		}));
 		assert.equal(unavailable.status, "no-wallet");
-		assert.match(unavailable.message, /No BRC-100 wallet responded/);
+		assert.match(unavailable.message, /No wallet responded/);
 	});
 
 	it("reports an authenticated provider identity failure truthfully", async () => {
@@ -34,7 +34,7 @@ describe("wallet provider lifecycle", () => {
 		}));
 
 		assert.equal(failed.status, "provider-error");
-		assert.match(failed.message, /wallet\/provider error/);
+		assert.match(failed.message, /wallet error/);
 		assert.match(failed.message, /WERR_UNKNOWN/);
 		assert.doesNotMatch(failed.message, /did not grant/);
 	});
@@ -45,7 +45,7 @@ describe("wallet provider lifecycle", () => {
 		}));
 
 		assert.equal(transient.status, "provider-error");
-		assert.match(transient.message, /wallet\/provider error/);
+		assert.match(transient.message, /wallet error/);
 	});
 
 	it("never repeats identity-key retrieval during reachability diagnosis", async () => {

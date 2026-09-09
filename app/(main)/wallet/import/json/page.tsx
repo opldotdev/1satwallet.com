@@ -3,12 +3,6 @@
 import { Check, FileArchive, Upload, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -81,11 +75,11 @@ export default function ImportJsonPage() {
 	};
 
 	return (
-		<Page className="max-w-2xl">
-			<PageHeader>
-				<PageTitle>Import Wallet</PageTitle>
-			</PageHeader>
-			<PageContent>
+		<section className="space-y-6">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-xl font-medium">Import Wallet</h2>
+			</div>
+			<div>
 				<Card>
 					<CardHeader>
 						<CardTitle>Upload Backup File</CardTitle>
@@ -201,7 +195,7 @@ export default function ImportJsonPage() {
 						</div>
 					</CardContent>
 				</Card>
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

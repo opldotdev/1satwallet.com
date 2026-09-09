@@ -2,12 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-	Page,
-	PageContent,
-	PageHeader,
-	PageTitle,
-} from "@/components/page-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -528,53 +522,53 @@ export default function MigratePage() {
 
 	if (toolbox.connectionMode === "external") {
 		return (
-			<Page>
-				<PageHeader>
-					<PageTitle>Wallet Migration</PageTitle>
-				</PageHeader>
-				<PageContent>
+			<section className="space-y-6">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
+				</div>
+				<div>
 					<Card>
 						<CardContent className="py-8 text-center text-muted-foreground">
 							Migration is available only for the wallet built into this
 							browser.
 						</CardContent>
 					</Card>
-				</PageContent>
-			</Page>
+				</div>
+			</section>
 		);
 	}
 
 	// Locked state
 	if (isWalletLocked || !walletKeys) {
 		return (
-			<Page>
-				<PageHeader>
-					<PageTitle>Wallet Migration</PageTitle>
-				</PageHeader>
-				<PageContent>
+			<section className="space-y-6">
+				<div className="flex items-center justify-between gap-3">
+					<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
+				</div>
+				<div>
 					<Card>
 						<CardContent className="py-8 text-center text-muted-foreground">
 							Unlock your wallet to check migration status.
 						</CardContent>
 					</Card>
-				</PageContent>
-			</Page>
+				</div>
+			</section>
 		);
 	}
 
 	return (
-		<Page>
-			<PageHeader>
-				<PageTitle>Wallet Migration</PageTitle>
+		<section className="space-y-6">
+			<div className="flex items-center justify-between gap-3">
+				<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
 				{phase === "preview" && totalAssets > 0 && (
 					<Badge variant="secondary">
 						{totalAssets} sweepable asset
 						{totalAssets !== 1 ? "s" : ""}
 					</Badge>
 				)}
-			</PageHeader>
+			</div>
 
-			<PageContent className="space-y-4">
+			<div className="space-y-4">
 				{/* Scanning */}
 				{phase === "scan" && assets.loading && (
 					<ScanningState scanDetail={scanDetail} />
@@ -724,7 +718,7 @@ export default function MigratePage() {
 						onBack={() => router.push("/wallet")}
 					/>
 				)}
-			</PageContent>
-		</Page>
+			</div>
+		</section>
 	);
 }

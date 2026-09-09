@@ -96,9 +96,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 		exchangeRate,
 		depositAddress,
 		isInitialized,
-		isInitializing,
 		initError,
-		connectExternalWallet,
 		connectionMode,
 	} = useWalletToolbox();
 
@@ -190,20 +188,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 						<Wallet className="h-8 w-8 text-muted-foreground" />
 						<p className="text-sm text-muted-foreground">No Wallet</p>
 						<div className="grid grid-cols-1 gap-2 w-full">
-							<Button
-								className="w-full"
-								disabled={isInitializing}
-								onClick={() => void connectExternalWallet()}
-							>
-								{isInitializing ? (
-									<Loader2
-										className="h-4 w-4 animate-spin"
-										data-icon="inline-start"
-									/>
-								) : (
-									<Cable className="h-4 w-4" data-icon="inline-start" />
-								)}
-								Connect BRC-100
+							<Button asChild className="w-full">
+								<Link href="/wallet" onClick={handleNav}>
+									<Cable className="h-4 w-4" />
+									Connect wallet
+								</Link>
 							</Button>
 							{initError && (
 								<p className="text-destructive text-xs" role="alert">
