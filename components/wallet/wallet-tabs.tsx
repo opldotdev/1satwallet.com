@@ -13,6 +13,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useSound } from "@/hooks/use-sound";
+import styles from "./wallet-tabs.module.css";
 
 const tabs = [
 	{ value: "overview", label: "Wallet", href: "/wallet", icon: Wallet },
@@ -74,12 +75,12 @@ export function WalletTabs({ children }: WalletTabsProps) {
 				}}
 				className="w-full"
 			>
-				<TabsList>
+				<TabsList className={styles.list}>
 					{tabs.map((tab) => (
 						<TabsTrigger
 							key={tab.value}
 							value={tab.value}
-							className="flex items-center gap-1.5"
+							className={styles.trigger}
 							title={tab.label}
 							aria-label={tab.label}
 						>
