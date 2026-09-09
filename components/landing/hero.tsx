@@ -49,7 +49,7 @@ export function LandingHero() {
 	);
 
 	return (
-		<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden bg-background selection:bg-primary/20">
+		<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden bg-background pb-28 selection:bg-primary/20 md:pb-8">
 			<div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
 			<div
 				aria-hidden="true"
@@ -65,7 +65,7 @@ export function LandingHero() {
 				}}
 			/>
 
-			<div className="relative z-10 w-full px-6 text-center">
+			<div className="relative z-20 w-full px-6 text-center">
 				<h1 className="sr-only">1Sat Wallet</h1>
 				<div>
 					<div aria-hidden="true">
@@ -120,7 +120,7 @@ export function LandingHero() {
 				<PopoverTrigger asChild>
 					<Button
 						aria-label="How the P2P trading floor works"
-						className="fixed bottom-4 left-16 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
+						className="fixed bottom-4 left-4 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
 						size="icon"
 						type="button"
 						variant="outline"
@@ -152,7 +152,7 @@ export function LandingHero() {
 				</PopoverContent>
 			</Popover>
 
-			<div className="absolute inset-0 z-50 pointer-events-none">
+			<div className="absolute inset-0 z-10 pointer-events-none">
 				<SharedPresence />
 			</div>
 			<TradeRequestListener />
