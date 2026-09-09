@@ -144,9 +144,9 @@ export function LandingHero() {
 							id="hero-p2p-popover-description"
 						>
 							Styled pointers belong to other people here. Connect a BRC-100
-							wallet, then select a connected peer to request a trade. Guests
-							can browse but must connect before trading. Your own pointer stays
-							native.
+							wallet, then select or right-click a connected peer to request a
+							trade. Guests can browse but must connect before trading. Your own
+							pointer stays native.
 						</PopoverDescription>
 					</PopoverHeader>
 				</PopoverContent>

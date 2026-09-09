@@ -195,10 +195,14 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /profileLoaded/);
 		assert.match(presence, /profile\?\.displayName/);
 		assert.match(presence, /Start a trade with/);
+		assert.match(presence, /PeerContextMenu/);
+		assert.match(presence, /Request trade/);
+		assert.match(presence, /Copy identity key/);
 		assert.match(
 			presence,
 			/onClick=\{\(\) => void startTrade\(cursor\.userId\)\}/,
 		);
+		assert.doesNotMatch(presence, /onContextMenu=\{\(event\) => \{/);
 	});
 
 	it("stacks trade offers on narrow screens and restores two columns at a breakpoint", () => {
