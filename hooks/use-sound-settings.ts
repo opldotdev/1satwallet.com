@@ -6,10 +6,7 @@ const SOUND_MUTED_KEY = "1sat_sound_muted";
 
 function getInitialMuted(): boolean {
 	if (typeof window === "undefined") return false;
-	// Respect prefers-reduced-motion
-	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-		return true;
-	}
+	// Motion and sound are independent accessibility preferences.
 	return window.localStorage.getItem(SOUND_MUTED_KEY) === "1";
 }
 
@@ -35,7 +32,7 @@ function setGlobalMuted(value: boolean) {
 
 /**
  * Hook for managing global sound mute state.
- * Persists to localStorage. Respects prefers-reduced-motion.
+ * Persists the explicit sound preference to localStorage.
  */
 export function useSoundSettings() {
 	// Keep the server and first client render identical; read browser preferences
@@ -49,19 +46,6 @@ export function useSoundSettings() {
 		return () => {
 			listeners.delete(listener);
 		};
-	}, []);
-
-	// Listen for prefers-reduced-motion changes
-	useEffect(() => {
-		if (typeof window === "undefined") return;
-		const mql = window.matchMedia("(prefers-reduced-motion: reduce)");
-		const handler = (e: MediaQueryListEvent) => {
-			if (e.matches) {
-				setGlobalMuted(true);
-			}
-		};
-		mql.addEventListener("change", handler);
-		return () => mql.removeEventListener("change", handler);
 	}, []);
 
 	const toggleMuted = useCallback(() => {
