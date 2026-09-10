@@ -54,3 +54,120 @@ describe("shared sound pool", () => {
 		);
 	});
 });
+
+// Exercise deferred audio with browser stubs; never play through the test machine.
+describe("payment chime", () => {
+	it("bundles a dedicated chime while clipboard retains success", async () => {
+		const { SOUNDS, SOUND_VOLUMES } = await import("@/lib/sounds");
+		assert.equal(SOUNDS.payChime, "/sounds/pay-chime.mp3");
+		assert.equal(SOUND_VOLUMES.payChime, 0.3);
+		assert.ok(
+			readFileSync(join(root, "public", SOUNDS.payChime)).length > 1000,
+		);
+		assert.match(
+			read("hooks/use-copy-with-sound.ts"),
+			/successSound = "success"/,
+		);
+	});
+
+	it("unlocks on confirm without playback, then rechecks mute after decoding", async () => {
+		const { mock } = require("bun:test");
+		let muted = true;
+		const originalSettings = {
+			...(await import("@/hooks/use-sound-settings")),
+		};
+		mock.module("@/hooks/use-sound-settings", () => ({
+			isSoundMuted: () => muted,
+		}));
+		const { preparePayChime, playPayChime, playSound } = await import(
+			"@/hooks/use-sound"
+		);
+		let resumes = 0;
+		let starts = 0;
+		let volume = 0;
+		let resolveBytes!: (bytes: ArrayBuffer) => void;
+		const bytes = new Promise<ArrayBuffer>((resolve) => {
+			resolveBytes = resolve;
+		});
+		const originals = ["window", "AudioContext", "fetch"].map(
+			(key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+		);
+		class FakeContext {
+			destination = {};
+			resume() {
+				resumes++;
+				return Promise.resolve();
+			}
+			decodeAudioData() {
+				return Promise.resolve({});
+			}
+			createBufferSource() {
+				return {
+					buffer: null,
+					loop: true,
+					onended: null,
+					connect() {},
+					disconnect() {},
+					start() {
+						assert.equal(this.loop, false);
+						starts++;
+					},
+				};
+			}
+			createGain() {
+				return {
+					gain: {
+						set value(value: number) {
+							volume = value;
+						},
+					},
+					connect() {},
+					disconnect() {},
+				};
+			}
+		}
+		Object.defineProperty(globalThis, "window", {
+			configurable: true,
+			value: {},
+		});
+		Object.defineProperty(globalThis, "AudioContext", {
+			configurable: true,
+			value: FakeContext,
+		});
+		Object.defineProperty(globalThis, "fetch", {
+			configurable: true,
+			value: async (url: string) => {
+				assert.equal(url, "/sounds/pay-chime.mp3");
+				return { ok: true, arrayBuffer: () => bytes };
+			},
+		});
+		try {
+			preparePayChime();
+			assert.equal(resumes, 0, "muted confirm does not initialize audio");
+			muted = false;
+			preparePayChime();
+			assert.equal(resumes, 1, "resume is synchronous in the confirm gesture");
+			assert.equal(starts, 0, "confirm must not play the chime");
+			const pending = playPayChime();
+			muted = true;
+			resolveBytes(new ArrayBuffer(1));
+			await pending;
+			assert.equal(starts, 0, "mute during loading suppresses playback");
+			muted = false;
+			await playPayChime();
+			assert.equal(starts, 1);
+			assert.equal(volume, 0.3);
+			muted = true;
+			playSound("payChime");
+			await Promise.resolve();
+			assert.equal(starts, 1, "global mute is honored by the public hook path");
+		} finally {
+			for (const [key, descriptor] of originals) {
+				if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+				else Reflect.deleteProperty(globalThis, key);
+			}
+			mock.module("@/hooks/use-sound-settings", () => originalSettings);
+			mock.restore();
+		}
+	});
+});
