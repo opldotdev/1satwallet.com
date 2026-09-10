@@ -2,7 +2,7 @@ import { type MoveBasketResult, moveBasketOutputs } from "@1sat/actions";
 import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
 import type { WalletInterface } from "@bsv/sdk";
 
-/** Leftover theme-token basket. Published JS mapping still omits it. */
+/** Leftover theme-token basket. Also listed in @1sat/types 0.0.42. */
 export const LEFTOVER_ORDINALS_BASKET = "ordinals";
 
 export type BasketMigration = { from: string; to: string };
@@ -25,14 +25,18 @@ export function legacyBasketMigrations(
 		from: LEFTOVER_ORDINALS_BASKET,
 		to: ONESAT_BASKET,
 	};
-	if (
-		published.some(
-			(row) => row.from === leftover.from && row.to === leftover.to,
-		)
-	) {
-		return [...published];
-	}
-	return [...published, leftover];
+	const rows = published.some(
+		(row) => row.from === leftover.from && row.to === leftover.to,
+	)
+		? [...published]
+		: [...published, leftover];
+	const seen = new Set<string>();
+	return rows.filter((row) => {
+		const key = `${row.from}>${row.to}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }
 
 export function mappingVersion(
