@@ -232,42 +232,48 @@ export function WalletHomeActions() {
 					</Button>
 				</DialogTrigger>
 				<DialogContent
+					showCloseButton={sendState.status !== "success"}
 					className={
 						sendState.status === "success"
-							? "pay-success-card rounded-3xl bg-popover text-center [--primary:var(--chart-1)] [--primary-foreground:var(--foreground)] dark:[--primary:var(--ring)] dark:[--primary-foreground:var(--background)]"
+							? "pay-success-card max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl bg-popover p-6 text-center sm:p-8 [--primary:var(--chart-1)] [--primary-foreground:var(--foreground)] dark:[--primary:var(--ring)] dark:[--primary-foreground:var(--background)]"
 							: undefined
 					}
 				>
-					<DialogHeader
-						className={sendState.status === "success" ? "sr-only" : undefined}
-					>
-						<DialogTitle>Send BSV</DialogTitle>
-						<DialogDescription>
-							Enter a BSV address and the amount to send.
-						</DialogDescription>
-					</DialogHeader>
+					{sendState.status !== "success" && (
+						<DialogHeader>
+							<DialogTitle>Send BSV</DialogTitle>
+							<DialogDescription>
+								Enter a BSV address and the amount to send.
+							</DialogDescription>
+						</DialogHeader>
+					)}
 					{sendState.status === "success" ? (
 						<div className="space-y-5 text-center" role="status">
 							<PaySuccessMark />
 							<div className="pay-success-copy space-y-2">
-								<p className="font-bold text-2xl text-foreground">
-									Payment sent
-								</p>
-								<p className="text-muted-foreground text-sm">
-									Your BSV is on its way.
-								</p>
+								<DialogTitle className="font-bold text-2xl text-foreground leading-tight">
+									Payment Successful
+								</DialogTitle>
+								<DialogDescription className="text-muted-foreground text-sm">
+									Your payment has been processed.
+								</DialogDescription>
 								<p className="pt-2 font-bold text-3xl text-foreground break-all">
 									{formatSatoshisAsBsv(sendState.satoshis)} BSV
 								</p>
 							</div>
-							<p className="break-all font-mono text-muted-foreground text-xs">
-								{sendState.txid}
-							</p>
 							<DialogClose asChild>
 								<Button className="h-14 w-full rounded-full bg-primary font-bold text-primary-foreground">
 									Done
 								</Button>
 							</DialogClose>
+							<details className="text-muted-foreground text-sm">
+								<summary className="cursor-pointer rounded-sm py-2 focus-visible:outline-2 focus-visible:outline-ring">
+									Transaction details
+								</summary>
+								<p className="mt-2 break-all font-mono text-xs">
+									{sendState.txid}
+								</p>
+							</details>
 						</div>
 					) : sendState.status === "review" ||
 						sendState.status === "sending" ? (

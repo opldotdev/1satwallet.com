@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -170,4 +171,29 @@ describe("payment chime", () => {
 			mock.restore();
 		}
 	});
+});
+
+describe("sound accessibility preferences", () => {
+	for (const muted of [false, true]) {
+		it(`keeps reduced motion independent of explicit mute=${muted}`, () => {
+			// A fresh process exercises the real module's initial preference read,
+			// without the audio test's module mock or singleton state.
+			const result = spawnSync(
+				process.execPath,
+				[
+					"-e",
+					`
+				globalThis.window = {
+					matchMedia: () => ({ matches: true }),
+					localStorage: { getItem: () => ${muted ? '"1"' : '"0"'} }
+				};
+				const { isSoundMuted } = await import("./hooks/use-sound-settings.ts");
+				if (isSoundMuted() !== ${muted}) process.exit(1);
+			`,
+				],
+				{ cwd: root, encoding: "utf8" },
+			);
+			assert.equal(result.status, 0, result.stderr);
+		});
+	}
 });

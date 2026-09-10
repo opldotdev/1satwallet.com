@@ -86,7 +86,7 @@ export async function playPayChime(
  *
  * Uses HTMLAudioElement for UI taps and Web Audio for deferred payment audio.
  * Sounds are preloaded once into a shared module-level pool for instant playback.
- * Respects the global mute toggle and prefers-reduced-motion.
+ * Respects the global mute toggle independently of reduced motion.
  *
  * @example
  * const { play } = useSound();
