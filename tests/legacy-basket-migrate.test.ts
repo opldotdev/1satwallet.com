@@ -38,7 +38,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 describe("legacy basket migrate", () => {
-	it("adds leftover theme-token ordinals when the published mapping omits it", () => {
+	it("keeps leftover theme-token ordinals once in the migrate list", () => {
 		const rows = legacyBasketMigrations();
 		assert.deepEqual(
 			rows.filter((row) => row.to === ONESAT_BASKET).map((row) => row.from),
@@ -53,11 +53,12 @@ describe("legacy basket migrate", () => {
 		);
 	});
 
-	it("bumps the mapping version when leftover ordinals is added", () => {
-		assert.notEqual(
+	it("uses the published leftover-ordinals mapping version", () => {
+		assert.equal(
 			mappingVersion(LEGACY_P1SAT_BASKET_MIGRATIONS),
 			mappingVersion(legacyBasketMigrations()),
 		);
+		assert.match(mappingVersion(), /ordinals>1sat/);
 	});
 
 	it("moves leftover ordinals and marks complete only when every source is empty or moved", async () => {
