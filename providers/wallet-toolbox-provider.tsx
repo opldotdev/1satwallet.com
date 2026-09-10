@@ -68,6 +68,7 @@ import {
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
+import { migrateIfNeeded } from "@/lib/wallet/legacy-basket-migrate";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -379,6 +380,33 @@ export function WalletToolboxProvider({
 		balanceError,
 		syncStatus: balanceSyncStatus,
 	} = balanceResult;
+
+	useEffect(() => {
+		if (!wallet || !identityKey || !isInitialized) return;
+		let cancelled = false;
+		void migrateIfNeeded({
+			wallet,
+			identityHex: identityKey,
+			storage: window.localStorage,
+		})
+			.then((result) => {
+				if (cancelled || !result.ran || result.totalMoved === 0) return;
+				refreshBalance();
+			})
+			.catch(() => {
+				if (cancelled) return;
+				reportDiagnostic({
+					category: "action",
+					code: "action.failed",
+					operation: "wallet.migrate-legacy-baskets",
+					recoverable: true,
+					context: { retryable: true },
+				});
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [wallet, identityKey, isInitialized, refreshBalance]);
 
 	// -- Outpoint script resolution --
 	const resolveOutpointScript = useCallback(

@@ -4,16 +4,16 @@ import {
 	type WalletOutput,
 } from "@1sat/actions";
 import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
-
-/** Leftover theme-token basket. JS mapping only lists `p 1sat ordinals`. */
-const LEFTOVER_ORDINALS_BASKET = "ordinals";
+import { LEFTOVER_ORDINALS_BASKET } from "@/lib/wallet/legacy-basket-migrate";
 
 export const LEGACY_ORDINAL_BASKETS = [
-	...LEGACY_P1SAT_BASKET_MIGRATIONS.filter(
-		(migration) => migration.to === ONESAT_BASKET,
-	).map((migration) => migration.from),
-	LEFTOVER_ORDINALS_BASKET,
-] as const;
+	...new Set([
+		...LEGACY_P1SAT_BASKET_MIGRATIONS.filter(
+			(migration) => migration.to === ONESAT_BASKET,
+		).map((migration) => migration.from),
+		LEFTOVER_ORDINALS_BASKET,
+	]),
+];
 
 export function mergeWalletOutputs(groups: WalletOutput[][]): WalletOutput[] {
 	const seen = new Set<string>();
