@@ -10,13 +10,16 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
+import { isOrdinalListed } from "@/lib/wallet/ordinal-actions";
 import { detectMigrationStatus } from "@/lib/wallet-migration";
 import { useWallet } from "@/providers/wallet-provider";
+import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 const DISMISSED_KEY = "legacy_sweep_banner_dismissed_v1";
 
 export function LegacySweepBanner() {
 	const { walletKeys, isWalletLocked } = useWallet();
+	const { ordinals: walletOrdinals } = useWalletToolbox();
 	const { isMobile, setOpenMobile } = useSidebar();
 
 	const [dismissed, setDismissed] = useState(false);
@@ -78,15 +81,24 @@ export function LegacySweepBanner() {
 		!loading &&
 		migrationStatus?.status === "migrated" &&
 		sweepableAssetCount > 0;
+	const listingCount = walletOrdinals.filter(isOrdinalListed).length;
+	const hasListings = listingCount > 0;
 
-	if (dismissed || (!isLegacy && !leftoverAfterMigrate)) {
+	if (dismissed || (!isLegacy && !leftoverAfterMigrate && !hasListings)) {
 		return null;
 	}
 
-	const title = isLegacy ? "Migrate assets" : "Legacy assets";
-	const detail = isLegacy
-		? "Optional. Run this when you are ready."
-		: `${sweepableAssetCount} item${sweepableAssetCount === 1 ? "" : "s"} need sweeping`;
+	const title =
+		hasListings && !isLegacy && !leftoverAfterMigrate
+			? "Open listings"
+			: isLegacy
+				? "Migrate assets"
+				: "Legacy assets";
+	const detail = hasListings
+		? `${listingCount} listing${listingCount === 1 ? "" : "s"} to retire`
+		: isLegacy
+			? "Optional. Run this when you are ready."
+			: `${sweepableAssetCount} item${sweepableAssetCount === 1 ? "" : "s"} need sweeping`;
 
 	return (
 		<SidebarMenu>

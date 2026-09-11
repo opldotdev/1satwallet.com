@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	Bsv20Section,
 	FundingSection,
+	ListingsSection,
 	LockedSection,
 	MneeSection,
 	OpnsSection,
@@ -25,9 +26,13 @@ import {
 	RunSection,
 	SweepStepsList,
 	TokensSection,
+	TypeChecklist,
 } from "@/components/wallet/migration-sections";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
-import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
+import {
+	type EnrichedOrdinal,
+	useLegacyAssets,
+} from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
@@ -35,6 +40,19 @@ import {
 	type SweepProgress,
 	type SweepResult,
 } from "@/lib/sweep-migration";
+import {
+	type AssetType,
+	cancelListedAssets,
+	defaultAssetTypes,
+	type ListedAsset,
+	listedFromLegacy,
+	listedFromWallet,
+	mergeListed,
+	planMigration,
+	plannedCount,
+	toggleAssetType,
+	withoutListed,
+} from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
 	type MigrationStatus,
@@ -97,6 +115,9 @@ export function MigrationWizard() {
 		new Set(),
 	);
 	const [ordinalPage, setOrdinalPage] = useState(0);
+	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
+		defaultAssetTypes(),
+	);
 	const [deferredReady, setDeferredReady] = useState(false);
 	const [deferred, setDeferred] = useState(false);
 
@@ -151,12 +172,87 @@ export function MigrationWizard() {
 		}
 	}, [step, assets.loading, assets.error]);
 
-	// Select all ordinals by default when assets load
+	const listings = useMemo(
+		() =>
+			mergeListed(
+				listedFromWallet(toolbox.ordinals),
+				listedFromLegacy([
+					...assets.ordinals,
+					...assets.opnsNames,
+					...assets.locked,
+					...assets.run,
+				]),
+			),
+		[
+			toolbox.ordinals,
+			assets.ordinals,
+			assets.opnsNames,
+			assets.locked,
+			assets.run,
+		],
+	);
+	const unlistedOrdinals = useMemo(
+		() => withoutListed(assets.ordinals),
+		[assets.ordinals],
+	);
+	const unlistedOpns = useMemo(
+		() => withoutListed(assets.opnsNames),
+		[assets.opnsNames],
+	);
+	const listedLegacyOutputs = useMemo(
+		() => [
+			...assets.ordinals.filter((item) =>
+				listings.some(
+					(listing) =>
+						listing.outpoint === item.outpoint && listing.source === "legacy",
+				),
+			),
+			...assets.opnsNames.filter((item) =>
+				listings.some(
+					(listing) =>
+						listing.outpoint === item.outpoint && listing.source === "legacy",
+				),
+			),
+		],
+		[assets.ordinals, assets.opnsNames, listings],
+	);
+	const selectedUnlisted = useMemo(
+		() =>
+			unlistedOrdinals.filter((item) => selectedOrdinals.has(item.outpoint)),
+		[unlistedOrdinals, selectedOrdinals],
+	);
+	const plan = useMemo(
+		() =>
+			planMigration({
+				types: selectedTypes,
+				listings,
+				listedLegacyOutputs,
+				ordinals: selectedUnlisted,
+				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
+				funding: assets.funding,
+				bsv21: assets.bsv21Tokens,
+				mneeBalance: assets.mneeBalance,
+			}),
+		[
+			selectedTypes,
+			listings,
+			listedLegacyOutputs,
+			selectedUnlisted,
+			unlistedOpns,
+			assets.funding,
+			assets.bsv21Tokens,
+			assets.mneeBalance,
+		],
+	);
+
+	// Select all unlisted ordinals by default when assets load
 	useEffect(() => {
-		if (assets.ordinals.length > 0 && selectedOrdinals.size === 0) {
-			setSelectedOrdinals(new Set(assets.ordinals.map((o) => o.outpoint)));
+		if (unlistedOrdinals.length > 0 && selectedOrdinals.size === 0) {
+			setSelectedOrdinals(
+				new Set(unlistedOrdinals.map((item) => item.outpoint)),
+			);
 		}
-	}, [assets.ordinals, selectedOrdinals.size]);
+	}, [unlistedOrdinals, selectedOrdinals.size]);
 
 	// Ordinal selection handlers
 	const handleToggleOrdinal = useCallback((outpoint: string) => {
@@ -172,24 +268,25 @@ export function MigrationWizard() {
 	}, []);
 
 	const handleSelectAll = useCallback(() => {
-		setSelectedOrdinals(new Set(assets.ordinals.map((o) => o.outpoint)));
-	}, [assets.ordinals]);
+		setSelectedOrdinals(new Set(unlistedOrdinals.map((item) => item.outpoint)));
+	}, [unlistedOrdinals]);
 
 	const handleDeselectAll = useCallback(() => {
 		setSelectedOrdinals(new Set());
 	}, []);
 
-	// Ordinals to sweep: user selection plus all OpNS names
+	const handleToggleType = useCallback((type: AssetType) => {
+		setSelectedTypes((prev) => toggleAssetType(prev, type));
+	}, []);
+
+	// Ordinals to sweep: selected unlisted, OpNS, and listed leftovers
 	const sweepOrdinals = useMemo(() => {
-		return [
-			...assets.ordinals.filter((o) => selectedOrdinals.has(o.outpoint)),
-			...assets.opnsNames,
-		];
-	}, [assets.ordinals, assets.opnsNames, selectedOrdinals]);
+		return [...plan.sweepOrdinals, ...plan.sweepListed];
+	}, [plan.sweepOrdinals, plan.sweepListed]);
 
 	const bsv21OutputCount = useMemo(() => {
-		return assets.bsv21Tokens.reduce((sum, tb) => sum + tb.outputs.length, 0);
-	}, [assets.bsv21Tokens]);
+		return plan.sweepBsv21.reduce((sum, tb) => sum + tb.outputs.length, 0);
+	}, [plan.sweepBsv21]);
 
 	// Run migration
 	const runMigration = useCallback(async () => {
@@ -240,11 +337,29 @@ export function MigrationWizard() {
 				throw new Error("Failed to initialize wallet with identity key");
 			}
 
+			let cancelTxids: string[] = [];
+			if (plan.cancel.length > 0) {
+				if (!toolbox.oneSatContext) {
+					throw new Error("Unlock your wallet to cancel listings.");
+				}
+				setProgress("Cancelling listings...");
+				const cancelled = await cancelListedAssets(
+					toolbox.oneSatContext,
+					plan.cancel,
+				);
+				cancelTxids = cancelled.txids;
+				if (!cancelled.ok) {
+					throw new Error(
+						"Listings must be cancelled before migration can finish.",
+					);
+				}
+			}
+
 			if (toolbox.wallet && toolbox.services) {
 				const totalSweepable =
-					assets.funding.length + sweepOrdinals.length + bsv21OutputCount;
+					plan.sweepFunding.length + sweepOrdinals.length + bsv21OutputCount;
 
-				if (totalSweepable > 0 || assets.mneeBalance > 0) {
+				if (totalSweepable > 0 || plan.sweepMnee) {
 					setProgress(
 						`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 					);
@@ -264,19 +379,21 @@ export function MigrationWizard() {
 							setProgressPercent(60 + Math.round((p.percent / 100) * 40));
 							setSweepProgress(p);
 						},
-						funding: assets.funding,
+						funding: plan.sweepFunding,
 						ordinals: sweepOrdinals,
-						bsv21Tokens: assets.bsv21Tokens,
-						mneeBalance: assets.mneeBalance,
+						bsv21Tokens: plan.sweepBsv21,
+						mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
 					});
 
-					setSweepResult(result);
+					setSweepResult({ ...result, cancelTxids });
 					assets.rescan();
+					toolbox.refreshBalance();
 				} else {
 					setSweepResult({
 						bsvTxids: [],
 						ordinalTxids: [],
 						bsv21Txids: [],
+						cancelTxids,
 						errors: [],
 					});
 				}
@@ -299,19 +416,60 @@ export function MigrationWizard() {
 		walletKeys,
 		migrationStatus,
 		toolbox,
-		assets.funding,
-		assets.bsv21Tokens,
 		assets.mneeBalance,
 		assets.rescan,
 		sweepOrdinals,
 		bsv21OutputCount,
+		plan.cancel,
+		plan.sweepFunding,
+		plan.sweepBsv21,
+		plan.sweepMnee,
 	]);
 
-	const totalAssets =
-		assets.funding.length +
-		assets.ordinals.length +
-		assets.opnsNames.length +
-		assets.bsv21Tokens.reduce((sum, t) => sum + t.outputs.length, 0);
+	const runDelistOnly = useCallback(async () => {
+		if (!toolbox.oneSatContext) {
+			setError("Unlock your wallet to cancel listings.");
+			setStep("error");
+			return;
+		}
+		setStep("migrate");
+		setError(null);
+		setProgress("Cancelling listings...");
+		setProgressPercent(20);
+		try {
+			const cancelled = await cancelListedAssets(
+				toolbox.oneSatContext,
+				listings.filter((item) => item.source === "wallet"),
+			);
+			if (!cancelled.ok) {
+				throw new Error(
+					"Listings must be cancelled before this step can finish.",
+				);
+			}
+			setSweepResult({
+				bsvTxids: [],
+				ordinalTxids: [],
+				bsv21Txids: [],
+				cancelTxids: cancelled.txids,
+				errors: [],
+			});
+			assets.rescan();
+			toolbox.refreshBalance();
+			setProgressPercent(100);
+			setStep("complete");
+		} catch (err) {
+			reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "wallet.migration.delist",
+				recoverable: true,
+			});
+			setError(err instanceof Error ? err.message : String(err));
+			setStep("error");
+		}
+	}, [assets.rescan, listings, toolbox]);
+
+	const totalAssets = plannedCount(plan);
 
 	// Don't render if not applicable
 	if (toolbox.connectionMode === "external") return null;
@@ -359,14 +517,30 @@ export function MigrationWizard() {
 					<PreviewStep
 						migrationStatus={migrationStatus}
 						assets={assets}
+						listings={listings}
+						unlistedOrdinals={unlistedOrdinals}
+						unlistedOpns={unlistedOpns}
+						selectedTypes={selectedTypes}
+						typeCounts={{
+							listings: listings.length,
+							ordinals: unlistedOrdinals.length + unlistedOpns.length,
+							bsv21:
+								assets.bsv21Tokens.reduce(
+									(sum, token) => sum + token.outputs.length,
+									0,
+								) + (assets.mneeBalance > 0 ? 1 : 0),
+							bsv: assets.funding.length,
+						}}
 						selectedOrdinals={selectedOrdinals}
 						ordinalPage={ordinalPage}
 						totalAssets={totalAssets}
+						onToggleType={handleToggleType}
 						onToggleOrdinal={handleToggleOrdinal}
 						onSelectAll={handleSelectAll}
 						onDeselectAll={handleDeselectAll}
 						onPageChange={setOrdinalPage}
 						onBeginMigration={runMigration}
+						onDelistOnly={runDelistOnly}
 						onMigrateLater={deferMigration}
 					/>
 				)}
@@ -541,26 +715,40 @@ function ScanStep({
 function PreviewStep({
 	migrationStatus,
 	assets,
+	listings,
+	unlistedOrdinals,
+	unlistedOpns,
+	selectedTypes,
+	typeCounts,
 	selectedOrdinals,
 	ordinalPage,
 	totalAssets,
+	onToggleType,
 	onToggleOrdinal,
 	onSelectAll,
 	onDeselectAll,
 	onPageChange,
 	onBeginMigration,
+	onDelistOnly,
 	onMigrateLater,
 }: {
 	migrationStatus: Extract<MigrationStatus, { status: "legacy" }>;
 	assets: ReturnType<typeof useLegacyAssets>;
+	listings: ListedAsset[];
+	unlistedOrdinals: EnrichedOrdinal[];
+	unlistedOpns: EnrichedOrdinal[];
+	selectedTypes: Set<AssetType>;
+	typeCounts: Record<AssetType, number>;
 	selectedOrdinals: Set<string>;
 	ordinalPage: number;
 	totalAssets: number;
+	onToggleType: (type: AssetType) => void;
 	onToggleOrdinal: (outpoint: string) => void;
 	onSelectAll: () => void;
 	onDeselectAll: () => void;
 	onPageChange: (page: number) => void;
 	onBeginMigration: () => void;
+	onDelistOnly: () => void;
 	onMigrateLater: () => void;
 }) {
 	return (
@@ -596,30 +784,58 @@ function PreviewStep({
 
 			{/* Asset sections */}
 			<div className="space-y-3">
-				<FundingSection funding={assets.funding} totalBsv={assets.totalBsv} />
-				<OrdinalsSection
-					ordinals={assets.ordinals}
-					selectedOrdinals={selectedOrdinals}
-					onToggle={onToggleOrdinal}
-					onSelectAll={onSelectAll}
-					onDeselectAll={onDeselectAll}
-					ordinalPage={ordinalPage}
-					onPageChange={onPageChange}
+				<TypeChecklist
+					types={selectedTypes}
+					counts={typeCounts}
+					onToggle={onToggleType}
 				/>
-				<OpnsSection opnsNames={assets.opnsNames} />
-				<TokensSection tokens={assets.bsv21Tokens} />
-				<MneeSection mneeBalance={assets.mneeBalance} />
+				<ListingsSection listings={listings} />
+				{selectedTypes.has("bsv") && (
+					<FundingSection funding={assets.funding} totalBsv={assets.totalBsv} />
+				)}
+				{selectedTypes.has("ordinals") && (
+					<>
+						<OrdinalsSection
+							ordinals={unlistedOrdinals}
+							selectedOrdinals={selectedOrdinals}
+							onToggle={onToggleOrdinal}
+							onSelectAll={onSelectAll}
+							onDeselectAll={onDeselectAll}
+							ordinalPage={ordinalPage}
+							onPageChange={onPageChange}
+						/>
+						<OpnsSection opnsNames={unlistedOpns} />
+					</>
+				)}
+				{selectedTypes.has("bsv21") && (
+					<>
+						<TokensSection tokens={assets.bsv21Tokens} />
+						<MneeSection mneeBalance={assets.mneeBalance} />
+					</>
+				)}
 				<Bsv20Section tokens={assets.bsv20Tokens} />
-				<LockedSection locked={assets.locked} />
-				<RunSection run={assets.run} />
+				<LockedSection locked={withoutListed(assets.locked)} />
+				<RunSection run={withoutListed(assets.run)} />
 			</div>
 
 			{/* CTA */}
 			<div className="space-y-3 pt-2">
+				{listings.length > 0 && (
+					<Button
+						variant="outline"
+						onClick={onDelistOnly}
+						className="w-full h-12 text-base"
+						size="lg"
+					>
+						Cancel listings only ({listings.length})
+					</Button>
+				)}
 				<div className="text-xs text-muted-foreground text-center">
 					This will derive your identity key, re-encrypt your wallet,
 					reinitialize BRC-100
-					{totalAssets > 0 && ", and sweep selected assets"}.
+					{totalAssets > 0 &&
+						", cancel selected listings, and sweep selected assets"}
+					.
 				</div>
 				<Button
 					onClick={onBeginMigration}
@@ -748,6 +964,15 @@ function CompleteStep({
 							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
 						</div>
 					))}
+					{(sweepResult.cancelTxids ?? []).map((txid) => (
+						<div
+							key={txid}
+							className="flex justify-between border-b border-border/30 pb-2"
+						>
+							<span className="text-muted-foreground">Listing cancelled</span>
+							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
+						</div>
+					))}
 					{sweepResult.mneeTxid && (
 						<div className="flex justify-between border-b border-border/30 pb-2">
 							<span className="text-muted-foreground">MNEE Sweep</span>
@@ -771,6 +996,7 @@ function CompleteStep({
 					{sweepResult.bsvTxids.length === 0 &&
 						sweepResult.ordinalTxids.length === 0 &&
 						sweepResult.bsv21Txids.length === 0 &&
+						(sweepResult.cancelTxids?.length ?? 0) === 0 &&
 						!sweepResult.mneeTxid &&
 						sweepResult.errors.length === 0 && (
 							<p className="text-center text-muted-foreground">
