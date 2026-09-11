@@ -19,6 +19,7 @@ import {
 	opnsAssetId,
 	ownedOpnsName,
 } from "@/lib/opns";
+import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -113,11 +114,13 @@ export function OwnedOpns() {
 						Wallet-owned OpNS basket rows. Every action revalidates the row
 						before requesting authorization.
 					</p>
+					<p className="mt-1 text-xs text-muted-foreground" role="status">
+						{LISTING_CREATE_OFF_MESSAGE}
+					</p>
 					{!marketAvailable && !stackFeatures.isPending && (
 						<p className="mt-1 text-xs text-amber-300" role="status">
-							New listings are disabled because Market capability is
-							unavailable. Existing wallet OrdLock cancellation remains
-							available.
+							Market capability is unavailable. Existing wallet OrdLock
+							cancellation remains available.
 						</p>
 					)}
 				</div>
@@ -202,7 +205,7 @@ export function OwnedOpns() {
 									>
 										Send
 									</Button>
-									{listed ? (
+									{listed && (
 										<Button
 											size="sm"
 											variant="outline"
@@ -210,15 +213,6 @@ export function OwnedOpns() {
 											onClick={() => setAction({ kind: "cancel", output })}
 										>
 											Cancel listing
-										</Button>
-									) : (
-										<Button
-											size="sm"
-											variant="outline"
-											disabled={!id || !marketAvailable}
-											onClick={() => setAction({ kind: "sell", output })}
-										>
-											List for sale
 										</Button>
 									)}
 								</div>

@@ -36,7 +36,8 @@ export default async function MarketOrdinalsPage({
 				<div>
 					<h1 className="text-2xl font-bold">Ordinal marketplace</h1>
 					<p className="text-sm text-muted-foreground">
-						Active OrdLock listings from the 1Sat market index.
+						Active OrdLock listings from the 1Sat market index. New listing
+						create is off; existing listings can still be bought or cancelled.
 					</p>
 				</div>
 				<Button asChild variant="outline">

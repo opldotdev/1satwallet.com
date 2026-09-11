@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatSatoshisAsBsv } from "@/components/wallet/wallet-home-utils";
 import { useSound } from "@/hooks/use-sound";
 import {
 	executeOwnedOpnsOperation,
@@ -26,10 +25,10 @@ import {
 	ownedOpnsName,
 	requireCurrentOwnedOpns,
 } from "@/lib/opns";
+import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	type OrdinalDestinationKind,
-	parseSatoshiPrice,
 	validateOrdinalDestination,
 } from "@/lib/wallet/ordinal-actions";
 import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
@@ -46,7 +45,7 @@ const titles: Record<OpnsActionKind, string> = {
 	publish: "Publish OpNS profile",
 	unpublish: "Unpublish OpNS profile",
 	send: "Send OpNS name",
-	sell: "List OpNS name",
+	sell: "Listing create is off",
 	cancel: "Cancel OpNS listing",
 };
 
@@ -83,7 +82,6 @@ export function OpnsActionDialog({
 	const [destinationKind, setDestinationKind] =
 		useState<OrdinalDestinationKind>("address");
 	const [destination, setDestination] = useState("");
-	const [price, setPrice] = useState("");
 	const [error, setError] = useState<string | null>(null);
 	const [stale, setStale] = useState(false);
 	const [txid, setTxid] = useState<string | null>(null);
@@ -91,7 +89,6 @@ export function OpnsActionDialog({
 	const id = opnsAssetId(output);
 	const name = ownedOpnsName(output);
 	const outpoint = getDisplayOutpoint(output);
-	const satoshiPrice = parseSatoshiPrice(price);
 	const destinationValid = validateOrdinalDestination(
 		destination,
 		destinationKind,
@@ -104,13 +101,13 @@ export function OpnsActionDialog({
 			case "send":
 				return destinationValid;
 			case "sell":
-				return satoshiPrice !== null && !isOpnsListed(output);
+				return false;
 			case "cancel":
 				return isOpnsListed(output);
 			case "unpublish":
 				return true;
 		}
-	}, [avatar, destinationValid, kind, output, satoshiPrice]);
+	}, [avatar, destinationValid, kind, output]);
 
 	const reset = useCallback(() => {
 		setStage("edit");
@@ -118,7 +115,6 @@ export function OpnsActionDialog({
 		setAvatar("");
 		setDestinationKind("address");
 		setDestination("");
-		setPrice("");
 		setError(null);
 		setStale(false);
 		setTxid(null);
@@ -151,7 +147,7 @@ export function OpnsActionDialog({
 						: { counterparty: destination.trim() }),
 				};
 			case "sell":
-				return { kind, id, price: satoshiPrice as number };
+				return null;
 			case "cancel":
 				return { kind, id };
 		}
@@ -293,21 +289,9 @@ export function OpnsActionDialog({
 						)}
 
 						{kind === "sell" && (
-							<div className="space-y-2">
-								<Label htmlFor="opns-price">Listing price (satoshis)</Label>
-								<Input
-									id="opns-price"
-									inputMode="numeric"
-									value={price}
-									onChange={(event) => setPrice(event.target.value)}
-								/>
-								{price && satoshiPrice === null && (
-									<p className="text-sm text-destructive" role="alert">
-										Enter a positive whole-satoshi price within the safe integer
-										range.
-									</p>
-								)}
-							</div>
+							<p className="text-sm text-muted-foreground" role="status">
+								{LISTING_CREATE_OFF_MESSAGE}
+							</p>
 						)}
 					</div>
 				)}
@@ -317,15 +301,6 @@ export function OpnsActionDialog({
 						<dl className="grid grid-cols-[1fr_auto] gap-2 rounded-md border p-3 text-sm">
 							<dt>Action</dt>
 							<dd>{titles[kind]}</dd>
-							{kind === "sell" && satoshiPrice !== null && (
-								<>
-									<dt>Public listing price</dt>
-									<dd className="font-mono">
-										{satoshiPrice.toLocaleString()} sats (
-										{formatSatoshisAsBsv(satoshiPrice)} BSV)
-									</dd>
-								</>
-							)}
 							{kind === "send" && (
 								<>
 									<dt>Destination</dt>
