@@ -202,9 +202,10 @@ describe("provider-neutral OpNS UI boundaries", () => {
 		]) {
 			assert.match(source, new RegExp(`${action}\\.execute\\(ctx`));
 		}
+		assert.match(source, /assertListingCreateAllowed/);
+		assert.match(source, /LISTING_CREATE_OFF_MESSAGE/);
 		assert.match(source, /requireCurrentOwnedOpns/);
 		assert.match(source, /requireCurrentListing/);
-		assert.match(source, /positive whole-satoshi price/);
 		assert.match(source, /Total before network fee/);
 		assert.match(source, /not quoted by this action/);
 		assert.match(source, /queryKey: \["wallet-balance"\]/);

@@ -8,7 +8,6 @@ import {
 	Flame,
 	RefreshCw,
 	Send,
-	Tag,
 	X,
 } from "lucide-react";
 import Image from "next/image";
@@ -24,6 +23,7 @@ import {
 } from "@/components/wallet/ordinal-action-dialog";
 import { OrdinalsGridSkeleton } from "@/components/wallet/ordinals-grid-skeleton";
 import { useOrdinalMetadata } from "@/hooks/use-ordinal-metadata";
+import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { isOrdinalListed, ordinalAssetId } from "@/lib/wallet/ordinal-actions";
 import { getOrdinalPresentation } from "@/lib/wallet/ordinal-presentation";
@@ -82,7 +82,6 @@ export function OrdinalsGrid() {
 		selectionIsCurrent &&
 		selectedOrdinals.length === 1 &&
 		selectedListed.length === 1;
-	const oneUnlisted = onlyUnlisted && selectedOrdinals.length === 1;
 
 	const toggleSelection = useCallback((outpoint: string) => {
 		setSelectedOutpoints((previous) => {
@@ -137,6 +136,9 @@ export function OrdinalsGrid() {
 							? "Select one or more items to manage them."
 							: `${selectedOutpoints.size} selected`}
 					</p>
+					<p className="mt-1 text-xs text-muted-foreground">
+						{LISTING_CREATE_OFF_MESSAGE}
+					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
 					<Button variant="outline" size="sm" onClick={() => void refresh()}>
@@ -151,15 +153,6 @@ export function OrdinalsGrid() {
 					>
 						<Send className="size-4" data-icon="inline-start" />
 						Send
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={!oneUnlisted}
-						onClick={() => setDialogKind("sell")}
-					>
-						<Tag className="size-4" data-icon="inline-start" />
-						List
 					</Button>
 					<Button
 						variant="outline"

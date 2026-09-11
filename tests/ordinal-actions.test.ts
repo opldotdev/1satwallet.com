@@ -70,7 +70,7 @@ describe("ordinal action inputs", () => {
 });
 
 describe("canonical ordinal action dispatch", () => {
-	it("passes exact send, burn, sell and cancel inputs", async () => {
+	it("passes exact send, burn and cancel inputs and refuses sell", async () => {
 		const calls: Array<{ action: string; input: unknown }> = [];
 		const actions: OrdinalActionSet = {
 			send: async (_ctx, input) => {
@@ -107,10 +107,14 @@ describe("canonical ordinal action dispatch", () => {
 			{ kind: "burn", ids: ["one", "two"] },
 			actions,
 		);
-		await executeOrdinalOperation(
-			ctx,
-			{ kind: "sell", id: "one", price: 123_456_789 },
-			actions,
+		await assert.rejects(
+			() =>
+				executeOrdinalOperation(
+					ctx,
+					{ kind: "sell", id: "one", price: 123_456_789 },
+					actions,
+				),
+			/listing create is disabled/i,
 		);
 		await executeOrdinalOperation(ctx, { kind: "cancel", id: "one" }, actions);
 
@@ -125,7 +129,6 @@ describe("canonical ordinal action dispatch", () => {
 				},
 			},
 			{ action: "burn", input: { ids: ["one", "two"] } },
-			{ action: "sell", input: { id: "one", price: 123_456_789 } },
 			{ action: "cancel", input: { id: "one" } },
 		]);
 	});
@@ -155,6 +158,8 @@ describe("canonical ordinal action dispatch", () => {
 		]) {
 			assert.match(source, new RegExp(action));
 		}
+		assert.match(source, /assertListingCreateAllowed/);
+		assert.match(source, /LISTING_CREATE_OFF_MESSAGE/);
 		assert.match(source, /executeOrdinalOperation\(oneSatContext/);
 		assert.match(source, /queryKey: \["wallet-balance"\]/);
 		assert.match(source, /queryKey: \["market-flow"\]/);

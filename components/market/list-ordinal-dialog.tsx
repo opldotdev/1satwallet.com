@@ -6,7 +6,7 @@ import {
 	type WalletOutput,
 } from "@1sat/actions";
 import { readAssetIdTag } from "@1sat/types";
-import { Loader2, Tag, X } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,8 +15,8 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-
 import { useSound } from "@/hooks/use-sound";
+import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 export const isListed = (output: WalletOutput): boolean =>
@@ -48,17 +48,14 @@ export const ListOrdinalDialog = ({
 		try {
 			const id = readAssetIdTag(ordinal.tags);
 			if (!id) throw new Error("Ordinal is missing its wallet asset ID");
+			if (!listed) {
+				throw new Error(LISTING_CREATE_OFF_MESSAGE);
+			}
 			const ctx = createContext(wallet, {
 				services: services ?? undefined,
 				chain,
 			});
-			const result = listed
-				? await cancelOrdinalListing.execute(ctx, { id })
-				: (() => {
-						throw new Error(
-							"Listing creation is deprecated pending a replacement contract. Existing listings can still be cancelled or bought.",
-						);
-					})();
+			const result = await cancelOrdinalListing.execute(ctx, { id });
 			if (result.error) {
 				setStatus("error");
 				setError(result.error);
@@ -91,7 +88,7 @@ export const ListOrdinalDialog = ({
 			<DialogContent className="max-w-sm">
 				<DialogHeader>
 					<DialogTitle>
-						{listed ? "Cancel listing" : "List for sale"}
+						{listed ? "Cancel listing" : "Listing create is off"}
 					</DialogTitle>
 				</DialogHeader>
 				<div className="flex flex-col gap-3">
@@ -100,8 +97,7 @@ export const ListOrdinalDialog = ({
 					</p>
 					{!listed && (
 						<p className="text-xs text-muted-foreground">
-							Listing creation is deprecated pending a replacement contract.
-							Existing listings can still be cancelled or bought.
+							{LISTING_CREATE_OFF_MESSAGE}
 						</p>
 					)}
 					{error && (
@@ -117,7 +113,7 @@ export const ListOrdinalDialog = ({
 						{status === "busy" ? (
 							<>
 								<Loader2 className="w-4 h-4 mr-2 animate-spin" />
-								{listed ? "Cancelling..." : "Listing..."}
+								Cancelling...
 							</>
 						) : listed ? (
 							<>
@@ -125,10 +121,7 @@ export const ListOrdinalDialog = ({
 								Cancel listing
 							</>
 						) : (
-							<>
-								<Tag className="w-4 h-4 mr-2" />
-								List for sale
-							</>
+							"Listing create is off"
 						)}
 					</Button>
 				</div>

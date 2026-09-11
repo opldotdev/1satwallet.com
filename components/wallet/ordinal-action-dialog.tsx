@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSound } from "@/hooks/use-sound";
+import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	executeOrdinalOperation,
@@ -22,7 +23,6 @@ import {
 	type OrdinalOperation,
 	ordinalActionFailureMessage,
 	ordinalAssetId,
-	parseSatoshiPrice,
 	validateOrdinalDestination,
 } from "@/lib/wallet/ordinal-actions";
 import { getDisplayOutpoint, getName } from "@/lib/wallet/wallet-output-utils";
@@ -41,7 +41,7 @@ interface OrdinalActionDialogProps {
 const TITLES: Record<OrdinalActionKind, string> = {
 	send: "Send ordinals",
 	burn: "Permanently burn ordinals",
-	sell: "List ordinal for sale",
+	sell: "Listing create is off",
 	cancel: "Cancel ordinal listing",
 };
 
@@ -57,7 +57,6 @@ export function OrdinalActionDialog({
 	const [destinationKind, setDestinationKind] =
 		useState<OrdinalDestinationKind>("address");
 	const [destination, setDestination] = useState("");
-	const [price, setPrice] = useState("");
 	const [burnConfirmation, setBurnConfirmation] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -68,7 +67,6 @@ export function OrdinalActionDialog({
 	);
 	const hasCompleteIds =
 		ids.length === ordinals.length && new Set(ids).size === ids.length;
-	const satoshiPrice = parseSatoshiPrice(price);
 	const destinationIsValid = validateOrdinalDestination(
 		destination,
 		destinationKind,
@@ -80,13 +78,11 @@ export function OrdinalActionDialog({
 		!busy &&
 		((kind === "send" && destinationIsValid) ||
 			(kind === "burn" && burnConfirmation === "BURN") ||
-			(kind === "sell" && satoshiPrice !== null) ||
 			kind === "cancel");
 
 	const reset = useCallback(() => {
 		setDestinationKind("address");
 		setDestination("");
-		setPrice("");
 		setBurnConfirmation("");
 		setError(null);
 	}, []);
@@ -126,11 +122,8 @@ export function OrdinalActionDialog({
 			if (burnConfirmation !== "BURN") return;
 			operation = { kind, ids } as const;
 		} else if (kind === "sell") {
-			if (satoshiPrice === null || ids.length !== 1) {
-				setError("Enter a positive whole-satoshi price for one ordinal.");
-				return;
-			}
-			operation = { kind, id: ids[0], price: satoshiPrice } as const;
+			setError(LISTING_CREATE_OFF_MESSAGE);
+			return;
 		} else {
 			if (ids.length !== 1) {
 				setError("Select one active listing to cancel.");
@@ -176,7 +169,6 @@ export function OrdinalActionDialog({
 		ordinals.length,
 		play,
 		reset,
-		satoshiPrice,
 	]);
 
 	return (
@@ -253,19 +245,9 @@ export function OrdinalActionDialog({
 				)}
 
 				{kind === "sell" && (
-					<div className="space-y-2">
-						<Label htmlFor="ordinal-price">Price (satoshis)</Label>
-						<Input
-							id="ordinal-price"
-							inputMode="numeric"
-							placeholder="Whole satoshis only"
-							value={price}
-							onChange={(event) => setPrice(event.target.value)}
-						/>
-						<p className="text-xs text-muted-foreground">
-							The integer shown here is passed unchanged to the OrdLock action.
-						</p>
-					</div>
+					<p className="text-sm text-muted-foreground" role="status">
+						{LISTING_CREATE_OFF_MESSAGE}
+					</p>
 				)}
 
 				{kind === "burn" && (
