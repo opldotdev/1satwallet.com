@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	Bsv20Section,
 	FundingSection,
+	ListingsSection,
 	LockedSection,
 	MneeSection,
 	OpnsSection,
@@ -24,6 +25,7 @@ import {
 	RunSection,
 	SweepStepsList,
 	TokensSection,
+	TypeChecklist,
 } from "@/components/wallet/migration-sections";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
@@ -33,6 +35,18 @@ import {
 	type SweepProgress,
 	type SweepResult,
 } from "@/lib/sweep-migration";
+import {
+	type AssetType,
+	cancelListedAssets,
+	defaultAssetTypes,
+	listedFromLegacy,
+	listedFromWallet,
+	mergeListed,
+	planMigration,
+	plannedCount,
+	toggleAssetType,
+	withoutListed,
+} from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
 	type MigrationStatus,
@@ -171,6 +185,14 @@ function CompletionState({
 								</code>
 							</div>
 						))}
+						{(sweepResult.cancelTxids ?? []).map((txid) => (
+							<div key={txid} className="flex justify-between">
+								<span className="text-muted-foreground">Listing cancelled</span>
+								<code className="text-xs font-mono">
+									{txid.slice(0, 16)}...
+								</code>
+							</div>
+						))}
 						{sweepResult.mneeTxid && (
 							<div className="flex justify-between">
 								<span className="text-muted-foreground">MNEE Sweep</span>
@@ -194,6 +216,7 @@ function CompletionState({
 						{sweepResult.bsvTxids.length === 0 &&
 							sweepResult.ordinalTxids.length === 0 &&
 							sweepResult.bsv21Txids.length === 0 &&
+							(sweepResult.cancelTxids?.length ?? 0) === 0 &&
 							!sweepResult.mneeTxid &&
 							sweepResult.errors.length === 0 && (
 								<p className="text-sm text-muted-foreground">
@@ -272,6 +295,9 @@ export default function MigratePage() {
 		new Set(),
 	);
 	const [ordinalPage, setOrdinalPage] = useState(0);
+	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
+		defaultAssetTypes(),
+	);
 
 	// Detect migration status
 	const migrationStatus: MigrationStatus | null = useMemo(() => {
@@ -321,12 +347,109 @@ export default function MigratePage() {
 		(p) => setScanDetail(p.detail ?? p.phase),
 	);
 
+	const listings = useMemo(
+		() =>
+			mergeListed(
+				listedFromWallet(toolbox.ordinals),
+				listedFromLegacy([
+					...assets.ordinals,
+					...assets.opnsNames,
+					...assets.locked,
+					...assets.run,
+				]),
+			),
+		[
+			toolbox.ordinals,
+			assets.ordinals,
+			assets.opnsNames,
+			assets.locked,
+			assets.run,
+		],
+	);
+	const unlistedOrdinals = useMemo(
+		() => withoutListed(assets.ordinals),
+		[assets.ordinals],
+	);
+	const unlistedOpns = useMemo(
+		() => withoutListed(assets.opnsNames),
+		[assets.opnsNames],
+	);
+	const unlistedLocked = useMemo(
+		() => withoutListed(assets.locked),
+		[assets.locked],
+	);
+	const unlistedRun = useMemo(() => withoutListed(assets.run), [assets.run]);
+	const listedLegacyOutputs = useMemo(
+		() => [
+			...assets.ordinals.filter((item) =>
+				listings.some(
+					(listing) =>
+						listing.outpoint === item.outpoint && listing.source === "legacy",
+				),
+			),
+			...assets.opnsNames.filter((item) =>
+				listings.some(
+					(listing) =>
+						listing.outpoint === item.outpoint && listing.source === "legacy",
+				),
+			),
+		],
+		[assets.ordinals, assets.opnsNames, listings],
+	);
+
+	const typeCounts = useMemo(
+		() => ({
+			listings: listings.length,
+			ordinals: unlistedOrdinals.length + unlistedOpns.length,
+			bsv21:
+				assets.bsv21Tokens.reduce(
+					(sum, token) => sum + token.outputs.length,
+					0,
+				) + (assets.mneeBalance > 0 ? 1 : 0),
+			bsv: assets.funding.length,
+		}),
+		[
+			listings.length,
+			unlistedOrdinals.length,
+			unlistedOpns.length,
+			assets.bsv21Tokens,
+			assets.mneeBalance,
+			assets.funding.length,
+		],
+	);
+
+	const selectedUnlisted = useMemo(
+		() =>
+			unlistedOrdinals.filter((item) => selectedOrdinals.has(item.outpoint)),
+		[unlistedOrdinals, selectedOrdinals],
+	);
+
+	const plan = useMemo(
+		() =>
+			planMigration({
+				types: selectedTypes,
+				listings,
+				listedLegacyOutputs,
+				ordinals: selectedUnlisted,
+				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
+				funding: assets.funding,
+				bsv21: assets.bsv21Tokens,
+				mneeBalance: assets.mneeBalance,
+			}),
+		[
+			selectedTypes,
+			listings,
+			listedLegacyOutputs,
+			selectedUnlisted,
+			unlistedOpns,
+			assets.funding,
+			assets.bsv21Tokens,
+			assets.mneeBalance,
+		],
+	);
+
 	// Sweepable asset counts (opns names sweep together with ordinals)
-	const totalAssets =
-		assets.funding.length +
-		assets.ordinals.length +
-		assets.opnsNames.length +
-		assets.bsv21Tokens.reduce((sum, t) => sum + t.outputs.length, 0);
+	const totalAssets = plannedCount(plan);
 
 	// Transition from scan to preview when scan completes
 	useEffect(() => {
@@ -334,10 +457,11 @@ export default function MigratePage() {
 
 		if (phase !== "scan") return;
 
+		if (assets.loading || assets.error || toolbox.isBalanceLoading) return;
+
 		if (!legacy) {
 			if (migrationStatus.status === "migrated") {
-				// Migrated and no recoverable legacy keys — nothing to sweep
-				setPhase("complete");
+				setPhase(listings.length > 0 ? "preview" : "complete");
 			} else {
 				setError("Wallet cannot be migrated (missing pay or ord key)");
 				setPhase("error");
@@ -345,9 +469,19 @@ export default function MigratePage() {
 			return;
 		}
 
-		if (assets.loading || assets.error) return;
-
-		if (legacy.sweepOnly && totalAssets === 0 && assets.mneeBalance <= 0) {
+		if (
+			legacy.sweepOnly &&
+			assets.funding.length +
+				assets.ordinals.length +
+				assets.opnsNames.length +
+				assets.bsv21Tokens.reduce(
+					(sum, token) => sum + token.outputs.length,
+					0,
+				) ===
+				0 &&
+			assets.mneeBalance <= 0 &&
+			listings.length === 0
+		) {
 			// Already migrated and legacy addresses are empty
 			setPhase("complete");
 		} else {
@@ -360,15 +494,22 @@ export default function MigratePage() {
 		assets.loading,
 		assets.error,
 		assets.mneeBalance,
-		totalAssets,
+		assets.funding.length,
+		assets.ordinals.length,
+		assets.opnsNames.length,
+		assets.bsv21Tokens,
+		listings.length,
+		toolbox.isBalanceLoading,
 	]);
 
-	// Select all ordinals by default when assets load
+	// Select all unlisted ordinals by default when assets load
 	useEffect(() => {
-		if (assets.ordinals.length > 0 && selectedOrdinals.size === 0) {
-			setSelectedOrdinals(new Set(assets.ordinals.map((o) => o.outpoint)));
+		if (unlistedOrdinals.length > 0 && selectedOrdinals.size === 0) {
+			setSelectedOrdinals(
+				new Set(unlistedOrdinals.map((item) => item.outpoint)),
+			);
 		}
-	}, [assets.ordinals, selectedOrdinals.size]);
+	}, [unlistedOrdinals, selectedOrdinals.size]);
 
 	// Ordinal selection handlers
 	const handleToggleOrdinal = useCallback((outpoint: string) => {
@@ -384,20 +525,106 @@ export default function MigratePage() {
 	}, []);
 
 	const handleSelectAll = useCallback(() => {
-		setSelectedOrdinals(new Set(assets.ordinals.map((o) => o.outpoint)));
-	}, [assets.ordinals]);
+		setSelectedOrdinals(new Set(unlistedOrdinals.map((item) => item.outpoint)));
+	}, [unlistedOrdinals]);
 
 	const handleDeselectAll = useCallback(() => {
 		setSelectedOrdinals(new Set());
 	}, []);
 
-	// Ordinals to sweep: user selection plus all OpNS names
+	const handleToggleType = useCallback((type: AssetType) => {
+		setSelectedTypes((prev) => toggleAssetType(prev, type));
+	}, []);
+
+	// Ordinals to sweep: selected unlisted, OpNS, and listed leftovers
 	const sweepOrdinals = useMemo(() => {
-		return [
-			...assets.ordinals.filter((o) => selectedOrdinals.has(o.outpoint)),
-			...assets.opnsNames,
-		];
-	}, [assets.ordinals, assets.opnsNames, selectedOrdinals]);
+		return [...plan.sweepOrdinals, ...plan.sweepListed];
+	}, [plan.sweepOrdinals, plan.sweepListed]);
+
+	const runDelist = useCallback(async () => {
+		if (!toolbox.oneSatContext || plan.cancel.length === 0) {
+			return { ok: true, txids: [] as string[], errors: [] as string[] };
+		}
+		setProgress("Cancelling listings...");
+		return cancelListedAssets(toolbox.oneSatContext, plan.cancel);
+	}, [toolbox.oneSatContext, plan.cancel]);
+
+	const runDelistOnly = useCallback(async () => {
+		if (!toolbox.oneSatContext) {
+			setError("Unlock your wallet to cancel listings.");
+			setPhase("error");
+			return;
+		}
+		setPhase("migrate");
+		setError(null);
+		setProgressPercent(20);
+		setSweepProgress(null);
+		try {
+			const cancelled = await runDelist();
+			if (!cancelled.ok) {
+				setSweepResult({
+					bsvTxids: [],
+					ordinalTxids: [],
+					bsv21Txids: [],
+					cancelTxids: cancelled.txids,
+					errors: cancelled.errors,
+				});
+				setError(
+					"Listings must be cancelled before this step can finish. Nothing else was moved.",
+				);
+				setPhase("error");
+				return;
+			}
+			let result: SweepResult = {
+				bsvTxids: [],
+				ordinalTxids: [],
+				bsv21Txids: [],
+				cancelTxids: cancelled.txids,
+				errors: [],
+			};
+			if (
+				plan.sweepListed.length > 0 &&
+				legacy &&
+				toolbox.wallet &&
+				toolbox.services
+			) {
+				setProgress("Returning listed ordinals to the wallet...");
+				setProgressPercent(50);
+				result = await executeMigrationSweep({
+					wallet: toolbox.wallet,
+					services: toolbox.services,
+					chain: toolbox.chain,
+					legacyPayWif: legacy.payWif,
+					legacyOrdWif: legacy.ordWif,
+					legacyIdentityWif: legacy.identityWif,
+					onProgress: (p) => {
+						setProgress(p.message);
+						setProgressPercent(50 + Math.round((p.percent / 100) * 50));
+						setSweepProgress(p);
+					},
+					funding: [],
+					ordinals: plan.sweepListed,
+					bsv21Tokens: [],
+					mneeBalance: 0,
+				});
+				result = { ...result, cancelTxids: cancelled.txids };
+			}
+			setSweepResult(result);
+			assets.rescan();
+			toolbox.refreshBalance();
+			setProgressPercent(100);
+			setPhase("complete");
+		} catch (err) {
+			reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "wallet.migration.delist",
+				recoverable: true,
+			});
+			setError(err instanceof Error ? err.message : String(err));
+			setPhase("error");
+		}
+	}, [assets, legacy, plan.sweepListed, runDelist, toolbox]);
 
 	// Run migration (or sweep-only re-entry for already-migrated wallets)
 	const runMigration = useCallback(async () => {
@@ -453,7 +680,14 @@ export default function MigratePage() {
 				}
 			}
 
-			// 5. Sweep legacy assets
+			const cancelled = await runDelist();
+			if (!cancelled.ok) {
+				throw new Error(
+					"Listings must be cancelled before migration can finish.",
+				);
+			}
+
+			// 5. Sweep selected legacy assets
 			if (!toolbox.wallet || !toolbox.services) {
 				throw new Error(
 					"BRC-100 wallet is not initialized — unlock your wallet and try again",
@@ -461,11 +695,11 @@ export default function MigratePage() {
 			}
 
 			const totalSweepable =
-				assets.funding.length +
+				plan.sweepFunding.length +
 				sweepOrdinals.length +
-				assets.bsv21Tokens.reduce((sum, t) => sum + t.outputs.length, 0);
+				plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0);
 
-			if (totalSweepable > 0 || assets.mneeBalance > 0) {
+			if (totalSweepable > 0 || plan.sweepMnee) {
 				setProgress(
 					`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 				);
@@ -488,21 +722,23 @@ export default function MigratePage() {
 						setProgressPercent(base + Math.round((p.percent / 100) * span));
 						setSweepProgress(p);
 					},
-					funding: assets.funding,
+					funding: plan.sweepFunding,
 					ordinals: sweepOrdinals,
-					bsv21Tokens: assets.bsv21Tokens,
-					mneeBalance: assets.mneeBalance,
+					bsv21Tokens: plan.sweepBsv21,
+					mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
 				});
 
-				setSweepResult(result);
+				setSweepResult({ ...result, cancelTxids: cancelled.txids });
 				// Refresh so the banner and any re-entry reflect what's left
 				assets.rescan();
+				toolbox.refreshBalance();
 			} else {
 				setSweepResult({
 					bsvTxids: [],
 					ordinalTxids: [],
 					bsv21Txids: [],
-					errors: [],
+					cancelTxids: cancelled.txids,
+					errors: cancelled.errors,
 				});
 			}
 
@@ -518,7 +754,17 @@ export default function MigratePage() {
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
-	}, [walletKeys, legacy, toolbox, assets, sweepOrdinals]);
+	}, [
+		walletKeys,
+		legacy,
+		toolbox,
+		assets,
+		sweepOrdinals,
+		plan.sweepFunding,
+		plan.sweepBsv21,
+		plan.sweepMnee,
+		runDelist,
+	]);
 
 	if (toolbox.connectionMode === "external") {
 		return (
@@ -587,101 +833,150 @@ export default function MigratePage() {
 				)}
 
 				{/* Preview: show categorized assets */}
-				{phase === "preview" && legacy && (
+				{phase === "preview" && (
 					<>
-						{/* Legacy addresses */}
-						<Card>
-							<CardHeader>
-								<CardTitle>
-									{legacy.sweepOnly
-										? "Legacy Assets Found"
-										: "Migration Required"}
-								</CardTitle>
-								<CardDescription>
-									{legacy.sweepOnly
-										? "Your wallet is already migrated, but assets remain at your legacy addresses. Review them below, then sweep."
-										: "Your wallet uses the legacy payment key as its BRC-100 root. Review the assets below, then migrate."}
-								</CardDescription>
-							</CardHeader>
-							<CardContent className="space-y-2 text-sm">
-								<div className="flex justify-between">
-									<span className="text-muted-foreground">
-										Legacy Pay Address
-									</span>
-									<code className="text-xs">{legacy.payAddress}</code>
-								</div>
-								<div className="flex justify-between">
-									<span className="text-muted-foreground">
-										Legacy Ord Address
-									</span>
-									<code className="text-xs">{legacy.ordAddress}</code>
-								</div>
-							</CardContent>
-						</Card>
+						{legacy ? (
+							<Card>
+								<CardHeader>
+									<CardTitle>
+										{legacy.sweepOnly
+											? "Legacy Assets Found"
+											: "Migration Required"}
+									</CardTitle>
+									<CardDescription>
+										{legacy.sweepOnly
+											? "Your wallet is already migrated, but assets remain at your legacy addresses. Review them below, then sweep."
+											: "Your wallet uses the legacy payment key as its BRC-100 root. Review the assets below, then migrate."}
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-2 text-sm">
+									<div className="flex justify-between">
+										<span className="text-muted-foreground">
+											Legacy Pay Address
+										</span>
+										<code className="text-xs">{legacy.payAddress}</code>
+									</div>
+									<div className="flex justify-between">
+										<span className="text-muted-foreground">
+											Legacy Ord Address
+										</span>
+										<code className="text-xs">{legacy.ordAddress}</code>
+									</div>
+								</CardContent>
+							</Card>
+						) : (
+							<Card>
+								<CardHeader>
+									<CardTitle>Open listings</CardTitle>
+									<CardDescription>
+										These listings are being retired. Cancel them to return each
+										ordinal to your wallet. Nothing else will be moved.
+									</CardDescription>
+								</CardHeader>
+							</Card>
+						)}
 
-						{/* Asset sections */}
 						<div className="space-y-3">
-							<FundingSection
-								funding={assets.funding}
-								totalBsv={assets.totalBsv}
+							<TypeChecklist
+								types={selectedTypes}
+								counts={typeCounts}
+								onToggle={handleToggleType}
 							/>
 
-							<OrdinalsSection
-								ordinals={assets.ordinals}
-								selectedOrdinals={selectedOrdinals}
-								onToggle={handleToggleOrdinal}
-								onSelectAll={handleSelectAll}
-								onDeselectAll={handleDeselectAll}
-								ordinalPage={ordinalPage}
-								onPageChange={setOrdinalPage}
-							/>
+							<ListingsSection listings={listings} />
 
-							<OpnsSection opnsNames={assets.opnsNames} />
+							{selectedTypes.has("bsv") && (
+								<FundingSection
+									funding={assets.funding}
+									totalBsv={assets.totalBsv}
+								/>
+							)}
 
-							<TokensSection tokens={assets.bsv21Tokens} />
+							{selectedTypes.has("ordinals") && (
+								<>
+									<OrdinalsSection
+										ordinals={unlistedOrdinals}
+										selectedOrdinals={selectedOrdinals}
+										onToggle={handleToggleOrdinal}
+										onSelectAll={handleSelectAll}
+										onDeselectAll={handleDeselectAll}
+										ordinalPage={ordinalPage}
+										onPageChange={setOrdinalPage}
+									/>
+									<OpnsSection opnsNames={unlistedOpns} />
+								</>
+							)}
 
-							<MneeSection mneeBalance={assets.mneeBalance} />
+							{selectedTypes.has("bsv21") && (
+								<>
+									<TokensSection tokens={assets.bsv21Tokens} />
+									<MneeSection mneeBalance={assets.mneeBalance} />
+								</>
+							)}
 
 							<Bsv20Section tokens={assets.bsv20Tokens} />
 
-							<LockedSection locked={assets.locked} />
+							<LockedSection locked={unlistedLocked} />
 
-							<RunSection run={assets.run} />
+							<RunSection run={unlistedRun} />
 						</div>
 
-						{/* No assets found */}
 						{totalAssets === 0 &&
+							listings.length === 0 &&
 							assets.bsv20Tokens.length === 0 &&
 							assets.mneeBalance <= 0 && (
 								<Card>
 									<CardContent className="py-8 text-center text-muted-foreground">
 										No assets found at legacy addresses.
-										{!legacy.sweepOnly &&
+										{legacy &&
+											!legacy.sweepOnly &&
 											" Migration will still derive your identity key."}
 									</CardContent>
 								</Card>
 							)}
 
-						{/* Migration CTA */}
 						<Separator />
 
 						<div className="space-y-3">
-							<div className="text-xs text-muted-foreground">
-								{legacy.sweepOnly
-									? "This will sweep all selected assets from your legacy addresses into your BRC-100 wallet."
-									: `This will: derive your identity key, re-encrypt your wallet backup, reinitialize the BRC-100 wallet${
-											totalAssets > 0
-												? ", and sweep all selected assets from legacy addresses"
-												: ""
-										}.`}
-							</div>
-							<Button onClick={runMigration} className="w-full">
-								{legacy.sweepOnly
-									? "Sweep Legacy Assets"
-									: "Derive Identity Key & Sweep"}
-								{totalAssets > 0 &&
-									` (${totalAssets} asset${totalAssets !== 1 ? "s" : ""})`}
-							</Button>
+							{listings.length > 0 && (
+								<>
+									<p className="text-xs text-muted-foreground">
+										Cancel listings only returns those ordinals to the wallet.
+										It does not sweep BSV, tokens, or other ordinals.
+									</p>
+									<Button
+										variant="outline"
+										onClick={() => void runDelistOnly()}
+										className="w-full"
+									>
+										Cancel listings only
+										{` (${listings.length})`}
+									</Button>
+								</>
+							)}
+							{legacy && (
+								<>
+									<div className="text-xs text-muted-foreground">
+										{legacy.sweepOnly
+											? "This will cancel selected listings, then sweep the selected asset types into your wallet."
+											: `This will: derive your identity key, re-encrypt your wallet backup, reinitialize the BRC-100 wallet${
+													totalAssets > 0
+														? ", cancel selected listings, and sweep selected asset types"
+														: ""
+												}.`}
+									</div>
+									<Button
+										onClick={() => void runMigration()}
+										className="w-full"
+									>
+										{legacy.sweepOnly
+											? "Sweep selected assets"
+											: "Derive Identity Key & Sweep"}
+										{totalAssets > 0 &&
+											` (${totalAssets} asset${totalAssets !== 1 ? "s" : ""})`}
+									</Button>
+								</>
+							)}
 						</div>
 					</>
 				)}

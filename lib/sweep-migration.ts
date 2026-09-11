@@ -45,6 +45,7 @@ export interface SweepResult {
 	ordinalTxids: string[];
 	bsv21Txids: string[];
 	mneeTxid?: string;
+	cancelTxids?: string[];
 	errors: string[];
 }
 

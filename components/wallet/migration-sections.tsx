@@ -10,6 +10,7 @@ import type {
 	TokenBalance,
 } from "@/lib/hooks/use-legacy-assets";
 import type { SweepStepState } from "@/lib/sweep-migration";
+import type { AssetType, ListedAsset } from "@/lib/wallet/migration-listings";
 
 const ORDINALS_PER_PAGE = 20;
 
@@ -27,6 +28,88 @@ export function formatTokenAmount(
 	const intPart = padded.slice(0, -decimals) || "0";
 	const decPart = padded.slice(-decimals).replace(/0+$/, "");
 	return decPart ? `${intPart}.${decPart}` : intPart;
+}
+
+const TYPE_ROWS: { id: AssetType; label: string }[] = [
+	{ id: "listings", label: "Open listings" },
+	{ id: "ordinals", label: "Ordinals" },
+	{ id: "bsv21", label: "BSV21" },
+	{ id: "bsv", label: "BSV" },
+];
+
+export function TypeChecklist({
+	types,
+	counts,
+	onToggle,
+}: {
+	types: ReadonlySet<AssetType>;
+	counts: Record<AssetType, number>;
+	onToggle: (type: AssetType) => void;
+}) {
+	return (
+		<div className="border border-border/50 bg-muted/10 p-5 space-y-3">
+			<div className="text-sm font-semibold">Assets to move</div>
+			<p className="text-xs text-muted-foreground">
+				Choose which asset types to include. Open listings are cancelled first.
+			</p>
+			<div className="grid gap-2 sm:grid-cols-2">
+				{TYPE_ROWS.map((row) => {
+					const count = counts[row.id];
+					const checked = types.has(row.id);
+					return (
+						<label
+							key={row.id}
+							className="flex items-center gap-2 border border-border/40 bg-background/40 px-3 py-2 text-sm"
+						>
+							<input
+								type="checkbox"
+								className="size-4 accent-primary"
+								checked={checked}
+								disabled={count === 0}
+								onChange={() => onToggle(row.id)}
+							/>
+							<span className="flex-1">{row.label}</span>
+							<Badge variant="secondary" className="text-xs">
+								{count}
+							</Badge>
+						</label>
+					);
+				})}
+			</div>
+		</div>
+	);
+}
+
+export function ListingsSection({ listings }: { listings: ListedAsset[] }) {
+	if (listings.length === 0) return null;
+
+	return (
+		<div className="bg-gradient-to-br from-chart-1/5 to-transparent border border-chart-1/20 p-5">
+			<div className="flex items-center gap-2 mb-3">
+				<span className="h-2 w-2 bg-chart-1" />
+				<span className="text-sm font-semibold text-chart-1">
+					Open listings
+				</span>
+				<Badge variant="secondary" className="text-xs ml-auto">
+					{listings.length} listing{listings.length !== 1 ? "s" : ""}
+				</Badge>
+			</div>
+			<p className="text-xs text-muted-foreground mb-3">
+				These listings are being retired. Cancel them to return each ordinal to
+				your wallet.
+			</p>
+			<ul className="space-y-1">
+				{listings.map((item) => (
+					<li
+						key={item.outpoint}
+						className="truncate font-mono text-[11px] text-muted-foreground"
+					>
+						{item.outpoint}
+					</li>
+				))}
+			</ul>
+		</div>
+	);
 }
 
 export function FundingSection({
