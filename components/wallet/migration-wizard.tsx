@@ -44,6 +44,8 @@ import {
 	type AssetType,
 	cancelListedAssets,
 	defaultAssetTypes,
+	delistMigrationListings,
+	isListedOutput,
 	type ListedAsset,
 	listedFromLegacy,
 	listedFromWallet,
@@ -109,6 +111,10 @@ export function MigrationWizard() {
 	const [scanDetail, setScanDetail] = useState<string | null>(null);
 	const [sweepResult, setSweepResult] = useState<SweepResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [delistOnly, setDelistOnly] = useState(false);
+	const [completedListings, setCompletedListings] = useState<Set<string>>(
+		new Set(),
+	);
 
 	// Ordinal selection
 	const [selectedOrdinals, setSelectedOrdinals] = useState<Set<string>>(
@@ -182,8 +188,9 @@ export function MigrationWizard() {
 					...assets.locked,
 					...assets.run,
 				]),
-			),
+			).filter((item) => !completedListings.has(item.outpoint)),
 		[
+			completedListings,
 			toolbox.ordinals,
 			assets.ordinals,
 			assets.opnsNames,
@@ -200,21 +207,22 @@ export function MigrationWizard() {
 		[assets.opnsNames],
 	);
 	const listedLegacyOutputs = useMemo(
-		() => [
-			...assets.ordinals.filter((item) =>
-				listings.some(
-					(listing) =>
-						listing.outpoint === item.outpoint && listing.source === "legacy",
-				),
+		() =>
+			[
+				...assets.ordinals,
+				...assets.opnsNames,
+				...assets.locked,
+				...assets.run,
+			].filter(
+				(item) => isListedOutput(item) && !completedListings.has(item.outpoint),
 			),
-			...assets.opnsNames.filter((item) =>
-				listings.some(
-					(listing) =>
-						listing.outpoint === item.outpoint && listing.source === "legacy",
-				),
-			),
+		[
+			assets.ordinals,
+			assets.opnsNames,
+			assets.locked,
+			assets.run,
+			completedListings,
 		],
-		[assets.ordinals, assets.opnsNames, listings],
 	);
 	const selectedUnlisted = useMemo(
 		() =>
@@ -295,6 +303,7 @@ export function MigrationWizard() {
 
 		setStep("migrate");
 		setError(null);
+		setDelistOnly(false);
 		setProgressPercent(0);
 
 		try {
@@ -427,6 +436,7 @@ export function MigrationWizard() {
 	]);
 
 	const runDelistOnly = useCallback(async () => {
+		setDelistOnly(true);
 		if (!toolbox.oneSatContext) {
 			setError("Unlock your wallet to cancel listings.");
 			setStep("error");
@@ -434,27 +444,45 @@ export function MigrationWizard() {
 		}
 		setStep("migrate");
 		setError(null);
+		setSweepResult(null);
 		setProgress("Cancelling listings...");
 		setProgressPercent(20);
+		setSweepProgress(null);
 		try {
-			const cancelled = await cancelListedAssets(
-				toolbox.oneSatContext,
-				listings.filter((item) => item.source === "wallet"),
-			);
-			if (!cancelled.ok) {
-				throw new Error(
-					"Listings must be cancelled before this step can finish.",
-				);
-			}
-			setSweepResult({
-				bsvTxids: [],
-				ordinalTxids: [],
-				bsv21Txids: [],
-				cancelTxids: cancelled.txids,
-				errors: [],
+			const result = await delistMigrationListings({
+				ctx: toolbox.oneSatContext,
+				listings,
+				legacyOutputs: listedLegacyOutputs,
+				sweepParams:
+					migrationStatus?.status === "legacy" &&
+					toolbox.wallet &&
+					toolbox.services
+						? {
+								wallet: toolbox.wallet,
+								services: toolbox.services,
+								chain: toolbox.chain,
+								legacyPayWif: migrationStatus.legacyPayWif,
+								legacyOrdWif: migrationStatus.legacyOrdWif,
+								onProgress: (p) => {
+									setProgress(p.message);
+									setSweepProgress(p);
+								},
+							}
+						: null,
 			});
+			setSweepResult(result);
+			setCompletedListings(
+				(previous) => new Set([...previous, ...result.completedOutpoints]),
+			);
 			assets.rescan();
 			toolbox.refreshBalance();
+			if (result.errors.length > 0) {
+				setError(
+					`${result.completedOutpoints.length} listing(s) cancelled. ${result.errors.join(" ")}`,
+				);
+				setStep("error");
+				return;
+			}
 			setProgressPercent(100);
 			setStep("complete");
 		} catch (err) {
@@ -467,7 +495,7 @@ export function MigrationWizard() {
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
-	}, [assets.rescan, listings, toolbox]);
+	}, [assets.rescan, migrationStatus, listings, listedLegacyOutputs, toolbox]);
 
 	const totalAssets = plannedCount(plan);
 
@@ -556,6 +584,7 @@ export function MigrationWizard() {
 				{step === "complete" && (
 					<CompleteStep
 						sweepResult={sweepResult}
+						delistOnly={delistOnly}
 						onRetryFailed={() => {
 							setSweepResult(null);
 							setSweepProgress(null);
@@ -564,6 +593,7 @@ export function MigrationWizard() {
 							assets.rescan();
 						}}
 						onDismiss={() => {
+							if (delistOnly) deferMigration();
 							// Force re-render by navigating to wallet
 							router.push("/wallet");
 							// The wizard will unmount since migrationStatus will be "migrated"
@@ -573,7 +603,11 @@ export function MigrationWizard() {
 				)}
 
 				{step === "error" && error && (
-					<ErrorStep error={error} onRetry={() => setStep("preview")} />
+					<ErrorStep
+						error={error}
+						delistOnly={delistOnly}
+						onRetry={() => setStep("preview")}
+					/>
 				)}
 			</div>
 		</div>
@@ -901,10 +935,12 @@ function MigrateStep({
 
 function CompleteStep({
 	sweepResult,
+	delistOnly,
 	onRetryFailed,
 	onDismiss,
 }: {
 	sweepResult: SweepResult | null;
+	delistOnly: boolean;
 	onRetryFailed: () => void;
 	onDismiss: () => void;
 }) {
@@ -926,12 +962,18 @@ function CompleteStep({
 					)}
 				</div>
 				<h2 className="text-2xl font-bold tracking-tight">
-					{hadErrors ? "Migration Finished With Errors" : "Migration Complete"}
+					{delistOnly
+						? "Listings Cancelled"
+						: hadErrors
+							? "Migration Finished With Errors"
+							: "Migration Complete"}
 				</h2>
 				<p className="text-sm text-muted-foreground">
-					{hadErrors
-						? "Your identity key is set up, but some assets could not be swept. Swept assets are already safe — you can rescan and retry the remainder."
-						: "Your wallet has been upgraded to the identity key system."}
+					{delistOnly
+						? "The listed ordinals have been returned to your wallet. You can migrate the remaining assets later."
+						: hadErrors
+							? "Your identity key is set up, but some assets could not be swept. Swept assets are already safe — you can rescan and retry the remainder."
+							: "Your wallet has been upgraded to the identity key system."}
 				</p>
 			</div>
 
@@ -1035,14 +1077,24 @@ function CompleteStep({
 // Step: Error
 // ---------------------------------------------------------------------------
 
-function ErrorStep({ error, onRetry }: { error: string; onRetry: () => void }) {
+function ErrorStep({
+	error,
+	delistOnly,
+	onRetry,
+}: {
+	error: string;
+	delistOnly: boolean;
+	onRetry: () => void;
+}) {
 	return (
 		<div className="space-y-8 text-center">
 			<div className="space-y-4">
 				<div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10 ring-1 ring-destructive/20">
 					<AlertTriangle className="h-8 w-8 text-destructive" />
 				</div>
-				<h2 className="text-2xl font-bold tracking-tight">Migration Failed</h2>
+				<h2 className="text-2xl font-bold tracking-tight">
+					{delistOnly ? "Listing Cancellation Incomplete" : "Migration Failed"}
+				</h2>
 				<p className="text-sm text-destructive">{error}</p>
 			</div>
 

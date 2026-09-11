@@ -39,6 +39,8 @@ import {
 	type AssetType,
 	cancelListedAssets,
 	defaultAssetTypes,
+	delistMigrationListings,
+	isListedOutput,
 	listedFromLegacy,
 	listedFromWallet,
 	mergeListed,
@@ -132,10 +134,12 @@ function MigrationProgress({
 
 function CompletionState({
 	sweepResult,
+	delistOnly,
 	onBackToWallet,
 	onRetryFailed,
 }: {
 	sweepResult: SweepResult | null;
+	delistOnly: boolean;
 	onBackToWallet: () => void;
 	onRetryFailed: () => void;
 }) {
@@ -144,18 +148,22 @@ function CompletionState({
 		<Card>
 			<CardHeader>
 				<CardTitle>
-					{sweepResult
-						? hadErrors
-							? "Sweep Finished With Errors"
-							: "Migration Complete"
-						: "Already Migrated"}
+					{delistOnly
+						? "Listings Cancelled"
+						: sweepResult
+							? hadErrors
+								? "Sweep Finished With Errors"
+								: "Migration Complete"
+							: "Already Migrated"}
 				</CardTitle>
 				<CardDescription>
-					{sweepResult
-						? hadErrors
-							? "Some assets could not be swept. You can rescan and retry the remainder — successfully swept assets are already safe in your wallet."
-							: "Your wallet has been migrated to the identity key system."
-						: "Your wallet is already using the identity key system and no sweepable assets remain at your legacy addresses."}
+					{delistOnly
+						? "The listed ordinals have been returned to your wallet."
+						: sweepResult
+							? hadErrors
+								? "Some assets could not be swept. You can rescan and retry the remainder — successfully swept assets are already safe in your wallet."
+								: "Your wallet has been migrated to the identity key system."
+							: "Your wallet is already using the identity key system and no sweepable assets remain at your legacy addresses."}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -244,17 +252,21 @@ function CompletionState({
 
 function ErrorState({
 	error,
+	delistOnly,
 	onRetry,
 	onBack,
 }: {
 	error: string;
+	delistOnly: boolean;
 	onRetry: () => void;
 	onBack: () => void;
 }) {
 	return (
 		<Card className="border-destructive/50">
 			<CardHeader>
-				<CardTitle className="text-destructive">Migration Error</CardTitle>
+				<CardTitle className="text-destructive">
+					{delistOnly ? "Listing Cancellation Incomplete" : "Migration Error"}
+				</CardTitle>
 			</CardHeader>
 			<CardContent className="space-y-4">
 				<p className="text-sm text-destructive">{error}</p>
@@ -289,6 +301,10 @@ export default function MigratePage() {
 	const [scanDetail, setScanDetail] = useState<string | null>(null);
 	const [sweepResult, setSweepResult] = useState<SweepResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
+	const [delistOnly, setDelistOnly] = useState(false);
+	const [completedListings, setCompletedListings] = useState<Set<string>>(
+		new Set(),
+	);
 
 	// Ordinal selection state
 	const [selectedOrdinals, setSelectedOrdinals] = useState<Set<string>>(
@@ -357,8 +373,9 @@ export default function MigratePage() {
 					...assets.locked,
 					...assets.run,
 				]),
-			),
+			).filter((item) => !completedListings.has(item.outpoint)),
 		[
+			completedListings,
 			toolbox.ordinals,
 			assets.ordinals,
 			assets.opnsNames,
@@ -380,21 +397,22 @@ export default function MigratePage() {
 	);
 	const unlistedRun = useMemo(() => withoutListed(assets.run), [assets.run]);
 	const listedLegacyOutputs = useMemo(
-		() => [
-			...assets.ordinals.filter((item) =>
-				listings.some(
-					(listing) =>
-						listing.outpoint === item.outpoint && listing.source === "legacy",
-				),
+		() =>
+			[
+				...assets.ordinals,
+				...assets.opnsNames,
+				...assets.locked,
+				...assets.run,
+			].filter(
+				(item) => isListedOutput(item) && !completedListings.has(item.outpoint),
 			),
-			...assets.opnsNames.filter((item) =>
-				listings.some(
-					(listing) =>
-						listing.outpoint === item.outpoint && listing.source === "legacy",
-				),
-			),
+		[
+			assets.ordinals,
+			assets.opnsNames,
+			assets.locked,
+			assets.run,
+			completedListings,
 		],
-		[assets.ordinals, assets.opnsNames, listings],
 	);
 
 	const typeCounts = useMemo(
@@ -542,14 +560,18 @@ export default function MigratePage() {
 	}, [plan.sweepOrdinals, plan.sweepListed]);
 
 	const runDelist = useCallback(async () => {
-		if (!toolbox.oneSatContext || plan.cancel.length === 0) {
+		if (plan.cancel.length === 0) {
 			return { ok: true, txids: [] as string[], errors: [] as string[] };
+		}
+		if (!toolbox.oneSatContext) {
+			throw new Error("Unlock your wallet to cancel listings.");
 		}
 		setProgress("Cancelling listings...");
 		return cancelListedAssets(toolbox.oneSatContext, plan.cancel);
 	}, [toolbox.oneSatContext, plan.cancel]);
 
 	const runDelistOnly = useCallback(async () => {
+		setDelistOnly(true);
 		if (!toolbox.oneSatContext) {
 			setError("Unlock your wallet to cancel listings.");
 			setPhase("error");
@@ -557,61 +579,44 @@ export default function MigratePage() {
 		}
 		setPhase("migrate");
 		setError(null);
+		setSweepResult(null);
+		setProgress("Cancelling listings...");
 		setProgressPercent(20);
 		setSweepProgress(null);
 		try {
-			const cancelled = await runDelist();
-			if (!cancelled.ok) {
-				setSweepResult({
-					bsvTxids: [],
-					ordinalTxids: [],
-					bsv21Txids: [],
-					cancelTxids: cancelled.txids,
-					errors: cancelled.errors,
-				});
+			const result = await delistMigrationListings({
+				ctx: toolbox.oneSatContext,
+				listings,
+				legacyOutputs: listedLegacyOutputs,
+				sweepParams:
+					legacy && toolbox.wallet && toolbox.services
+						? {
+								wallet: toolbox.wallet,
+								services: toolbox.services,
+								chain: toolbox.chain,
+								legacyPayWif: legacy.payWif,
+								legacyOrdWif: legacy.ordWif,
+								legacyIdentityWif: legacy.identityWif,
+								onProgress: (p) => {
+									setProgress(p.message);
+									setSweepProgress(p);
+								},
+							}
+						: null,
+			});
+			setSweepResult(result);
+			setCompletedListings(
+				(previous) => new Set([...previous, ...result.completedOutpoints]),
+			);
+			assets.rescan();
+			toolbox.refreshBalance();
+			if (result.errors.length > 0) {
 				setError(
-					"Listings must be cancelled before this step can finish. Nothing else was moved.",
+					`${result.completedOutpoints.length} listing(s) cancelled. ${result.errors.join(" ")}`,
 				);
 				setPhase("error");
 				return;
 			}
-			let result: SweepResult = {
-				bsvTxids: [],
-				ordinalTxids: [],
-				bsv21Txids: [],
-				cancelTxids: cancelled.txids,
-				errors: [],
-			};
-			if (
-				plan.sweepListed.length > 0 &&
-				legacy &&
-				toolbox.wallet &&
-				toolbox.services
-			) {
-				setProgress("Returning listed ordinals to the wallet...");
-				setProgressPercent(50);
-				result = await executeMigrationSweep({
-					wallet: toolbox.wallet,
-					services: toolbox.services,
-					chain: toolbox.chain,
-					legacyPayWif: legacy.payWif,
-					legacyOrdWif: legacy.ordWif,
-					legacyIdentityWif: legacy.identityWif,
-					onProgress: (p) => {
-						setProgress(p.message);
-						setProgressPercent(50 + Math.round((p.percent / 100) * 50));
-						setSweepProgress(p);
-					},
-					funding: [],
-					ordinals: plan.sweepListed,
-					bsv21Tokens: [],
-					mneeBalance: 0,
-				});
-				result = { ...result, cancelTxids: cancelled.txids };
-			}
-			setSweepResult(result);
-			assets.rescan();
-			toolbox.refreshBalance();
 			setProgressPercent(100);
 			setPhase("complete");
 		} catch (err) {
@@ -624,7 +629,7 @@ export default function MigratePage() {
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
-	}, [assets, legacy, plan.sweepListed, runDelist, toolbox]);
+	}, [assets.rescan, legacy, listings, listedLegacyOutputs, toolbox]);
 
 	// Run migration (or sweep-only re-entry for already-migrated wallets)
 	const runMigration = useCallback(async () => {
@@ -632,6 +637,7 @@ export default function MigratePage() {
 
 		setPhase("migrate");
 		setError(null);
+		setDelistOnly(false);
 		setProgressPercent(0);
 		setSweepProgress(null);
 
@@ -994,6 +1000,7 @@ export default function MigratePage() {
 				{phase === "complete" && (
 					<CompletionState
 						sweepResult={sweepResult}
+						delistOnly={delistOnly}
 						onBackToWallet={() => router.push("/wallet")}
 						onRetryFailed={() => {
 							setSweepResult(null);
@@ -1009,6 +1016,7 @@ export default function MigratePage() {
 				{phase === "error" && error && (
 					<ErrorState
 						error={error}
+						delistOnly={delistOnly}
 						onRetry={() => setPhase("preview")}
 						onBack={() => router.push("/wallet")}
 					/>

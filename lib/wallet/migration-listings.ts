@@ -1,4 +1,10 @@
 import type { OneSatContext, TokenBalance, WalletOutput } from "@1sat/actions";
+import type { IndexedOutput } from "@1sat/types";
+import {
+	executeMigrationSweep,
+	type MigrationSweepParams,
+	type SweepResult,
+} from "@/lib/sweep-migration";
 import {
 	canonicalOrdinalActions,
 	executeOrdinalOperation,
@@ -168,6 +174,10 @@ export async function cancelListedAssets(
 				errors.push(`Listing ${item.outpoint}: ${result.error}`);
 			} else if (result.txid) {
 				txids.push(result.txid);
+			} else {
+				errors.push(
+					`Listing ${item.outpoint}: cancellation returned no transaction ID. Refresh and retry.`,
+				);
 			}
 		} catch (error) {
 			errors.push(
@@ -176,4 +186,79 @@ export async function cancelListedAssets(
 		}
 	}
 	return { ok: errors.length === 0, txids, errors };
+}
+
+/** Cancel every displayed listing, independently of migration type selections. */
+export async function delistMigrationListings(
+	input: {
+		ctx: OneSatContext;
+		listings: ListedAsset[];
+		legacyOutputs: IndexedOutput[];
+		sweepParams: Omit<
+			MigrationSweepParams,
+			"funding" | "ordinals" | "bsv21Tokens" | "mneeBalance"
+		> | null;
+	},
+	actions: OrdinalActionSet = canonicalOrdinalActions,
+	sweep: typeof executeMigrationSweep = executeMigrationSweep,
+): Promise<SweepResult & { completedOutpoints: string[] }> {
+	const result: SweepResult & { completedOutpoints: string[] } = {
+		bsvTxids: [],
+		ordinalTxids: [],
+		bsv21Txids: [],
+		cancelTxids: [],
+		errors: [],
+		completedOutpoints: [],
+	};
+	if (input.listings.length === 0) {
+		result.errors.push(
+			"No listings were cancelled. Refresh the listing inventory before retrying.",
+		);
+		return result;
+	}
+	const legacyOutputs = new Map(
+		input.legacyOutputs.map((output) => [output.outpoint, output]),
+	);
+	for (const item of input.listings) {
+		if (item.source === "wallet") {
+			const cancelled = await cancelListedAssets(input.ctx, [item], actions);
+			result.cancelTxids?.push(...cancelled.txids);
+			result.errors.push(...cancelled.errors);
+			if (cancelled.ok) result.completedOutpoints.push(item.outpoint);
+			continue;
+		}
+		const output = legacyOutputs.get(item.outpoint);
+		if (!output || !input.sweepParams) {
+			result.errors.push(
+				`Listing ${item.outpoint}: legacy cancellation is unavailable. Unlock your wallet and rescan before retrying.`,
+			);
+			continue;
+		}
+		try {
+			// One listing per sweep gives each retry an exact confirmed outpoint.
+			const swept = await sweep({
+				...input.sweepParams,
+				funding: [],
+				ordinals: [output],
+				bsv21Tokens: [],
+				mneeBalance: 0,
+			});
+			result.ordinalTxids.push(...swept.ordinalTxids);
+			result.errors.push(...swept.errors);
+			if (swept.errors.length === 0) {
+				if (swept.ordinalTxids.some(Boolean)) {
+					result.completedOutpoints.push(item.outpoint);
+				} else {
+					result.errors.push(
+						`Listing ${item.outpoint}: cancellation returned no transaction ID. Refresh and retry.`,
+					);
+				}
+			}
+		} catch (error) {
+			result.errors.push(
+				`Listing ${item.outpoint}: ${ordinalActionFailureMessage(error)}`,
+			);
+		}
+	}
+	return result;
 }
