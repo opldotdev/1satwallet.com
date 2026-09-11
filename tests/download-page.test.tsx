@@ -25,5 +25,7 @@ test("Apple download offers the wallet invitation separately from TestFlight", (
 	assert.ok(notice.includes("Dialog.Close"));
 	assert.ok(html.includes("/oneSatLogoDark.png"));
 	assert.ok(html.includes("<MacPreview"));
-	assert.ok(html.includes("Beta in review"));
+	assert.ok(html.includes("Download beta"));
+	assert.ok(!html.includes("Beta in review"));
+	assert.ok(!html.includes("Public downloads open after Apple approves the beta"));
 });

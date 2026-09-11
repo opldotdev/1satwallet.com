@@ -2,13 +2,14 @@
 
 import { sendBsv } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDownToLine, Check, Copy, Loader2, Send, X } from "lucide-react";
+import { ArrowDownToLine, Copy, Loader2, Send, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+	DialogClose,
 	DialogContent,
 	DialogDescription,
 	DialogHeader,
@@ -17,8 +18,10 @@ import {
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
+import { useSound } from "@/hooks/use-sound";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { PaySuccessMark } from "./pay-success-mark";
 import styles from "./wallet-home.module.css";
 import {
 	formatSatoshisAsBsv,
@@ -35,7 +38,7 @@ interface ReviewedSend {
 type SendState =
 	| { status: "idle" }
 	| ({ status: "review" | "sending" } & ReviewedSend)
-	| { status: "success"; txid: string }
+	| { status: "success"; txid: string; satoshis: number }
 	| { status: "error"; message: string };
 
 export function WalletHomeActions() {
@@ -48,11 +51,23 @@ export function WalletHomeActions() {
 	} = useWalletToolbox();
 	const queryClient = useQueryClient();
 	const [, copy] = useCopyWithSound();
+	const { play, preparePayChime } = useSound();
+	const playedTxid = useRef<string | null>(null);
 	const inFlightRef = useRef(false);
 	const [sendOpen, setSendOpen] = useState(false);
 	const [recipient, setRecipient] = useState("");
 	const [amount, setAmount] = useState("");
 	const [sendState, setSendState] = useState<SendState>({ status: "idle" });
+
+	useEffect(() => {
+		if (
+			sendState.status === "success" &&
+			playedTxid.current !== sendState.txid
+		) {
+			playedTxid.current = sendState.txid;
+			play("payChime");
+		}
+	}, [sendState, play]);
 
 	const reviewSend = () => {
 		const satoshis = parseBsvAmount(amount);
@@ -93,6 +108,7 @@ export function WalletHomeActions() {
 			return;
 		}
 		const { destination, satoshis } = sendState;
+		preparePayChime();
 		inFlightRef.current = true;
 		setSendState({ status: "sending", destination, satoshis });
 
@@ -118,6 +134,7 @@ export function WalletHomeActions() {
 			setSendState({
 				status: "success",
 				txid: result.txid,
+				satoshis,
 			});
 			refreshBalance();
 			void queryClient.invalidateQueries({ queryKey: ["wallet-actions"] });
@@ -214,20 +231,49 @@ export function WalletHomeActions() {
 						<Send data-icon="inline-start" /> Send
 					</Button>
 				</DialogTrigger>
-				<DialogContent>
-					<DialogHeader>
-						<DialogTitle>Send BSV</DialogTitle>
-						<DialogDescription>
-							Enter a BSV address and the amount to send.
-						</DialogDescription>
-					</DialogHeader>
+				<DialogContent
+					showCloseButton={sendState.status !== "success"}
+					className={
+						sendState.status === "success"
+							? "pay-success-card max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl bg-popover p-6 text-center sm:p-8 [--primary:var(--chart-1)] [--primary-foreground:var(--foreground)] dark:[--primary:var(--ring)] dark:[--primary-foreground:var(--background)]"
+							: undefined
+					}
+				>
+					{sendState.status !== "success" && (
+						<DialogHeader>
+							<DialogTitle>Send BSV</DialogTitle>
+							<DialogDescription>
+								Enter a BSV address and the amount to send.
+							</DialogDescription>
+						</DialogHeader>
+					)}
 					{sendState.status === "success" ? (
-						<div className="space-y-3 py-4 text-center" role="status">
-							<Check className="mx-auto size-8 text-emerald-500" />
-							<p className="font-medium">Transaction sent</p>
-							<p className="break-all font-mono text-muted-foreground text-xs">
-								{sendState.txid}
-							</p>
+						<div className="space-y-5 text-center" role="status">
+							<PaySuccessMark />
+							<div className="pay-success-copy space-y-2">
+								<DialogTitle className="font-bold text-2xl text-foreground leading-tight">
+									Payment Successful
+								</DialogTitle>
+								<DialogDescription className="text-muted-foreground text-sm">
+									Your payment has been processed.
+								</DialogDescription>
+								<p className="pt-2 font-bold text-3xl text-foreground break-all">
+									{formatSatoshisAsBsv(sendState.satoshis)} BSV
+								</p>
+							</div>
+							<DialogClose asChild>
+								<Button className="h-14 w-full rounded-full bg-primary font-bold text-primary-foreground">
+									Done
+								</Button>
+							</DialogClose>
+							<details className="text-muted-foreground text-sm">
+								<summary className="cursor-pointer rounded-sm py-2 focus-visible:outline-2 focus-visible:outline-ring">
+									Transaction details
+								</summary>
+								<p className="mt-2 break-all font-mono text-xs">
+									{sendState.txid}
+								</p>
+							</details>
 						</div>
 					) : sendState.status === "review" ||
 						sendState.status === "sending" ? (

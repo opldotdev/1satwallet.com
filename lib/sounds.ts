@@ -16,7 +16,8 @@ export const SOUNDS = {
 	click: "/sounds/click.mp3", // Soft tap for menu items, sidebar navigation
 
 	// Feedback
-	success: "/sounds/success.mp3", // Transaction complete, copy success, sync done
+	success: "/sounds/success.mp3", // Copy success, sync done
+	payChime: "/sounds/pay-chime.mp3", // Broadcast payment complete
 	error: "/sounds/error.mp3", // Validation error, transaction failed
 
 	// Existing sounds (trade system)
@@ -34,6 +35,7 @@ export type SoundName = keyof typeof SOUNDS;
 export const SOUND_VOLUMES: Record<SoundName, number> = {
 	click: 0.15, // Very subtle
 	success: 0.2, // Slightly more noticeable
+	payChime: 0.3, // One-second coin chime
 	error: 0.25, // Noticeable but not harsh
 	alert: 0.5, // Needs attention
 	dialog: 0.3, // Moderate
@@ -45,6 +47,6 @@ export const SOUND_VOLUMES: Record<SoundName, number> = {
  */
 export const SOUND_CATEGORIES = {
 	navigation: ["click"] as SoundName[],
-	feedback: ["success", "error"] as SoundName[],
+	feedback: ["success", "payChime", "error"] as SoundName[],
 	notifications: ["alert", "dialog", "decline"] as SoundName[],
 } as const;

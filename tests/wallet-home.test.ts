@@ -75,3 +75,46 @@ describe("wallet home amount parsing", () => {
 		assert.match(source, /OPL-4015/);
 	});
 });
+
+describe("payment success presentation", () => {
+	it("mounts the decorative SVG with a drawn check, ten dashes and a reduced-motion final frame", async () => {
+		const { PAY_SUCCESS_SVG } = await import(
+			"@/components/wallet/pay-success-mark"
+		);
+		assert.match(PAY_SUCCESS_SVG, /aria-hidden="true"/);
+		assert.match(PAY_SUCCESS_SVG, /viewBox="0 0 220 220"/);
+		assert.equal(PAY_SUCCESS_SVG.match(/class="tick"/g)?.length, 10);
+		assert.match(PAY_SUCCESS_SVG, /M88 110 L103 125 L133 95/);
+		assert.match(PAY_SUCCESS_SVG, /prefers-reduced-motion: reduce/);
+		assert.match(PAY_SUCCESS_SVG, /animation: none/);
+		assert.doesNotMatch(
+			PAY_SUCCESS_SVG,
+			/<image|<script|<foreignObject|@import/,
+		);
+		const source = read("components/wallet/wallet-home-actions.tsx");
+		assert.match(source, /<PaySuccessMark/);
+		assert.doesNotMatch(source, /text-emerald-500|<Check\b/);
+		assert.match(source, /bg-primary[^\n]*text-primary-foreground/);
+		assert.match(source, /<DialogClose asChild>[\s\S]*?Done/);
+		assert.match(source, /formatSatoshisAsBsv\(sendState.satoshis\)/);
+	});
+
+	it("unlocks before awaiting the send and only chimes for a new successful txid", () => {
+		const source = read("components/wallet/wallet-home-actions.tsx");
+		assert.ok(
+			source.indexOf("preparePayChime();") <
+				source.indexOf("await sendBsv.execute"),
+		);
+		assert.match(
+			source,
+			/sendState.status === "success"\s*&&\s*playedTxid.current !== sendState.txid/,
+		);
+		assert.equal(source.match(/play\("payChime"\)/g)?.length, 1);
+		assert.match(source, /if \(result.error \|\| !result.txid\)/);
+		const failedResult = source.slice(
+			source.indexOf("if (result.error"),
+			source.indexOf("txid: result.txid"),
+		);
+		assert.match(failedResult, /status: "error"[\s\S]*return;/);
+	});
+});
