@@ -5,7 +5,7 @@ The ordinal marketplace uses the installed typed boundaries:
 - `@1sat/client` `MarketClient` for active listing search, direct detail,
   active-by-origin revalidation, and bulk origin reconciliation.
 - `@1sat/actions` `buyOrdinal` and `cancelOrdinalListing` through the active
-  provider's `OneSatContext`.
+  provider's `OneSatContext`. Listing create is off (`ORDLOCK_LISTING_DISABLED`).
 
 The browse route accepts bounded name and content-type filters and paginates
 with the market output's score. Only listings with a positive safe-integer

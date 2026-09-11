@@ -15,7 +15,8 @@ export default function MyListingsPage() {
 					<h1 className="text-2xl font-bold">My Listings</h1>
 					<p className="text-sm text-muted-foreground">
 						Wallet-owned OrdLock outputs reconciled with the active market
-						index.
+						index. New listing create is off; existing listings can still be
+						cancelled.
 					</p>
 				</div>
 				<Button asChild variant="outline">

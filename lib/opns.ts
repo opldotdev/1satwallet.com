@@ -24,6 +24,10 @@ import {
 	searchActiveOrdinalListings,
 } from "@/lib/ordinal-marketplace";
 import {
+	assertListingCreateAllowed,
+	LISTING_CREATE_OFF_MESSAGE,
+} from "@/lib/ordlock";
+import {
 	type ListingData,
 	listingFromOutput,
 	toStackOutpoint,
@@ -265,6 +269,7 @@ export async function executeOwnedOpnsOperation(
 				counterparty: operation.counterparty,
 			});
 		case "sell":
+			assertListingCreateAllowed();
 			return sellOpns.execute(ctx, {
 				id: operation.id,
 				price: operation.price,
@@ -290,6 +295,9 @@ export async function buyCurrentOpnsListing(
 
 export function opnsFailureMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
+	if (message === LISTING_CREATE_OFF_MESSAGE) {
+		return LISTING_CREATE_OFF_MESSAGE;
+	}
 	const normalized = message.toLowerCase();
 	if (/denied|reject|declin|cancel/.test(normalized)) {
 		return "The wallet declined this action. Your review details were kept.";

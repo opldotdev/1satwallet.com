@@ -10,6 +10,10 @@ import {
 import { readAssetIdTag } from "@1sat/types";
 import { PublicKey } from "@bsv/sdk";
 import { isP2pkhAddressForChain } from "@/components/wallet/wallet-home-utils";
+import {
+	assertListingCreateAllowed,
+	LISTING_CREATE_OFF_MESSAGE,
+} from "@/lib/ordlock";
 
 const POSITIVE_INTEGER = /^[1-9]\d*$/;
 
@@ -81,6 +85,9 @@ export function validateOrdinalDestination(
 
 export function ordinalActionFailureMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
+	if (message === LISTING_CREATE_OFF_MESSAGE) {
+		return LISTING_CREATE_OFF_MESSAGE;
+	}
 	const normalized = message.toLowerCase();
 	if (
 		normalized.includes("denied") ||
@@ -119,6 +126,7 @@ export async function executeOrdinalOperation(
 		case "burn":
 			return actions.burn(ctx, { ids: operation.ids });
 		case "sell":
+			assertListingCreateAllowed();
 			return actions.sell(ctx, {
 				id: operation.id,
 				price: operation.price,
