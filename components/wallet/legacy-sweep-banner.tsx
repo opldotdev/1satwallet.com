@@ -58,12 +58,24 @@ export function LegacySweepBanner() {
 			? (migrationStatus.legacyIdentityAddress ?? null)
 			: null;
 
-	const { funding, ordinals, opnsNames, bsv21Tokens, mneeBalance, loading } =
-		useLegacyAssets(legacyPayAddress, legacyOrdAddress, legacyIdentityAddress);
+	const {
+		funding,
+		ordinals,
+		opnsNames,
+		listings,
+		bsv21Tokens,
+		mneeBalance,
+		loading,
+	} = useLegacyAssets(
+		legacyPayAddress,
+		legacyOrdAddress,
+		legacyIdentityAddress,
+	);
 
 	const sweepableAssetCount = useMemo(() => {
 		return (
 			funding.length +
+			listings.length +
 			ordinals.length +
 			opnsNames.length +
 			bsv21Tokens.reduce((sum, token) => sum + token.outputs.length, 0) +
@@ -71,6 +83,7 @@ export function LegacySweepBanner() {
 		);
 	}, [
 		funding.length,
+		listings.length,
 		ordinals.length,
 		opnsNames.length,
 		bsv21Tokens,
@@ -81,7 +94,11 @@ export function LegacySweepBanner() {
 		!loading &&
 		migrationStatus?.status === "migrated" &&
 		sweepableAssetCount > 0;
-	const listingCount = walletOrdinals.filter(isOrdinalListed).length;
+	const listingCount = new Set(
+		[...walletOrdinals.filter(isOrdinalListed), ...listings].map(
+			(output) => output.outpoint,
+		),
+	).size;
 	const hasListings = listingCount > 0;
 
 	if (dismissed || (!isLegacy && !leftoverAfterMigrate && !hasListings)) {

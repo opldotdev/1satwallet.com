@@ -30,16 +30,12 @@ import {
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import {
-	executeMigrationSweep,
-	type SweepProgress,
-	type SweepResult,
-} from "@/lib/sweep-migration";
+import type { SweepProgress, SweepResult } from "@/lib/sweep-migration";
 import {
 	type AssetType,
-	cancelListedAssets,
 	defaultAssetTypes,
 	delistMigrationListings,
+	executeMigrationPlan,
 	isListedOutput,
 	listedFromLegacy,
 	listedFromWallet,
@@ -51,6 +47,7 @@ import {
 } from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
+	legacyMigrationKeys,
 	type MigrationStatus,
 } from "@/lib/wallet-migration";
 import { reencryptWallet } from "@/lib/wallet-storage";
@@ -323,36 +320,10 @@ export default function MigratePage() {
 
 	// Legacy key material is available in both the "legacy" (pre-migration)
 	// and "migrated" (sweep-only re-entry) states
-	const legacy = useMemo(() => {
-		if (!migrationStatus) return null;
-		if (migrationStatus.status === "legacy") {
-			return {
-				sweepOnly: false,
-				payWif: migrationStatus.legacyPayWif,
-				ordWif: migrationStatus.legacyOrdWif,
-				identityWif: undefined as string | undefined,
-				payAddress: migrationStatus.legacyPayAddress,
-				ordAddress: migrationStatus.legacyOrdAddress,
-				identityAddress: undefined as string | undefined,
-			};
-		}
-		if (
-			migrationStatus.status === "migrated" &&
-			migrationStatus.legacyPayWif &&
-			migrationStatus.legacyOrdWif
-		) {
-			return {
-				sweepOnly: true,
-				payWif: migrationStatus.legacyPayWif,
-				ordWif: migrationStatus.legacyOrdWif,
-				identityWif: migrationStatus.legacyIdentityWif,
-				payAddress: migrationStatus.legacyPayAddress ?? null,
-				ordAddress: migrationStatus.legacyOrdAddress ?? null,
-				identityAddress: migrationStatus.legacyIdentityAddress,
-			};
-		}
-		return null;
-	}, [migrationStatus]);
+	const legacy = useMemo(
+		() => legacyMigrationKeys(migrationStatus),
+		[migrationStatus],
+	);
 
 	const assets = useLegacyAssets(
 		toolbox.connectionMode === "external" ? null : (legacy?.payAddress ?? null),
@@ -368,6 +339,7 @@ export default function MigratePage() {
 			mergeListed(
 				listedFromWallet(toolbox.ordinals),
 				listedFromLegacy([
+					...assets.listings,
 					...assets.ordinals,
 					...assets.opnsNames,
 					...assets.locked,
@@ -377,6 +349,7 @@ export default function MigratePage() {
 		[
 			completedListings,
 			toolbox.ordinals,
+			assets.listings,
 			assets.ordinals,
 			assets.opnsNames,
 			assets.locked,
@@ -399,6 +372,7 @@ export default function MigratePage() {
 	const listedLegacyOutputs = useMemo(
 		() =>
 			[
+				...assets.listings,
 				...assets.ordinals,
 				...assets.opnsNames,
 				...assets.locked,
@@ -407,6 +381,7 @@ export default function MigratePage() {
 				(item) => isListedOutput(item) && !completedListings.has(item.outpoint),
 			),
 		[
+			assets.listings,
 			assets.ordinals,
 			assets.opnsNames,
 			assets.locked,
@@ -554,22 +529,6 @@ export default function MigratePage() {
 		setSelectedTypes((prev) => toggleAssetType(prev, type));
 	}, []);
 
-	// Ordinals to sweep: selected unlisted, OpNS, and listed leftovers
-	const sweepOrdinals = useMemo(() => {
-		return [...plan.sweepOrdinals, ...plan.sweepListed];
-	}, [plan.sweepOrdinals, plan.sweepListed]);
-
-	const runDelist = useCallback(async () => {
-		if (plan.cancel.length === 0) {
-			return { ok: true, txids: [] as string[], errors: [] as string[] };
-		}
-		if (!toolbox.oneSatContext) {
-			throw new Error("Unlock your wallet to cancel listings.");
-		}
-		setProgress("Cancelling listings...");
-		return cancelListedAssets(toolbox.oneSatContext, plan.cancel);
-	}, [toolbox.oneSatContext, plan.cancel]);
-
 	const runDelistOnly = useCallback(async () => {
 		setDelistOnly(true);
 		if (!toolbox.oneSatContext) {
@@ -686,37 +645,18 @@ export default function MigratePage() {
 				}
 			}
 
-			const cancelled = await runDelist();
-			if (!cancelled.ok) {
-				throw new Error(
-					"Listings must be cancelled before migration can finish.",
-				);
-			}
-
-			// 5. Sweep selected legacy assets
-			if (!toolbox.wallet || !toolbox.services) {
+			if (!toolbox.wallet || !toolbox.services || !toolbox.oneSatContext) {
 				throw new Error(
 					"BRC-100 wallet is not initialized — unlock your wallet and try again",
 				);
 			}
-
-			const totalSweepable =
-				plan.sweepFunding.length +
-				sweepOrdinals.length +
-				plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0);
-
-			if (totalSweepable > 0 || plan.sweepMnee) {
-				setProgress(
-					`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
-				);
-				// Pre-sweep stages (key derivation, re-encryption, re-init) span
-				// 0-60%; the sweep's own unit-based percent fills the rest. For a
-				// sweep-only re-entry the sweep owns the whole bar.
-				const base = legacy.sweepOnly ? 0 : 60;
-				const span = 100 - base;
-				setProgressPercent(base);
-
-				const result = await executeMigrationSweep({
+			const base = legacy.sweepOnly ? 0 : 60;
+			const result = await executeMigrationPlan({
+				ctx: toolbox.oneSatContext,
+				plan,
+				listings,
+				legacyOutputs: listedLegacyOutputs,
+				sweepParams: {
 					wallet: toolbox.wallet,
 					services: toolbox.services,
 					chain: toolbox.chain,
@@ -725,28 +665,20 @@ export default function MigratePage() {
 					legacyIdentityWif: identityWif,
 					onProgress: (p) => {
 						setProgress(p.message);
-						setProgressPercent(base + Math.round((p.percent / 100) * span));
+						setProgressPercent(
+							base + Math.round((p.percent / 100) * (100 - base)),
+						);
 						setSweepProgress(p);
 					},
-					funding: plan.sweepFunding,
-					ordinals: sweepOrdinals,
-					bsv21Tokens: plan.sweepBsv21,
-					mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
-				});
-
-				setSweepResult({ ...result, cancelTxids: cancelled.txids });
-				// Refresh so the banner and any re-entry reflect what's left
-				assets.rescan();
-				toolbox.refreshBalance();
-			} else {
-				setSweepResult({
-					bsvTxids: [],
-					ordinalTxids: [],
-					bsv21Txids: [],
-					cancelTxids: cancelled.txids,
-					errors: cancelled.errors,
-				});
-			}
+				},
+				mneeBalance: assets.mneeBalance,
+			});
+			setSweepResult(result);
+			setCompletedListings(
+				(previous) => new Set([...previous, ...result.completedOutpoints]),
+			);
+			assets.rescan();
+			toolbox.refreshBalance();
 
 			setProgressPercent(100);
 			setPhase("complete");
@@ -764,12 +696,11 @@ export default function MigratePage() {
 		walletKeys,
 		legacy,
 		toolbox,
-		assets,
-		sweepOrdinals,
-		plan.sweepFunding,
-		plan.sweepBsv21,
-		plan.sweepMnee,
-		runDelist,
+		assets.mneeBalance,
+		assets.rescan,
+		plan,
+		listings,
+		listedLegacyOutputs,
 	]);
 
 	if (toolbox.connectionMode === "external") {

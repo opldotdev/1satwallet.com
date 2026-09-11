@@ -43,7 +43,10 @@ export function isListedOutput(output: TaggedOutput): boolean {
 	if (output.tags?.includes("ordlock")) return true;
 	if (
 		output.events?.some(
-			(event) => event === "ordlock" || event.startsWith("ordlock:"),
+			(event) =>
+				event === "ordlock" ||
+				event.startsWith("ordlock:") ||
+				event.startsWith("list:"),
 		)
 	) {
 		return true;
@@ -51,8 +54,15 @@ export function isListedOutput(output: TaggedOutput): boolean {
 	return (
 		output.data !== null &&
 		typeof output.data === "object" &&
-		"ordlock" in output.data
+		"ordlock" in output.data &&
+		output.data.ordlock != null
 	);
+}
+
+export function uniqueOutputs<T extends TaggedOutput>(outputs: T[]): T[] {
+	return [
+		...new Map(outputs.map((output) => [output.outpoint, output])).values(),
+	];
 }
 
 export function listedFromWallet(outputs: WalletOutput[]): ListedAsset[] {
@@ -64,11 +74,13 @@ export function listedFromWallet(outputs: WalletOutput[]): ListedAsset[] {
 }
 
 export function listedFromLegacy(outputs: TaggedOutput[]): ListedAsset[] {
-	return outputs.filter(isListedOutput).map((output) => ({
-		outpoint: output.outpoint,
-		id: null,
-		source: "legacy",
-	}));
+	return uniqueOutputs(outputs)
+		.filter(isListedOutput)
+		.map((output) => ({
+			outpoint: output.outpoint,
+			id: null,
+			source: "legacy",
+		}));
 }
 
 export function mergeListed(
@@ -114,25 +126,40 @@ export function planMigration<T extends TaggedOutput>(input: {
 	mneeBalance: number;
 }): MigrationPlan<T> {
 	const listingsOn = input.types.has("listings");
+	const listings = mergeListed(input.listings, []);
 	const cancelable = new Set(
-		input.listings
-			.filter((item) => item.source === "wallet" && item.id)
+		listings
+			.filter((item) => item.source === "wallet")
 			.map((item) => item.outpoint),
 	);
+	const seen = new Set([
+		...listings.map((item) => item.outpoint),
+		...input.listedLegacyOutputs.map((output) => output.outpoint),
+	]);
+	const takeUnlisted = <O extends TaggedOutput>(outputs: O[]): O[] =>
+		outputs.filter((output) => {
+			if (seen.has(output.outpoint) || isListedOutput(output)) return false;
+			seen.add(output.outpoint);
+			return true;
+		});
 	return {
 		cancel: listingsOn
-			? input.listings.filter((item) => item.source === "wallet")
+			? listings.filter((item) => item.source === "wallet")
 			: [],
 		sweepListed: listingsOn
-			? input.listedLegacyOutputs.filter(
+			? uniqueOutputs(input.listedLegacyOutputs).filter(
 					(output) => !cancelable.has(output.outpoint),
 				)
 			: [],
 		sweepOrdinals: input.types.has("ordinals")
-			? [...input.ordinals, ...input.opns]
+			? takeUnlisted([...input.ordinals, ...input.opns])
 			: [],
-		sweepFunding: input.types.has("bsv") ? input.funding : [],
-		sweepBsv21: input.types.has("bsv21") ? input.bsv21 : [],
+		sweepFunding: input.types.has("bsv") ? takeUnlisted(input.funding) : [],
+		sweepBsv21: input.types.has("bsv21")
+			? input.bsv21
+					.map((token) => ({ ...token, outputs: takeUnlisted(token.outputs) }))
+					.filter((token) => token.outputs.length > 0)
+			: [],
 		sweepMnee:
 			input.mneeBalance > 0 &&
 			(input.types.has("bsv21") || input.types.has("bsv")),
@@ -172,7 +199,7 @@ export async function cancelListedAssets(
 			);
 			if (result.error) {
 				errors.push(`Listing ${item.outpoint}: ${result.error}`);
-			} else if (result.txid) {
+			} else if (result.txid?.trim()) {
 				txids.push(result.txid);
 			} else {
 				errors.push(
@@ -219,7 +246,7 @@ export async function delistMigrationListings(
 	const legacyOutputs = new Map(
 		input.legacyOutputs.map((output) => [output.outpoint, output]),
 	);
-	for (const item of input.listings) {
+	for (const item of mergeListed(input.listings, [])) {
 		if (item.source === "wallet") {
 			const cancelled = await cancelListedAssets(input.ctx, [item], actions);
 			result.cancelTxids?.push(...cancelled.txids);
@@ -246,7 +273,7 @@ export async function delistMigrationListings(
 			result.ordinalTxids.push(...swept.ordinalTxids);
 			result.errors.push(...swept.errors);
 			if (swept.errors.length === 0) {
-				if (swept.ordinalTxids.some(Boolean)) {
+				if (swept.ordinalTxids.some((txid) => txid.trim())) {
 					result.completedOutpoints.push(item.outpoint);
 				} else {
 					result.errors.push(
@@ -257,6 +284,79 @@ export async function delistMigrationListings(
 		} catch (error) {
 			result.errors.push(
 				`Listing ${item.outpoint}: ${ordinalActionFailureMessage(error)}`,
+			);
+		}
+	}
+	return result;
+}
+
+/** Complete selected cancellations before allowing the funding sweep to proceed. */
+export async function executeMigrationPlan(
+	input: {
+		ctx: OneSatContext;
+		plan: MigrationPlan<IndexedOutput>;
+		listings: ListedAsset[];
+		legacyOutputs: IndexedOutput[];
+		sweepParams: Omit<
+			MigrationSweepParams,
+			"funding" | "ordinals" | "bsv21Tokens" | "mneeBalance"
+		>;
+		mneeBalance: number;
+	},
+	actions: OrdinalActionSet = canonicalOrdinalActions,
+	sweep: typeof executeMigrationSweep = executeMigrationSweep,
+): Promise<SweepResult & { completedOutpoints: string[] }> {
+	const { plan } = input;
+	const selected = mergeListed(plan.cancel, listedFromLegacy(plan.sweepListed));
+	const selectedOutpoints = new Set(
+		selected.map((listing) => listing.outpoint),
+	);
+	let result: SweepResult & { completedOutpoints: string[] } = {
+		bsvTxids: [],
+		ordinalTxids: [],
+		bsv21Txids: [],
+		cancelTxids: [],
+		errors: [],
+		completedOutpoints: [],
+	};
+	if (
+		plan.sweepFunding.length > 0 &&
+		input.listings.some((listing) => !selectedOutpoints.has(listing.outpoint))
+	) {
+		result.errors.push("Select listings or cancel them before sweeping funds.");
+		return result;
+	}
+	if (selected.length > 0) {
+		result = await delistMigrationListings(
+			{ ...input, listings: selected },
+			actions,
+			sweep,
+		);
+		if (result.errors.length > 0) return result;
+	}
+	if (
+		plan.sweepFunding.length ||
+		plan.sweepOrdinals.length ||
+		plan.sweepBsv21.length ||
+		plan.sweepMnee
+	) {
+		try {
+			const swept = await sweep({
+				...input.sweepParams,
+				funding: plan.sweepFunding,
+				ordinals: plan.sweepOrdinals,
+				bsv21Tokens: plan.sweepBsv21,
+				mneeBalance: plan.sweepMnee ? input.mneeBalance : 0,
+			});
+			result.bsvTxids.push(...swept.bsvTxids);
+			result.ordinalTxids.push(...swept.ordinalTxids);
+			result.bsv21Txids.push(...swept.bsv21Txids);
+			result.cancelTxids?.push(...(swept.cancelTxids ?? []));
+			result.errors.push(...swept.errors);
+			result.mneeTxid = swept.mneeTxid;
+		} catch (error) {
+			result.errors.push(
+				error instanceof Error ? error.message : String(error),
 			);
 		}
 	}

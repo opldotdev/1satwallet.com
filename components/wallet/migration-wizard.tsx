@@ -35,16 +35,12 @@ import {
 } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import {
-	executeMigrationSweep,
-	type SweepProgress,
-	type SweepResult,
-} from "@/lib/sweep-migration";
+import type { SweepProgress, SweepResult } from "@/lib/sweep-migration";
 import {
 	type AssetType,
-	cancelListedAssets,
 	defaultAssetTypes,
 	delistMigrationListings,
+	executeMigrationPlan,
 	isListedOutput,
 	type ListedAsset,
 	listedFromLegacy,
@@ -57,6 +53,7 @@ import {
 } from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
+	legacyMigrationKeys,
 	type MigrationStatus,
 	migrationDeferredKey,
 } from "@/lib/wallet-migration";
@@ -150,23 +147,16 @@ export function MigrationWizard() {
 
 	const needsMigration = migrationStatus?.status === "legacy";
 
-	// Legacy addresses for scanning
-	const legacyPayAddress =
-		migrationStatus?.status === "legacy"
-			? migrationStatus.legacyPayAddress
-			: null;
-	const legacyOrdAddress =
-		migrationStatus?.status === "legacy"
-			? migrationStatus.legacyOrdAddress
-			: null;
-
-	// Only scan when we've moved past intro
-	const shouldScan =
-		toolbox.connectionMode !== "external" && step !== "intro" && needsMigration;
+	const legacy = useMemo(
+		() => legacyMigrationKeys(migrationStatus),
+		[migrationStatus],
+	);
+	// A run may finish identity migration while legacy assets still remain.
+	const shouldScan = toolbox.connectionMode !== "external" && step !== "intro";
 	const assets = useLegacyAssets(
-		shouldScan ? legacyPayAddress : null,
-		shouldScan ? legacyOrdAddress : null,
-		null,
+		shouldScan ? (legacy?.payAddress ?? null) : null,
+		shouldScan ? (legacy?.ordAddress ?? null) : null,
+		shouldScan ? (legacy?.identityAddress ?? null) : null,
 		(p) => setScanDetail(p.detail ?? p.phase),
 	);
 
@@ -183,6 +173,7 @@ export function MigrationWizard() {
 			mergeListed(
 				listedFromWallet(toolbox.ordinals),
 				listedFromLegacy([
+					...assets.listings,
 					...assets.ordinals,
 					...assets.opnsNames,
 					...assets.locked,
@@ -192,6 +183,7 @@ export function MigrationWizard() {
 		[
 			completedListings,
 			toolbox.ordinals,
+			assets.listings,
 			assets.ordinals,
 			assets.opnsNames,
 			assets.locked,
@@ -209,6 +201,7 @@ export function MigrationWizard() {
 	const listedLegacyOutputs = useMemo(
 		() =>
 			[
+				...assets.listings,
 				...assets.ordinals,
 				...assets.opnsNames,
 				...assets.locked,
@@ -217,6 +210,7 @@ export function MigrationWizard() {
 				(item) => isListedOutput(item) && !completedListings.has(item.outpoint),
 			),
 		[
+			assets.listings,
 			assets.ordinals,
 			assets.opnsNames,
 			assets.locked,
@@ -287,19 +281,9 @@ export function MigrationWizard() {
 		setSelectedTypes((prev) => toggleAssetType(prev, type));
 	}, []);
 
-	// Ordinals to sweep: selected unlisted, OpNS, and listed leftovers
-	const sweepOrdinals = useMemo(() => {
-		return [...plan.sweepOrdinals, ...plan.sweepListed];
-	}, [plan.sweepOrdinals, plan.sweepListed]);
-
-	const bsv21OutputCount = useMemo(() => {
-		return plan.sweepBsv21.reduce((sum, tb) => sum + tb.outputs.length, 0);
-	}, [plan.sweepBsv21]);
-
 	// Run migration
 	const runMigration = useCallback(async () => {
-		if (!walletKeys || !migrationStatus || migrationStatus.status !== "legacy")
-			return;
+		if (!walletKeys || !legacy) return;
 
 		setStep("migrate");
 		setError(null);
@@ -307,106 +291,79 @@ export function MigrationWizard() {
 		setProgressPercent(0);
 
 		try {
-			setProgress("Deriving identity key...");
-			setProgressPercent(10);
-			const identityKey = deriveIdentityKey(
-				migrationStatus.legacyPayWif,
-				migrationStatus.legacyOrdWif,
-			);
-			const identityWif = identityKey.toWif();
+			let identityWif = legacy.identityWif;
+			if (!legacy.sweepOnly) {
+				setProgress("Deriving identity key...");
+				setProgressPercent(10);
+				const identityKey = deriveIdentityKey(legacy.payWif, legacy.ordWif);
+				identityWif = identityKey.toWif();
 
-			const updatedKeys = {
-				...walletKeys,
-				identityPk: identityWif,
-				identityAddressPath: "derived" as string | number | undefined,
-			};
+				const updatedKeys = {
+					...walletKeys,
+					identityPk: identityWif,
+					identityAddressPath: "derived" as string | number | undefined,
+				};
 
-			setProgress("Updating encrypted wallet...");
-			setProgressPercent(25);
-			const reencrypted = await reencryptWallet(updatedKeys);
-			if (!reencrypted) {
-				throw new Error(
-					"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
-				);
-			}
-
-			setProgress("Reinitializing BRC-100 wallet...");
-			setProgressPercent(40);
-			if (toolbox.isInitialized) {
-				await toolbox.destroyWallet();
-			}
-
-			await new Promise((r) => setTimeout(r, 500));
-
-			const { wifToHex } = await import("@1sat/utils");
-			const rootKeyHex = wifToHex(identityWif);
-			const initialized = await toolbox.initializeWallet(rootKeyHex);
-
-			if (!initialized) {
-				throw new Error("Failed to initialize wallet with identity key");
-			}
-
-			let cancelTxids: string[] = [];
-			if (plan.cancel.length > 0) {
-				if (!toolbox.oneSatContext) {
-					throw new Error("Unlock your wallet to cancel listings.");
-				}
-				setProgress("Cancelling listings...");
-				const cancelled = await cancelListedAssets(
-					toolbox.oneSatContext,
-					plan.cancel,
-				);
-				cancelTxids = cancelled.txids;
-				if (!cancelled.ok) {
+				setProgress("Updating encrypted wallet...");
+				setProgressPercent(25);
+				const reencrypted = await reencryptWallet(updatedKeys);
+				if (!reencrypted) {
 					throw new Error(
-						"Listings must be cancelled before migration can finish.",
+						"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
 					);
+				}
+
+				setProgress("Reinitializing BRC-100 wallet...");
+				setProgressPercent(40);
+				if (toolbox.isInitialized) {
+					await toolbox.destroyWallet();
+				}
+
+				await new Promise((r) => setTimeout(r, 500));
+
+				const { wifToHex } = await import("@1sat/utils");
+				const rootKeyHex = wifToHex(identityWif);
+				const initialized = await toolbox.initializeWallet(rootKeyHex);
+
+				if (!initialized) {
+					throw new Error("Failed to initialize wallet with identity key");
 				}
 			}
 
-			if (toolbox.wallet && toolbox.services) {
-				const totalSweepable =
-					plan.sweepFunding.length + sweepOrdinals.length + bsv21OutputCount;
-
-				if (totalSweepable > 0 || plan.sweepMnee) {
-					setProgress(
-						`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
-					);
-					// Pre-sweep stages span 0-60%; the sweep's unit-based percent
-					// fills the remaining 40%
-					setProgressPercent(60);
-
-					const result = await executeMigrationSweep({
-						wallet: toolbox.wallet,
-						services: toolbox.services,
-						chain: toolbox.chain,
-						legacyPayWif: migrationStatus.legacyPayWif,
-						legacyOrdWif: migrationStatus.legacyOrdWif,
-						legacyIdentityWif: identityWif,
-						onProgress: (p) => {
-							setProgress(p.message);
-							setProgressPercent(60 + Math.round((p.percent / 100) * 40));
-							setSweepProgress(p);
-						},
-						funding: plan.sweepFunding,
-						ordinals: sweepOrdinals,
-						bsv21Tokens: plan.sweepBsv21,
-						mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
-					});
-
-					setSweepResult({ ...result, cancelTxids });
-					assets.rescan();
-					toolbox.refreshBalance();
-				} else {
-					setSweepResult({
-						bsvTxids: [],
-						ordinalTxids: [],
-						bsv21Txids: [],
-						cancelTxids,
-						errors: [],
-					});
-				}
+			if (!toolbox.wallet || !toolbox.services || !toolbox.oneSatContext) {
+				throw new Error(
+					"BRC-100 wallet is not initialized — unlock your wallet and try again",
+				);
 			}
+			const base = legacy.sweepOnly ? 0 : 60;
+			const result = await executeMigrationPlan({
+				ctx: toolbox.oneSatContext,
+				plan,
+				listings,
+				legacyOutputs: listedLegacyOutputs,
+				sweepParams: {
+					wallet: toolbox.wallet,
+					services: toolbox.services,
+					chain: toolbox.chain,
+					legacyPayWif: legacy.payWif,
+					legacyOrdWif: legacy.ordWif,
+					legacyIdentityWif: identityWif,
+					onProgress: (p) => {
+						setProgress(p.message);
+						setProgressPercent(
+							base + Math.round((p.percent / 100) * (100 - base)),
+						);
+						setSweepProgress(p);
+					},
+				},
+				mneeBalance: assets.mneeBalance,
+			});
+			setSweepResult(result);
+			setCompletedListings(
+				(previous) => new Set([...previous, ...result.completedOutpoints]),
+			);
+			assets.rescan();
+			toolbox.refreshBalance();
 
 			window.localStorage.removeItem(migrationDeferredKey(walletKeys));
 			setProgressPercent(100);
@@ -423,16 +380,13 @@ export function MigrationWizard() {
 		}
 	}, [
 		walletKeys,
-		migrationStatus,
+		legacy,
 		toolbox,
 		assets.mneeBalance,
 		assets.rescan,
-		sweepOrdinals,
-		bsv21OutputCount,
-		plan.cancel,
-		plan.sweepFunding,
-		plan.sweepBsv21,
-		plan.sweepMnee,
+		plan,
+		listings,
+		listedLegacyOutputs,
 	]);
 
 	const runDelistOnly = useCallback(async () => {
@@ -454,15 +408,14 @@ export function MigrationWizard() {
 				listings,
 				legacyOutputs: listedLegacyOutputs,
 				sweepParams:
-					migrationStatus?.status === "legacy" &&
-					toolbox.wallet &&
-					toolbox.services
+					legacy && toolbox.wallet && toolbox.services
 						? {
 								wallet: toolbox.wallet,
 								services: toolbox.services,
 								chain: toolbox.chain,
-								legacyPayWif: migrationStatus.legacyPayWif,
-								legacyOrdWif: migrationStatus.legacyOrdWif,
+								legacyPayWif: legacy.payWif,
+								legacyOrdWif: legacy.ordWif,
+								legacyIdentityWif: legacy.identityWif,
 								onProgress: (p) => {
 									setProgress(p.message);
 									setSweepProgress(p);
@@ -495,7 +448,7 @@ export function MigrationWizard() {
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
-	}, [assets.rescan, migrationStatus, listings, listedLegacyOutputs, toolbox]);
+	}, [assets.rescan, legacy, listings, listedLegacyOutputs, toolbox]);
 
 	const totalAssets = plannedCount(plan);
 
@@ -504,7 +457,7 @@ export function MigrationWizard() {
 	if (!isWalletInitialized) return null;
 	if (!hasWallet) return null;
 	if (isWalletLocked) return null;
-	if (!needsMigration) return null;
+	if (!legacy || (!needsMigration && step === "intro")) return null;
 	if (!deferredReady || deferred) return null;
 	// Once complete or dismissed, don't show
 	if (step === "complete" && !sweepResult) return null;
@@ -541,9 +494,9 @@ export function MigrationWizard() {
 					/>
 				)}
 
-				{step === "preview" && migrationStatus?.status === "legacy" && (
+				{step === "preview" && legacy && (
 					<PreviewStep
-						migrationStatus={migrationStatus}
+						legacy={legacy}
 						assets={assets}
 						listings={listings}
 						unlistedOrdinals={unlistedOrdinals}
@@ -747,7 +700,7 @@ function ScanStep({
 // ---------------------------------------------------------------------------
 
 function PreviewStep({
-	migrationStatus,
+	legacy,
 	assets,
 	listings,
 	unlistedOrdinals,
@@ -766,7 +719,7 @@ function PreviewStep({
 	onDelistOnly,
 	onMigrateLater,
 }: {
-	migrationStatus: Extract<MigrationStatus, { status: "legacy" }>;
+	legacy: NonNullable<ReturnType<typeof legacyMigrationKeys>>;
 	assets: ReturnType<typeof useLegacyAssets>;
 	listings: ListedAsset[];
 	unlistedOrdinals: EnrichedOrdinal[];
@@ -795,7 +748,9 @@ function PreviewStep({
 				<p className="text-sm text-muted-foreground">
 					{totalAssets > 0
 						? `Found ${totalAssets} asset${totalAssets !== 1 ? "s" : ""} to migrate from your legacy addresses.`
-						: "No sweepable assets found. Migration will still derive your identity key."}{" "}
+						: legacy.sweepOnly
+							? "No selected assets remain to sweep."
+							: "No sweepable assets found. Migration will still derive your identity key."}{" "}
 					Nothing is signed or broadcast until you choose Begin Migration.
 				</p>
 			</div>
@@ -804,15 +759,11 @@ function PreviewStep({
 			<div className="border border-border/50 bg-muted/20 p-4 space-y-2 text-sm">
 				<div className="flex justify-between">
 					<span className="text-muted-foreground">Legacy Pay</span>
-					<code className="text-xs font-mono">
-						{migrationStatus.legacyPayAddress}
-					</code>
+					<code className="text-xs font-mono">{legacy.payAddress}</code>
 				</div>
 				<div className="flex justify-between">
 					<span className="text-muted-foreground">Legacy Ord</span>
-					<code className="text-xs font-mono">
-						{migrationStatus.legacyOrdAddress}
-					</code>
+					<code className="text-xs font-mono">{legacy.ordAddress}</code>
 				</div>
 			</div>
 
@@ -865,8 +816,9 @@ function PreviewStep({
 					</Button>
 				)}
 				<div className="text-xs text-muted-foreground text-center">
-					This will derive your identity key, re-encrypt your wallet,
-					reinitialize BRC-100
+					{legacy.sweepOnly
+						? "This will sweep the selected legacy assets"
+						: "This will derive your identity key, re-encrypt your wallet, and reinitialize BRC-100"}
 					{totalAssets > 0 &&
 						", cancel selected listings, and sweep selected assets"}
 					.

@@ -337,9 +337,14 @@ export async function executeMigrationSweep(
 				if (txResult.error) {
 					failedChunks++;
 					result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
-				} else if (txResult.txid) {
+				} else if (txResult.txid?.trim()) {
 					collect(txResult.txid);
 					step.txids.push(txResult.txid);
+				} else {
+					failedChunks++;
+					result.errors.push(
+						`${errorLabel}${batchLabel}: no transaction ID returned. Retry the sweep.`,
+					);
 				}
 			} catch (error) {
 				failedChunks++;
