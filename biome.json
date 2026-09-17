@@ -12,6 +12,7 @@
 			"!!**/convex/_generated",
 			"!!public/download/draco",
 			"!node_modules",
+			"!!.worktrees",
 			"!.next",
 			"!dist",
 			"!build",
