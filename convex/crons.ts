@@ -11,13 +11,13 @@ crons.interval(
 
 crons.interval(
 	"expire P2P records and purge terminals after 24 hours",
-	{ minutes: 5 },
+	{ minutes: 30 },
 	internal.p2p.deleteExpiredRecords,
 );
 
 crons.interval(
 	"delete expired signed P2P presence announcements",
-	{ minutes: 5 },
+	{ minutes: 30 },
 	internal.presence.deleteExpiredAnnouncements,
 );
 
