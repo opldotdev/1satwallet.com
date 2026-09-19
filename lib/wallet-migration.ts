@@ -77,3 +77,20 @@ export function detectMigrationStatus(keys: Keys): MigrationStatus {
 
 	return { status: "unmigrateable" };
 }
+
+/** Preserved legacy keys remain available after identity migration. */
+export function legacyMigrationKeys(status: MigrationStatus | null) {
+	if (!status || status.status === "unmigrateable") return null;
+	if (!status.legacyPayWif || !status.legacyOrdWif) return null;
+	return {
+		sweepOnly: status.status === "migrated",
+		payWif: status.legacyPayWif,
+		ordWif: status.legacyOrdWif,
+		payAddress: status.legacyPayAddress ?? null,
+		ordAddress: status.legacyOrdAddress ?? null,
+		identityWif:
+			status.status === "migrated" ? status.legacyIdentityWif : undefined,
+		identityAddress:
+			status.status === "migrated" ? status.legacyIdentityAddress : undefined,
+	};
+}

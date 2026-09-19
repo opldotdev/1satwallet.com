@@ -26,6 +26,7 @@ export interface LegacyAssets {
 	funding: IndexedOutput[];
 	ordinals: EnrichedOrdinal[];
 	opnsNames: EnrichedOrdinal[];
+	listings: EnrichedOrdinal[];
 	bsv21Tokens: TokenBalance[];
 	bsv20Tokens: IndexedOutput[];
 	locked: IndexedOutput[];
@@ -64,6 +65,31 @@ const resolveIconUrl = (tokenId: string, icon?: string): string => {
 	return stackContentUrl(outpoint);
 };
 
+/** Preserve every scanner category, including owner listings without public events. */
+export function legacyScanInventory(
+	result: ScanResult | null,
+	mneeTokenId: string | null = null,
+) {
+	return {
+		funding: result?.funding ?? [],
+		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
+		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
+		listings: (result?.listings ?? []).map(enrichOrdinal),
+		// MNEE is cosigner-locked — it cannot be swept by the generic BSV-21
+		// path, so it is excluded here and handled via sweepLegacyMnee
+		bsv21Tokens: (result?.bsv21Tokens ?? [])
+			.filter((t) => !mneeTokenId || t.tokenId !== mneeTokenId)
+			.map((t) => ({
+				...t,
+				icon: resolveIconUrl(t.tokenId, t.icon),
+			})),
+		bsv20Tokens: result?.bsv20Tokens ?? [],
+		locked: result?.locked ?? [],
+		run: result?.run ?? [],
+		totalBsv: result?.totalFundingSats ?? 0,
+	};
+}
+
 /**
  * Scan legacy addresses via the 1sat stack (@1sat/actions scanAddresses):
  * forced indexer re-sync, event-tag categorization (funding vs ordinals vs
@@ -79,6 +105,12 @@ export function useLegacyAssets(
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<ScanResult | null>(null);
+	const [resultScope, setResultScope] = useState<string | null>(null);
+	const scope = [
+		legacyPayAddress,
+		legacyOrdAddress,
+		legacyIdentityAddress,
+	].join("|");
 	const [mneeBalance, setMneeBalance] = useState(0);
 	const [mneeTokenId, setMneeTokenId] = useState<string | null>(null);
 
@@ -88,6 +120,7 @@ export function useLegacyAssets(
 
 	const [scanTrigger, setScanTrigger] = useState(0);
 	const rescan = useCallback(() => {
+		setResultScope(null);
 		setScanTrigger((prev) => prev + 1);
 	}, []);
 
@@ -106,7 +139,11 @@ export function useLegacyAssets(
 
 		async function scan() {
 			setLoading(true);
+			setResultScope(null);
+			setResult(null);
 			setError(null);
+			setMneeBalance(0);
+			setMneeTokenId(null);
 			try {
 				const addresses = [
 					...new Set(
@@ -135,10 +172,12 @@ export function useLegacyAssets(
 				const [mneeBal, mneeId] = await mneePromise;
 				if (cancelled) return;
 				setResult(scanResult);
+				setResultScope(scope);
 				setMneeBalance(mneeBal);
 				setMneeTokenId(mneeId);
 			} catch (err) {
 				if (cancelled) return;
+				setResultScope(scope);
 				setError(
 					err instanceof Error
 						? err.message
@@ -153,28 +192,24 @@ export function useLegacyAssets(
 		return () => {
 			cancelled = true;
 		};
-	}, [legacyPayAddress, legacyOrdAddress, legacyIdentityAddress, scanTrigger]);
+	}, [
+		legacyPayAddress,
+		legacyOrdAddress,
+		legacyIdentityAddress,
+		scanTrigger,
+		scope,
+	]);
 
+	const current = resultScope === scope;
+	const assets = current ? result : null;
 	return {
-		loading,
-		error,
-		funding: result?.funding ?? [],
-		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
-		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
-		// MNEE is cosigner-locked — it cannot be swept by the generic BSV-21
-		// path, so it is excluded here and handled via sweepLegacyMnee
-		bsv21Tokens: (result?.bsv21Tokens ?? [])
-			.filter((t) => !mneeTokenId || t.tokenId !== mneeTokenId)
-			.map((t) => ({
-				...t,
-				icon: resolveIconUrl(t.tokenId, t.icon),
-			})),
-		bsv20Tokens: result?.bsv20Tokens ?? [],
-		locked: result?.locked ?? [],
-		run: result?.run ?? [],
-		totalBsv: result?.totalFundingSats ?? 0,
-		mneeBalance,
-		mneeTokenId,
+		loading:
+			Boolean(legacyPayAddress || legacyOrdAddress || legacyIdentityAddress) &&
+			(!current || loading),
+		error: current ? error : null,
+		...legacyScanInventory(assets, mneeTokenId),
+		mneeBalance: current ? mneeBalance : 0,
+		mneeTokenId: current ? mneeTokenId : null,
 		rescan,
 	};
 }
