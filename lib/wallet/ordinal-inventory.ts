@@ -20,7 +20,10 @@ export async function listOrdinalInventory(
 			offset: outputs.length,
 		});
 		outputs.push(...page.outputs);
-		if (page.outputs.length < PAGE || outputs.length >= (page.totalOutputs ?? 0)) {
+		if (
+			page.outputs.length < PAGE ||
+			outputs.length >= (page.totalOutputs ?? 0)
+		) {
 			return outputs;
 		}
 	}
