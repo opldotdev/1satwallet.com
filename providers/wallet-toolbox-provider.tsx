@@ -68,6 +68,7 @@ import {
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
+import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -336,11 +337,12 @@ export function WalletToolboxProvider({
 	// -- OneSat action context --
 	const oneSatContext = useMemo<OneSatContext | null>(() => {
 		if (!wallet) return null;
-		return createOneSatContext(wallet, {
+		return createWalletContext(wallet, {
 			services: services ?? undefined,
 			chain,
+			builtIn: connectionMode === "built-in",
 		});
-	}, [wallet, services, chain]);
+	}, [wallet, services, chain, connectionMode]);
 
 	// -- Balance hook --
 	const savedConnectionOption =
