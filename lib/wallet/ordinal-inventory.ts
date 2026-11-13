@@ -3,20 +3,13 @@ import {
 	type OneSatContext,
 	type WalletOutput,
 } from "@1sat/actions";
-import { ONESAT_BASKET } from "@1sat/types";
-import {
-	LEFTOVER_ORDINALS_BASKET,
-	LEGACY_P1SAT_BASKET_MIGRATIONS,
-} from "@/lib/wallet/legacy-basket-migrate";
 
-export const LEGACY_ORDINAL_BASKETS = [
-	...new Set([
-		...LEGACY_P1SAT_BASKET_MIGRATIONS.filter(
-			(migration) => migration.to === ONESAT_BASKET,
-		).map((migration) => migration.from),
-		LEFTOVER_ORDINALS_BASKET,
-	]),
-];
+/**
+ * Older wallets filed ordinals in these baskets. Nothing moves them now
+ * (wallet-toolbox rejects re-filing an output into another basket), so the
+ * inventory keeps reading them alongside the preferred `1sat` basket.
+ */
+export const LEGACY_ORDINAL_BASKETS = ["p 1sat ordinals", "ordinals"];
 
 export function mergeWalletOutputs(groups: WalletOutput[][]): WalletOutput[] {
 	const seen = new Set<string>();
