@@ -9,17 +9,9 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
+import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
 
 export type { TokenBalance };
-
-/**
- * MNEE's BSV-21 token id. MNEE outputs are cosigner-locked (P2PKH plus an
- * approver signature), so the generic BSV-21 sweep cannot sign them; they
- * are left out of the sweep entirely. Same id @1sat/wallet's Bsv21Indexer
- * routes to its own basket.
- */
-const MNEE_TOKEN_ID =
-	"ae59f3b898ec61acbdb6cc7a245fabeded0c094bf046f35206a3aec60ef88127_0";
 
 // IndexedOutput enriched with display metadata resolved from its events
 export interface EnrichedOrdinal extends IndexedOutput {
@@ -147,13 +139,12 @@ export function useLegacyAssets(
 		funding: result?.funding ?? [],
 		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
 		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
-		// MNEE is cosigner-locked — the generic BSV-21 sweep cannot sign it
-		bsv21Tokens: (result?.bsv21Tokens ?? [])
-			.filter((t) => t.tokenId !== MNEE_TOKEN_ID)
-			.map((t) => ({
+		bsv21Tokens: excludeUnsweepableTokens(result?.bsv21Tokens ?? []).map(
+			(t) => ({
 				...t,
 				icon: resolveIconUrl(t.tokenId, t.icon),
-			})),
+			}),
+		),
 		bsv20Tokens: result?.bsv20Tokens ?? [],
 		locked: result?.locked ?? [],
 		run: result?.run ?? [],

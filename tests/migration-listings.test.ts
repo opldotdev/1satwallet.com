@@ -7,9 +7,11 @@ import {
 	ASSET_TYPES,
 	cancelListedAssets,
 	defaultAssetTypes,
+	excludeUnsweepableTokens,
 	isListedOutput,
 	listedFromLegacy,
 	listedFromWallet,
+	MNEE_TOKEN_ID,
 	mergeListed,
 	planMigration,
 	plannedCount,
@@ -163,5 +165,14 @@ describe("migration listing UI contract", () => {
 			read("lib/wallet/migration-listings.ts"),
 			/sellOrdinal|auto-send|seedPhrase/,
 		);
+	});
+});
+
+describe("excludeUnsweepableTokens", () => {
+	it("drops MNEE, which the plain P2PKH sweep cannot sign, and keeps other tokens", () => {
+		const other = { tokenId: `${"b".repeat(64)}_0`, amount: "5" };
+		const mnee = { tokenId: MNEE_TOKEN_ID, amount: "2" };
+		assert.deepEqual(excludeUnsweepableTokens([mnee, other]), [other]);
+		assert.deepEqual(excludeUnsweepableTokens([other]), [other]);
 	});
 });

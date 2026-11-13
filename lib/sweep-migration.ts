@@ -11,6 +11,7 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
+import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
 
 // Chunk sizes: each chunk is its own transaction, so one bad output or a
 // single oversized tx can't sink an entire large sweep, and each completed
@@ -211,7 +212,9 @@ export async function executeMigrationSweep(
 
 	const fundingChunks = chunk(funding, FUNDING_CHUNK_SIZE);
 	const ordinalChunks = chunk(ordinals, ORDINAL_CHUNK_SIZE);
-	const activeTokens = bsv21Tokens.filter((t) => t.outputs.length > 0);
+	const activeTokens = excludeUnsweepableTokens(bsv21Tokens).filter(
+		(t) => t.outputs.length > 0,
+	);
 
 	// Build the step list up front so the UI can render the full plan
 	const steps: SweepStepState[] = [];
