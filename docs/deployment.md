@@ -9,13 +9,13 @@ acceptance.
 
 ## Project and domains
 
-| Item | Authoritative contract |
-| --- | --- |
-| Git remote | `git@github.com:opldotdev/1satwallet.com.git` |
-| Release branch | `main`; pull requests merge to `main` and CI verifies the merge candidate and resulting push |
+| Item                 | Authoritative contract                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Git remote           | `git@github.com:opldotdev/1satwallet.com.git`                                                                |
+| Release branch       | `main`; pull requests merge to `main` and CI verifies the merge candidate and resulting push                 |
 | Vercel owner/project | `OPL` (`opldotdev`) / a dedicated `1satwallet.com` project connected only to this repository's `main` branch |
-| Apex domain | `1satwallet.com` serves the approved Production deployment from `main` |
-| `www` domain | Redirects to the apex hostname or serves the same approved Production deployment |
+| Apex domain          | `1satwallet.com` serves the approved Production deployment from `main`                                       |
+| `www` domain         | Redirects to the apex hostname or serves the same approved Production deployment                             |
 
 `opldotdev/1sat-website:omega` and its `1sat-website` Vercel project are the
 historical source and deployment. They are not valid destinations for new
@@ -51,14 +51,14 @@ Production domain and one request proving the documented Preview behavior.
 `NEXT_PUBLIC_` values are compiled into browser assets and are never secrets.
 Values without that prefix remain server-only.
 
-| Variable | Visibility | Owner and target contract |
-| --- | --- | --- |
-| `NEXT_PUBLIC_ONESAT_STACK_URL` | Public | 1Sat Stack; `https://api.1sat.app` in production |
+| Variable                            | Visibility             | Owner and target contract                                                                        |
+| ----------------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_ONESAT_STACK_URL`      | Public                 | 1Sat Stack; `https://api.1sat.app` in production                                                 |
 | `NEXT_PUBLIC_ONESAT_TEST_STACK_URL` | Public, **unverified** | Testnet routing is unresolved under OPL-3992; do not treat the example host as release-certified |
-| `NEXT_PUBLIC_WALLET_STORAGE_URL` | Public | Wallet storage; `https://wallet.1sat.app` in production |
-| `NEXT_PUBLIC_APP_URL` | Public | Web app; `https://1satwallet.com` for the canonical release and `http://localhost:8255` locally |
-| `NEXT_PUBLIC_CONVEX_URL` | Public endpoint | CWI redirect store; separate Preview and Production deployments |
-| `CWI_REDIRECT_SECRET` | **Server secret** | CWI redirect encryption; unique long random values for Preview and Production |
+| `NEXT_PUBLIC_WALLET_STORAGE_URL`    | Public                 | Wallet storage; `https://wallet.1sat.app` in production                                          |
+| `NEXT_PUBLIC_APP_URL`               | Public                 | Web app; `https://1satwallet.com` for the canonical release and `http://localhost:8255` locally  |
+| `NEXT_PUBLIC_CONVEX_URL`            | Public endpoint        | CWI redirect store; separate Preview and Production deployments                                  |
+| `CWI_REDIRECT_SECRET`               | **Server secret**      | CWI redirect encryption; unique long random values for Preview and Production                    |
 
 `messagebox.1sat.app` is part of the wider 1Sat infrastructure, but this
 checkout does not currently read a message-box environment variable. Add one

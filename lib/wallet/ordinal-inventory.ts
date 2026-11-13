@@ -3,8 +3,11 @@ import {
 	type OneSatContext,
 	type WalletOutput,
 } from "@1sat/actions";
-import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
-import { LEFTOVER_ORDINALS_BASKET } from "@/lib/wallet/legacy-basket-migrate";
+import { ONESAT_BASKET } from "@1sat/types";
+import {
+	LEFTOVER_ORDINALS_BASKET,
+	LEGACY_P1SAT_BASKET_MIGRATIONS,
+} from "@/lib/wallet/legacy-basket-migrate";
 
 export const LEGACY_ORDINAL_BASKETS = [
 	...new Set([

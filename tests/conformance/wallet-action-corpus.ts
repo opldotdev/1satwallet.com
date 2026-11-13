@@ -46,7 +46,7 @@ const TXID_B = "22".repeat(32);
 const REFERENCE = "AQID";
 const ORIGIN_OUTPOINT = `${TXID_A}.0`;
 
-const atomicFixture = (): Uint8Array => {
+const fixtureBeef = (): { beef: Beef; txid: string } => {
 	const transaction = new Transaction();
 	transaction.addOutput({
 		satoshis: 1,
@@ -54,10 +54,12 @@ const atomicFixture = (): Uint8Array => {
 	});
 	const beef = new Beef();
 	beef.mergeTransaction(transaction);
-	return Uint8Array.from(beef.toBinaryAtomic(transaction.id("hex")));
+	return { beef, txid: transaction.id("hex") };
 };
 
-const ATOMIC_BEEF = atomicFixture();
+const FIXTURE = fixtureBeef();
+const ATOMIC_BEEF = Uint8Array.from(FIXTURE.beef.toBinaryAtomic(FIXTURE.txid));
+const INPUT_BEEF = Uint8Array.from(FIXTURE.beef.toBinary());
 
 export const ACTION_VECTORS: readonly ActionVector[] = [
 	{
@@ -125,10 +127,10 @@ export const ACTION_VECTORS: readonly ActionVector[] = [
 		method: "createAction",
 		args: {
 			description: "Spend external input",
-			inputBEEF: new Uint8Array([1, 2, 255]),
+			inputBEEF: INPUT_BEEF,
 			inputs: [
 				{
-					outpoint: ORIGIN_OUTPOINT,
+					outpoint: `${FIXTURE.txid}.0`,
 					inputDescription: "External input",
 					unlockingScriptLength: 1,
 				},

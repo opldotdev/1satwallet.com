@@ -1,11 +1,141 @@
-import { type MoveBasketResult, moveBasketOutputs } from "@1sat/actions";
-import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
-import type { WalletInterface } from "@bsv/sdk";
+import {
+	BSOCIAL_BASKET,
+	BSV21_BASKET,
+	LOCK_BASKET,
+	ONESAT_BASKET,
+	OPNS_BASKET,
+	SIGMA_BASKET,
+} from "@1sat/types";
+import { Beef, type WalletInterface } from "@bsv/sdk";
 
-/** Leftover theme-token basket. Also listed in @1sat/types 0.0.42. */
+/** Leftover theme-token basket. */
 export const LEFTOVER_ORDINALS_BASKET = "ordinals";
 
 export type BasketMigration = { from: string; to: string };
+
+/**
+ * Legacy `p 1sat …` baskets and the plain baskets that replace them. The
+ * @1sat packages dropped this table and `moveBasketOutputs` in
+ * @1sat/actions 0.0.228, so the website owns the one-time move for wallets
+ * that still hold outputs in the old baskets. The rows (and their order)
+ * must stay as published so `mappingVersion` keeps matching wallets that
+ * already completed the move.
+ */
+export const LEGACY_P1SAT_BASKET_MIGRATIONS: readonly BasketMigration[] = [
+	{ from: "p 1sat ordinals", to: ONESAT_BASKET },
+	{ from: LEFTOVER_ORDINALS_BASKET, to: ONESAT_BASKET },
+	{ from: "p 1sat bsv21", to: BSV21_BASKET },
+	{ from: "p 1sat opns", to: OPNS_BASKET },
+	{ from: "p 1sat lock", to: LOCK_BASKET },
+	{ from: "p 1sat sigma", to: SIGMA_BASKET },
+	{ from: "p 1sat bsocial", to: BSOCIAL_BASKET },
+];
+
+export type MoveBasketResult = {
+	from: string;
+	to: string;
+	moved: number;
+	skipped: number;
+	outpoints: string[];
+	errors: Array<{ outpoint: string; error: string }>;
+};
+
+/**
+ * Re-file spendable outputs from one basket into another with
+ * `internalizeAction` basket insertion, keeping tags and custom
+ * instructions. Nothing is spent on chain. Each outpoint is internalized with
+ * an AtomicBEEF for its own transaction.
+ */
+export async function moveBasketOutputs(
+	wallet: WalletInterface,
+	fromBasket: string,
+	toBasket: string,
+	opts: { limit?: number; offset?: number } = {},
+): Promise<MoveBasketResult> {
+	const from = fromBasket.trim();
+	const to = toBasket.trim();
+	if (!from || !to) throw new Error("moveBasket: from and to baskets required");
+	const result: MoveBasketResult = {
+		from,
+		to,
+		moved: 0,
+		skipped: 0,
+		outpoints: [],
+		errors: [],
+	};
+	if (from === to) return result;
+
+	const listed = await wallet.listOutputs({
+		basket: from,
+		include: "entire transactions",
+		includeTags: true,
+		includeCustomInstructions: true,
+		limit: opts.limit ?? 1000,
+		offset: opts.offset ?? 0,
+	});
+	if (!listed.BEEF?.length && listed.outputs.length > 0) {
+		throw new Error(
+			`moveBasket: listOutputs returned no BEEF for basket ${from}`,
+		);
+	}
+	const beef = listed.BEEF?.length
+		? Beef.fromBinary(Array.from(listed.BEEF))
+		: null;
+	const skip = (outpoint: string, error: string) => {
+		result.skipped++;
+		result.errors.push({ outpoint, error });
+	};
+
+	for (const output of listed.outputs) {
+		const outpoint = output.outpoint;
+		const [txid, voutText] = outpoint?.split(".") ?? [];
+		const vout = Number(voutText);
+		if (!txid || voutText === undefined || !Number.isInteger(vout)) {
+			skip(outpoint ?? "?", "bad-outpoint");
+			continue;
+		}
+		if (!beef) {
+			skip(outpoint, "no-beef");
+			continue;
+		}
+		let atomic: number[];
+		try {
+			if (!beef.findTxid(txid)) {
+				skip(outpoint, `beef-missing-txid:${txid.slice(0, 12)}`);
+				continue;
+			}
+			atomic = Array.from(beef.toBinaryAtomic(txid));
+		} catch (error) {
+			skip(
+				outpoint,
+				error instanceof Error ? error.message : "atomic-beef-failed",
+			);
+			continue;
+		}
+		try {
+			await wallet.internalizeAction({
+				tx: atomic,
+				outputs: [
+					{
+						outputIndex: vout,
+						protocol: "basket insertion",
+						insertionRemittance: {
+							basket: to,
+							tags: output.tags ?? [],
+							customInstructions: output.customInstructions,
+						},
+					},
+				],
+				description: `move basket ${from} → ${to}`,
+			});
+			result.moved++;
+			result.outpoints.push(outpoint);
+		} catch (error) {
+			skip(outpoint, error instanceof Error ? error.message : String(error));
+		}
+	}
+	return result;
+}
 
 export type BasketMigrateStorage = {
 	getItem(key: string): string | null;

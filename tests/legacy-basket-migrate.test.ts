@@ -1,16 +1,26 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { MoveBasketResult } from "@1sat/actions";
-import { LEGACY_P1SAT_BASKET_MIGRATIONS, ONESAT_BASKET } from "@1sat/types";
-import type { WalletInterface } from "@bsv/sdk";
+import { ONESAT_BASKET } from "@1sat/types";
+import {
+	Beef,
+	type InternalizeActionArgs,
+	type ListOutputsResult,
+	P2PKH,
+	PrivateKey,
+	Transaction,
+	type WalletInterface,
+} from "@bsv/sdk";
 import {
 	defaultsKey,
 	isDue,
 	LEFTOVER_ORDINALS_BASKET,
+	LEGACY_P1SAT_BASKET_MIGRATIONS,
 	legacyBasketMigrations,
+	type MoveBasketResult,
 	mappingVersion,
 	migrateIfNeeded,
 	migrateLegacyBaskets,
+	moveBasketOutputs,
 } from "@/lib/wallet/legacy-basket-migrate";
 
 const wallet = {} as WalletInterface;
@@ -120,5 +130,83 @@ describe("legacy basket migrate", () => {
 			},
 		});
 		assert.equal(third.ran, false);
+	});
+});
+
+describe("moveBasketOutputs", () => {
+	function fakeWallet(listed: ListOutputsResult) {
+		const internalized: InternalizeActionArgs[] = [];
+		const wallet = {
+			listOutputs: async () => listed,
+			internalizeAction: async (args: InternalizeActionArgs) => {
+				internalized.push(args);
+				return { accepted: true };
+			},
+		} as unknown as WalletInterface;
+		return { wallet, internalized };
+	}
+
+	it("re-files each output into the target basket with its tags", async () => {
+		const tx = new Transaction();
+		tx.addOutput({
+			lockingScript: new P2PKH().lock(
+				PrivateKey.fromHex("01".repeat(32)).toAddress(),
+			),
+			satoshis: 1,
+		});
+		const beef = new Beef();
+		beef.mergeTransaction(tx);
+		const txid = tx.id("hex");
+		const { wallet, internalized } = fakeWallet({
+			totalOutputs: 2,
+			BEEF: beef.toBinary(),
+			outputs: [
+				{
+					outpoint: `${txid}.0`,
+					satoshis: 1,
+					spendable: true,
+					tags: ["origin:abc"],
+					customInstructions: "ci",
+				},
+				{ outpoint: "not-an-outpoint", satoshis: 1, spendable: true },
+			],
+		});
+
+		const result = await moveBasketOutputs(wallet, "p 1sat ordinals", "1sat");
+
+		assert.equal(result.moved, 1);
+		assert.equal(result.skipped, 1);
+		assert.deepEqual(result.outpoints, [`${txid}.0`]);
+		assert.deepEqual(result.errors, [
+			{ outpoint: "not-an-outpoint", error: "bad-outpoint" },
+		]);
+		assert.equal(internalized.length, 1);
+		assert.deepEqual(internalized[0].outputs, [
+			{
+				outputIndex: 0,
+				protocol: "basket insertion",
+				insertionRemittance: {
+					basket: "1sat",
+					tags: ["origin:abc"],
+					customInstructions: "ci",
+				},
+			},
+		]);
+		assert.deepEqual(Beef.fromBinary(internalized[0].tx).atomicTxid, txid);
+	});
+
+	it("does nothing when the source basket is empty or the same", async () => {
+		const { wallet, internalized } = fakeWallet({
+			totalOutputs: 0,
+			outputs: [],
+		});
+		assert.deepEqual(await moveBasketOutputs(wallet, "ordinals", "1sat"), {
+			...emptyMove("ordinals", "1sat"),
+		});
+		assert.deepEqual(
+			await moveBasketOutputs(wallet, "1sat", "1sat"),
+			emptyMove("1sat", "1sat"),
+		);
+		assert.equal(internalized.length, 0);
 	});
 });

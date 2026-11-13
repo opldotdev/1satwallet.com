@@ -13,19 +13,19 @@ states mean:
   production-approved.
 - `unsupported`: the product hides or rejects the flow.
 
-| Product flow | Built-in direct | Desktop HTTP | Injected / Yours | Native WebView | Hosted embed | Hosted redirect |
-| --- | --- | --- | --- | --- | --- | --- |
-| 28-method BRC-100 interface | supported | contract-only | contract-only | contract-only | experimental | experimental |
-| Balance summary | supported | provider-managed | provider-managed | provider-managed | experimental | experimental |
-| Action history | supported | contract-only | contract-only | contract-only | experimental | experimental |
-| Send BSV | supported | contract-only | contract-only | contract-only | experimental | experimental |
-| Receive address | supported | uncertified | uncertified | uncertified | experimental | experimental |
-| Asset read | supported | supported | supported | supported | experimental | experimental |
-| Asset write | supported | contract-only | contract-only | contract-only | experimental | experimental |
-| Identity | supported | contract-only | contract-only | contract-only | experimental | experimental |
-| Permission administration | supported | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
-| Sync | supported | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
-| Local keys, backup, migration | supported | unsupported | unsupported | unsupported | unsupported | unsupported |
+| Product flow                  | Built-in direct | Desktop HTTP     | Injected / Yours | Native WebView   | Hosted embed     | Hosted redirect  |
+| ----------------------------- | --------------- | ---------------- | ---------------- | ---------------- | ---------------- | ---------------- |
+| 28-method BRC-100 interface   | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
+| Balance summary               | supported       | provider-managed | provider-managed | provider-managed | experimental     | experimental     |
+| Action history                | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
+| Send BSV                      | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
+| Receive address               | supported       | uncertified      | uncertified      | uncertified      | experimental     | experimental     |
+| Asset read                    | supported       | supported        | supported        | supported        | experimental     | experimental     |
+| Asset write                   | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
+| Identity                      | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
+| Permission administration     | supported       | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
+| Sync                          | supported       | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
+| Local keys, backup, migration | supported       | unsupported      | unsupported      | unsupported      | unsupported      | unsupported      |
 
 The installed `@1sat/connect@0.0.91` returns `provider: string` and identifies
 every successful auto-detected `WalletClient("auto")` substrate as `brc100`.
