@@ -31,49 +31,50 @@ balance basket instead.
 These flags control which operations trigger permission prompts for external originators. Admin originator (the wallet's own UI) bypasses all checks.
 
 Other config flags:
+
 - `encryptWalletMetadata: true` -- metadata encryption (internal)
 - `seekGroupedPermission: true` -- manifest-declared permissions can be approved in one canonical grouped flow
 - `differentiatePrivilegedOperations: true` -- privileged vs standard operations get separate permission tokens
 
 ### Enabled (will prompt on first use)
 
-| Flag | Methods affected |
-|------|-----------------|
-| `seekProtocolPermissionsForSigning` | `createSignature`, `verifySignature` |
-| `seekProtocolPermissionsForEncrypting` | `encrypt`, `decrypt` |
-| `seekProtocolPermissionsForHMAC` | `createHmac`, `verifyHmac` |
-| `seekPermissionsForKeyLinkageRevelation` | `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` |
-| `seekPermissionsForIdentityKeyRevelation` | `getPublicKey({identityKey: true})` |
-| `seekPermissionsForIdentityResolution` | `discoverByIdentityKey`, `discoverByAttributes` |
-| `seekBasketInsertionPermissions` | `createAction` (with basket output), `internalizeAction` |
-| `seekBasketRemovalPermissions` | `relinquishOutput` |
-| `seekCertificateDisclosurePermissions` | `proveCertificate` |
-| `seekCertificateAcquisitionPermissions` | `acquireCertificate` |
-| `seekCertificateRelinquishmentPermissions` | `relinquishCertificate` |
-| `seekSpendingPermissions` | `createAction` (when netSpent > 0) |
+| Flag                                       | Methods affected                                           |
+| ------------------------------------------ | ---------------------------------------------------------- |
+| `seekProtocolPermissionsForSigning`        | `createSignature`, `verifySignature`                       |
+| `seekProtocolPermissionsForEncrypting`     | `encrypt`, `decrypt`                                       |
+| `seekProtocolPermissionsForHMAC`           | `createHmac`, `verifyHmac`                                 |
+| `seekPermissionsForKeyLinkageRevelation`   | `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage` |
+| `seekPermissionsForIdentityKeyRevelation`  | `getPublicKey({identityKey: true})`                        |
+| `seekPermissionsForIdentityResolution`     | `discoverByIdentityKey`, `discoverByAttributes`            |
+| `seekBasketInsertionPermissions`           | `createAction` (with basket output), `internalizeAction`   |
+| `seekBasketRemovalPermissions`             | `relinquishOutput`                                         |
+| `seekCertificateDisclosurePermissions`     | `proveCertificate`                                         |
+| `seekCertificateAcquisitionPermissions`    | `acquireCertificate`                                       |
+| `seekCertificateRelinquishmentPermissions` | `relinquishCertificate`                                    |
+| `seekSpendingPermissions`                  | `createAction` (when netSpent > 0)                         |
 
 ### Disabled (no prompt)
 
-| Flag | Methods affected |
-|------|-----------------|
-| `seekPermissionsForPublicKeyRevelation` | `getPublicKey({identityKey: false})` |
-| `seekBasketListingPermissions` | `listOutputs` |
-| `seekPermissionWhenApplyingActionLabels` | `createAction` with labels |
-| `seekPermissionWhenListingActionsByLabel` | `listActions` with label filter |
-| `seekCertificateListingPermissions` | `listCertificates` |
+| Flag                                      | Methods affected                     |
+| ----------------------------------------- | ------------------------------------ |
+| `seekPermissionsForPublicKeyRevelation`   | `getPublicKey({identityKey: false})` |
+| `seekBasketListingPermissions`            | `listOutputs`                        |
+| `seekPermissionWhenApplyingActionLabels`  | `createAction` with labels           |
+| `seekPermissionWhenListingActionsByLabel` | `listActions` with label filter      |
+| `seekCertificateListingPermissions`       | `listCertificates`                   |
 
 ### Never require permission (regardless of config)
 
-| Method | Why |
-|--------|-----|
-| `isAuthenticated` | Auth query -- exempt in relay.ts |
-| `waitForAuthentication` | Auth query -- exempt in relay.ts |
-| `getHeight` | Read-only chain info |
-| `getHeaderForHeight` | Read-only chain info |
-| `getNetwork` | Read-only chain info |
-| `getVersion` | Read-only chain info |
-| `abortAction` | Cleanup, no permission needed |
-| `listActions` (no label filter) | Read-only when no label filter |
+| Method                          | Why                              |
+| ------------------------------- | -------------------------------- |
+| `isAuthenticated`               | Auth query -- exempt in relay.ts |
+| `waitForAuthentication`         | Auth query -- exempt in relay.ts |
+| `getHeight`                     | Read-only chain info             |
+| `getHeaderForHeight`            | Read-only chain info             |
+| `getNetwork`                    | Read-only chain info             |
+| `getVersion`                    | Read-only chain info             |
+| `abortAction`                   | Cleanup, no permission needed    |
+| `listActions` (no label filter) | Read-only when no label filter   |
 
 ## Permission Authority
 
@@ -140,6 +141,7 @@ installed WPM invalidates revoked grants internally.
 `waitForAuthentication` and `isAuthenticated` are exempt from the locked-wallet check in `handleCWIRequest`. These two methods need to work regardless of wallet state since they exist to query/wait for authentication.
 
 When WPM is null (not yet initialized):
+
 - `isAuthenticated` -> returns `{authenticated: false}` immediately
 - `waitForAuthentication` -> waits for `getWallet()` without a wall-clock cutoff
 
@@ -168,6 +170,7 @@ The CWI page renders transparent when idle -- only shows UI when `activePermissi
 ```
 
 The test page (or any host dApp) uses this to toggle iframe visibility:
+
 - `hasPermission: true` -> expand iframe to full-screen, enable pointer-events
 - `hasPermission: false` -> collapse iframe to 0x0, disable pointer-events
 
@@ -175,27 +178,27 @@ The test page (or any host dApp) uses this to toggle iframe visibility:
 
 ### All passing
 
-| Method | Args | Result | Permission? |
-|--------|------|--------|------------|
-| `waitForAuthentication` | `{}` | `{"authenticated":true}` | No |
-| `isAuthenticated` | `{}` | `{"authenticated":true}` | No |
-| `getNetwork` | `{}` | `{"network":"mainnet"}` | No |
-| `getVersion` | `{}` | `{"version":"wallet-brc100-1.0.0"}` | No |
-| `getHeight` | `{}` | `{"height":935157}` | No |
-| `getPublicKey` (non-identity) | `{identityKey:false, forSelf:true, protocolID:[0,'tests'], keyID:'1', counterparty:'self'}` | ERROR: "Protocol names must be 5 characters or more" with `'test'`; fixed to `'tests'` (not re-tested after fix) | No (config disabled) |
-| `listOutputs` | `{basket:'todo tokens', include:'locking scripts'}` | `{"totalOutputs":0,"outputs":[]}` | No (config disabled) |
-| `getPublicKey` (identity) | `{identityKey:true, forSelf:true}` | `{"publicKey":"03908c..."}` | Yes -- prompted, allowed |
-| `encrypt` | `{plaintext:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}` | `{"ciphertext":[207,78,...]}` | No (cached from identity grant) |
-| `createSignature` | `{data:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}` | `{"signature":[48,69,...]}` | No (cached) |
-| `createHmac` | `{data:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}` | `{"hmac":[151,23,...]}` | No (cached) |
-| `bogusMethod` | `{}` | ERROR: "Unknown method: bogusMethod" (code 2) | N/A |
+| Method                        | Args                                                                                        | Result                                                                                                           | Permission?                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `waitForAuthentication`       | `{}`                                                                                        | `{"authenticated":true}`                                                                                         | No                              |
+| `isAuthenticated`             | `{}`                                                                                        | `{"authenticated":true}`                                                                                         | No                              |
+| `getNetwork`                  | `{}`                                                                                        | `{"network":"mainnet"}`                                                                                          | No                              |
+| `getVersion`                  | `{}`                                                                                        | `{"version":"wallet-brc100-1.0.0"}`                                                                              | No                              |
+| `getHeight`                   | `{}`                                                                                        | `{"height":935157}`                                                                                              | No                              |
+| `getPublicKey` (non-identity) | `{identityKey:false, forSelf:true, protocolID:[0,'tests'], keyID:'1', counterparty:'self'}` | ERROR: "Protocol names must be 5 characters or more" with `'test'`; fixed to `'tests'` (not re-tested after fix) | No (config disabled)            |
+| `listOutputs`                 | `{basket:'todo tokens', include:'locking scripts'}`                                         | `{"totalOutputs":0,"outputs":[]}`                                                                                | No (config disabled)            |
+| `getPublicKey` (identity)     | `{identityKey:true, forSelf:true}`                                                          | `{"publicKey":"03908c..."}`                                                                                      | Yes -- prompted, allowed        |
+| `encrypt`                     | `{plaintext:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}`                 | `{"ciphertext":[207,78,...]}`                                                                                    | No (cached from identity grant) |
+| `createSignature`             | `{data:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}`                      | `{"signature":[48,69,...]}`                                                                                      | No (cached)                     |
+| `createHmac`                  | `{data:[...], protocolID:[0,'tests'], keyID:'1', counterparty:'self'}`                      | `{"hmac":[151,23,...]}`                                                                                          | No (cached)                     |
+| `bogusMethod`                 | `{}`                                                                                        | ERROR: "Unknown method: bogusMethod" (code 2)                                                                    | N/A                             |
 
 ### Known test arg issues
 
-| Method | Issue | Fix |
-|--------|-------|-----|
-| `getPublicKey` (non-identity) | Protocol name `'test'` was too short (5-char min) | Changed to `'tests'` |
-| `listOutputs` with `{basket:'default'}` | "default" basket is admin-only | Changed to `'todo tokens'` |
+| Method                                  | Issue                                             | Fix                        |
+| --------------------------------------- | ------------------------------------------------- | -------------------------- |
+| `getPublicKey` (non-identity)           | Protocol name `'test'` was too short (5-char min) | Changed to `'tests'`       |
+| `listOutputs` with `{basket:'default'}` | "default" basket is admin-only                    | Changed to `'todo tokens'` |
 
 ## Not Yet Tested
 
@@ -217,13 +220,13 @@ The test page (or any host dApp) uses this to toggle iframe visibility:
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `lib/cwi/relay.ts` | CWIRelay -- wallet tab side, dispatches to WPM |
-| `lib/cwi/bridge.ts` | CWIBridge -- iframe side, postMessage <-> BroadcastChannel |
-| `lib/hooks/use-cwi-bridge.ts` | React hook for iframe page |
-| `lib/hooks/use-cwi-relay.ts` | React hook for wallet tab |
-| `app/(embed)/wallet/cwi/page.tsx` | CWI iframe page component |
-| `app/(main)/cwi-relay-provider.tsx` | Mounts relay in wallet tab |
-| `providers/wallet-toolbox-provider.tsx` | WPM creation + permission config (lines 37-54) |
-| `test-cwi.html` | E2E test page |
+| File                                    | Purpose                                                    |
+| --------------------------------------- | ---------------------------------------------------------- |
+| `lib/cwi/relay.ts`                      | CWIRelay -- wallet tab side, dispatches to WPM             |
+| `lib/cwi/bridge.ts`                     | CWIBridge -- iframe side, postMessage <-> BroadcastChannel |
+| `lib/hooks/use-cwi-bridge.ts`           | React hook for iframe page                                 |
+| `lib/hooks/use-cwi-relay.ts`            | React hook for wallet tab                                  |
+| `app/(embed)/wallet/cwi/page.tsx`       | CWI iframe page component                                  |
+| `app/(main)/cwi-relay-provider.tsx`     | Mounts relay in wallet tab                                 |
+| `providers/wallet-toolbox-provider.tsx` | WPM creation + permission config (lines 37-54)             |
+| `test-cwi.html`                         | E2E test page                                              |

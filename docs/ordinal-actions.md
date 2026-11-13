@@ -4,12 +4,12 @@ The wallet ordinals page uses the active provider's `OneSatContext` and the
 installed `@1sat/actions` 0.0.200 action contracts. It does not derive keys,
 construct a second wallet client, or call a legacy ordinal endpoint.
 
-| UI operation | Canonical action | Input |
-| --- | --- | --- |
-| Send one or many | `sendOrdinals` | One transfer per wallet `id:` tag, with either a P2PKH address or compressed counterparty identity key |
-| Burn one or many | `burnOrdinals` | Wallet `id:` tags after a review list and typed `BURN` confirmation |
-| List one | `sellOrdinal` | Disabled (`ORDLOCK_LISTING_DISABLED`). Create throws a deprecation error |
-| Cancel one listing | `cancelOrdinalListing` | The listed output's wallet `id:` tag |
+| UI operation       | Canonical action       | Input                                                                                                  |
+| ------------------ | ---------------------- | ------------------------------------------------------------------------------------------------------ |
+| Send one or many   | `sendOrdinals`         | One transfer per wallet `id:` tag, with either a P2PKH address or compressed counterparty identity key |
+| Burn one or many   | `burnOrdinals`         | Wallet `id:` tags after a review list and typed `BURN` confirmation                                    |
+| List one           | `sellOrdinal`          | Disabled (`ORDLOCK_LISTING_DISABLED`). Create throws a deprecation error                               |
+| Cancel one listing | `cancelOrdinalListing` | The listed output's wallet `id:` tag                                                                   |
 
 Listed outputs are identified only by the current `ordlock` tag. Outputs that
 predate wallet asset IDs remain visible but cannot be submitted; refreshing the

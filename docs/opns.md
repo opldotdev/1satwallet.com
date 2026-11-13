@@ -6,15 +6,15 @@ uses the active provider's `OneSatContext` for every wallet action.
 
 ## Implemented contracts
 
-| Surface | Installed contract | Website behavior |
-| --- | --- | --- |
-| Owned names | `listOpns` | Identity-scoped, paginated wallet basket with explicit missing-ID state |
-| Publish / unpublish | `registerOpns`, `deregisterOpns` | Review, exact current-row revalidation, wallet authorization, txid, refresh |
-| Send | `sendOpns` | Chain-checked P2PKH or compressed BRC-100 counterparty; no resolver guess |
-| List / cancel | `sellOpns` (create off), `cancelOpnsListing` | Create throws a deprecation error (`ORDLOCK_LISTING_DISABLED`); cancel stays on with listed-state revalidation |
-| Discovery | `OpnsClient.getOrigin`, `MarketClient.searchListings` | Exact typed origin lookup and active `application/op-ns` listing pagination |
-| Detail | `getOrigin`, ORDFS metadata, active-by-origin Market lookup | Capability-specific origin/content/listing state; origin and listing must agree |
-| Buy | `buyOpns` | Ownership check, exact origin/outpoint/price revalidation, review, txid, refresh |
+| Surface             | Installed contract                                          | Website behavior                                                                                               |
+| ------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Owned names         | `listOpns`                                                  | Identity-scoped, paginated wallet basket with explicit missing-ID state                                        |
+| Publish / unpublish | `registerOpns`, `deregisterOpns`                            | Review, exact current-row revalidation, wallet authorization, txid, refresh                                    |
+| Send                | `sendOpns`                                                  | Chain-checked P2PKH or compressed BRC-100 counterparty; no resolver guess                                      |
+| List / cancel       | `sellOpns` (create off), `cancelOpnsListing`                | Create throws a deprecation error (`ORDLOCK_LISTING_DISABLED`); cancel stays on with listed-state revalidation |
+| Discovery           | `OpnsClient.getOrigin`, `MarketClient.searchListings`       | Exact typed origin lookup and active `application/op-ns` listing pagination                                    |
+| Detail              | `getOrigin`, ORDFS metadata, active-by-origin Market lookup | Capability-specific origin/content/listing state; origin and listing must agree                                |
+| Buy                 | `buyOpns`                                                   | Ownership check, exact origin/outpoint/price revalidation, review, txid, refresh                               |
 
 The action package does not expose a fee quote. Reviews therefore show the
 exact asset or listing amount and marketplace fee (zero because none is

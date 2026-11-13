@@ -127,14 +127,14 @@ unit tests are not a pass for a real substrate.
 
 ### Provider modes
 
-| Mode | Required preview evidence | Current blocker |
-| --- | --- | --- |
-| Built-in browser wallet | Create, import, unlock/lock, reconnect, identity isolation, sync, backup, delete, restore | OPL-3966 is In Review; OPL-4018 still blocks full multi-account Yours restore |
-| 1Sat Wallet Desktop | Connect/disconnect/reconnect, origin display, identity change, full shared action suite | OPL-3981 and OPL-3983 |
-| Yours/other injected wallet | Connect/disconnect/reconnect, winning-origin proof, identity change, full shared action suite | OPL-3981 and OPL-3983 |
-| Native mobile WebView host | iOS/Android lifecycle, injected complete `WalletInterface`, background/foreground, navigation, shared action suite | OPL-3980 |
-| Hosted CWI iframe | HTTPS parent, origin-isolated concurrent sessions, lock/consent/deny, all 28 methods, reload/close | OPL-3960 and urgent OPL-4005 |
-| Hosted CWI redirect | Approve, deny, wrong origin, wrong PKCE, replay, expiry, reload, encrypted result isolation | OPL-3960, OPL-4005, and OPL-4022 |
+| Mode                        | Required preview evidence                                                                                          | Current blocker                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| Built-in browser wallet     | Create, import, unlock/lock, reconnect, identity isolation, sync, backup, delete, restore                          | OPL-3966 is In Review; OPL-4018 still blocks full multi-account Yours restore |
+| 1Sat Wallet Desktop         | Connect/disconnect/reconnect, origin display, identity change, full shared action suite                            | OPL-3981 and OPL-3983                                                         |
+| Yours/other injected wallet | Connect/disconnect/reconnect, winning-origin proof, identity change, full shared action suite                      | OPL-3981 and OPL-3983                                                         |
+| Native mobile WebView host  | iOS/Android lifecycle, injected complete `WalletInterface`, background/foreground, navigation, shared action suite | OPL-3980                                                                      |
+| Hosted CWI iframe           | HTTPS parent, origin-isolated concurrent sessions, lock/consent/deny, all 28 methods, reload/close                 | OPL-3960 and urgent OPL-4005                                                  |
+| Hosted CWI redirect         | Approve, deny, wrong origin, wrong PKCE, replay, expiry, reload, encrypted result isolation                        | OPL-3960, OPL-4005, and OPL-4022                                              |
 
 OPL-3967 owns product-action parity. The installed connector reports successful
 auto-detection only as generic `brc100`; release notes must not claim that the
@@ -389,13 +389,13 @@ unused headings; never leave placeholders in published notes.
 
 ## Wallet/provider support verified in this release
 
-| Mode | Wallet/host version | Browser/device | Evidence | Result |
-| --- | --- | --- | --- | --- |
-| Built-in | [version] | [browser/device] | [link] | [pass/disabled] |
-| Desktop | [version] | [browser/device] | [link] | [pass/disabled] |
-| Injected | [version] | [browser/device] | [link] | [pass/disabled] |
-| Native WebView | [version] | [device] | [link] | [pass/disabled] |
-| Hosted iframe/redirect | [version] | [browser/device] | [link] | [pass/disabled] |
+| Mode                   | Wallet/host version | Browser/device   | Evidence | Result          |
+| ---------------------- | ------------------- | ---------------- | -------- | --------------- |
+| Built-in               | [version]           | [browser/device] | [link]   | [pass/disabled] |
+| Desktop                | [version]           | [browser/device] | [link]   | [pass/disabled] |
+| Injected               | [version]           | [browser/device] | [link]   | [pass/disabled] |
+| Native WebView         | [version]           | [device]         | [link]   | [pass/disabled] |
+| Hosted iframe/redirect | [version]           | [browser/device] | [link]   | [pass/disabled] |
 
 ## Money, data, and infrastructure
 

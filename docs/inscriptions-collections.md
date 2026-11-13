@@ -12,11 +12,11 @@ flow.
 
 ## Supported actions
 
-| Product mode | Action | Content boundary | Identity behavior |
-| --- | --- | --- | --- |
-| File or UTF-8 text | `inscribe` | Single transaction through exactly 50 MiB; optional OrdFS streaming uses 1 MiB chunks and has no action-defined total limit | BAP/Sigma signing is optional and requires wallet approval; it cannot be combined with streaming |
-| Collection | `mintCollection` | Exactly 50 MiB maximum; the installed action does not stream | The action always creates a Sigma-sealed collection output |
-| Collection item | `mintCollectionItem` | Exactly 50 MiB maximum; the installed action does not stream | The action always creates a Sigma-sealed item output linked to a canonical `txid_vout` parent |
+| Product mode       | Action               | Content boundary                                                                                                            | Identity behavior                                                                                |
+| ------------------ | -------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| File or UTF-8 text | `inscribe`           | Single transaction through exactly 50 MiB; optional OrdFS streaming uses 1 MiB chunks and has no action-defined total limit | BAP/Sigma signing is optional and requires wallet approval; it cannot be combined with streaming |
+| Collection         | `mintCollection`     | Exactly 50 MiB maximum; the installed action does not stream                                                                | The action always creates a Sigma-sealed collection output                                       |
+| Collection item    | `mintCollectionItem` | Exactly 50 MiB maximum; the installed action does not stream                                                                | The action always creates a Sigma-sealed item output linked to a canonical `txid_vout` parent    |
 
 Text size is calculated with `TextEncoder`, so the number displayed in review
 is the UTF-8 byte count that is encoded. File size comes from the browser's
