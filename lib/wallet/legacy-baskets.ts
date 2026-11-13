@@ -76,8 +76,9 @@ function dedupeByOutpoint(outputs: WalletOutput[]): WalletOutput[] {
 /**
  * `listOutputs` over a current basket and its legacy names, paged as one
  * list: the current basket first, then each legacy basket in table order.
- * `totalOutputs` is the sum across them. A legacy basket the wallet refuses
- * to list is skipped. Any other basket passes straight through.
+ * `totalOutputs` is the sum across them. A failed legacy read fails the call,
+ * so a balance never silently understates. A negative offset reads the
+ * current basket only. Any other basket passes straight through.
  */
 export async function listOutputsWithLegacy(
 	wallet: WalletInterface,
@@ -86,49 +87,31 @@ export async function listOutputsWithLegacy(
 ): Promise<ListOutputsResult> {
 	const legacy = legacyBasketsFor(args.basket);
 	const current = await wallet.listOutputs(args, originator);
-	if (legacy.length === 0) return current;
+	const offset = args.offset ?? 0;
+	// A negative (newest-first) offset reads the current basket only.
+	if (legacy.length === 0 || offset < 0) return current;
 
 	const limit = args.limit ?? DEFAULT_LIST_LIMIT;
-	const offset = args.offset ?? 0;
-	const pageFromStart = offset >= 0;
 	let skip = Math.max(0, offset - Number(current.totalOutputs));
-	let need = pageFromStart ? limit - current.outputs.length : limit;
+	let need = limit - current.outputs.length;
 	let totalOutputs = Number(current.totalOutputs);
 	const outputs = [...current.outputs];
 	const withOutputs: ListOutputsResult[] = [current];
 
 	for (const basket of legacy) {
-		let result: ListOutputsResult;
-		try {
-			result = await wallet.listOutputs(
-				need > 0
-					? {
-							...args,
-							basket,
-							offset: pageFromStart ? skip : offset,
-							limit: need,
-						}
-					: {
-							...args,
-							basket,
-							include: undefined,
-							offset: 0,
-							limit: 1,
-						},
-				originator,
-			);
-		} catch {
-			continue;
-		}
+		const result = await wallet.listOutputs(
+			need > 0
+				? { ...args, basket, offset: skip, limit: need }
+				: { ...args, basket, include: undefined, offset: 0, limit: 1 },
+			originator,
+		);
 		const count = Number(result.totalOutputs);
 		totalOutputs += count;
 		if (need <= 0) continue;
 		outputs.push(...result.outputs);
 		if (result.outputs.length > 0) withOutputs.push(result);
-		if (pageFromStart) {
-			need -= result.outputs.length;
-			skip = Math.max(0, skip - count);
-		}
+		need -= result.outputs.length;
+		skip = Math.max(0, skip - count);
 	}
 
 	const merged = dedupeByOutpoint(outputs).slice(0, limit);

@@ -153,22 +153,47 @@ describe("listOutputsWithLegacy", () => {
 		assert.equal(third.totalOutputs, 5);
 	});
 
-	it("dedupes by outpoint and skips a legacy basket the wallet refuses", async () => {
+	it("dedupes by outpoint", async () => {
 		const shared = row(7);
-		const { wallet } = fakeWallet(
-			{
-				[ONESAT_BASKET]: [shared],
-				"p 1sat ordinals": [shared, row(8)],
-				ordinals: [row(9)],
-			},
-			{ refuse: ["ordinals"] },
-		);
+		const { wallet } = fakeWallet({
+			[ONESAT_BASKET]: [shared],
+			"p 1sat ordinals": [shared, row(8)],
+			ordinals: [row(9)],
+		});
 		const result = await listOutputsWithLegacy(wallet, {
 			basket: ONESAT_BASKET,
 			limit: 100,
 		});
 		assert.equal(new Set(outpoints(result)).size, result.outputs.length);
-		assert.equal(result.outputs.length, 2);
+		assert.equal(result.outputs.length, 3);
+	});
+
+	it("fails the call when a legacy basket read fails", async () => {
+		const { wallet } = fakeWallet(
+			{ [ONESAT_BASKET]: [row(7)], ordinals: [row(9)] },
+			{ refuse: ["ordinals"] },
+		);
+		await assert.rejects(
+			listOutputsWithLegacy(wallet, { basket: ONESAT_BASKET, limit: 100 }),
+			/basket ordinals refused/,
+		);
+	});
+
+	it("reads only the current basket for a negative offset", async () => {
+		const { wallet, calls } = fakeWallet({
+			[ONESAT_BASKET]: [row(7), row(8)],
+			"p 1sat ordinals": [row(9)],
+		});
+		const result = await listOutputsWithLegacy(wallet, {
+			basket: ONESAT_BASKET,
+			limit: 1,
+			offset: -1,
+		});
+		assert.deepEqual(
+			calls.map((call) => call.basket),
+			[ONESAT_BASKET],
+		);
+		assert.equal(Number(result.totalOutputs), 2);
 	});
 
 	it("finds a tagged output by id in a legacy basket (single-row lookups)", async () => {
