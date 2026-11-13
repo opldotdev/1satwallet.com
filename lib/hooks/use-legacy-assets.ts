@@ -9,6 +9,7 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
+import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
 
 export type { TokenBalance };
 
@@ -31,10 +32,6 @@ export interface LegacyAssets {
 	locked: IndexedOutput[];
 	run: IndexedOutput[];
 	totalBsv: number;
-	/** MNEE balance (decimal) at the legacy addresses — swept via the cosigner API */
-	mneeBalance: number;
-	/** MNEE token id, used to exclude MNEE from the generic BSV-21 sweep */
-	mneeTokenId: string | null;
 	rescan: () => void;
 }
 
@@ -79,8 +76,6 @@ export function useLegacyAssets(
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<ScanResult | null>(null);
-	const [mneeBalance, setMneeBalance] = useState(0);
-	const [mneeTokenId, setMneeTokenId] = useState<string | null>(null);
 
 	// Scanning needs services only (no wallet) — a standalone instance so the
 	// banner works even when the BRC-100 wallet failed to initialize
@@ -115,28 +110,11 @@ export function useLegacyAssets(
 						),
 					),
 				];
-				// MNEE lives behind its own cosigner API — query alongside the
-				// stack scan; failures degrade to a zero balance
-				const mneePromise = Promise.all([
-					services.mnee
-						.getBalances(addresses)
-						.then((bals) =>
-							(bals ?? []).reduce((sum, b) => sum + b.precised, 0),
-						)
-						.catch(() => 0),
-					services.mnee
-						.getConfig()
-						.then((cfg) => cfg?.tokenId ?? null)
-						.catch(() => null),
-				]);
 				const scanResult = await scanAddresses(services, addresses, (p) =>
 					progressRef.current?.(p),
 				);
-				const [mneeBal, mneeId] = await mneePromise;
 				if (cancelled) return;
 				setResult(scanResult);
-				setMneeBalance(mneeBal);
-				setMneeTokenId(mneeId);
 			} catch (err) {
 				if (cancelled) return;
 				setError(
@@ -161,20 +139,16 @@ export function useLegacyAssets(
 		funding: result?.funding ?? [],
 		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
 		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
-		// MNEE is cosigner-locked — it cannot be swept by the generic BSV-21
-		// path, so it is excluded here and handled via sweepLegacyMnee
-		bsv21Tokens: (result?.bsv21Tokens ?? [])
-			.filter((t) => !mneeTokenId || t.tokenId !== mneeTokenId)
-			.map((t) => ({
+		bsv21Tokens: excludeUnsweepableTokens(result?.bsv21Tokens ?? []).map(
+			(t) => ({
 				...t,
 				icon: resolveIconUrl(t.tokenId, t.icon),
-			})),
+			}),
+		),
 		bsv20Tokens: result?.bsv20Tokens ?? [],
 		locked: result?.locked ?? [],
 		run: result?.run ?? [],
 		totalBsv: result?.totalFundingSats ?? 0,
-		mneeBalance,
-		mneeTokenId,
 		rescan,
 	};
 }

@@ -30,8 +30,22 @@ export type MigrationPlan<T extends TaggedOutput = TaggedOutput> = {
 	sweepOrdinals: T[];
 	sweepFunding: T[];
 	sweepBsv21: TokenBalance[];
-	sweepMnee: boolean;
 };
+
+/**
+ * MNEE's BSV-21 token id. MNEE outputs are cosigner-locked (P2PKH plus an
+ * approver signature), so the generic BSV-21 sweep cannot sign them. Same id
+ * @1sat/wallet's Bsv21Indexer routes to its own basket.
+ */
+export const MNEE_TOKEN_ID =
+	"ae59f3b898ec61acbdb6cc7a245fabeded0c094bf046f35206a3aec60ef88127_0";
+
+/** Drops tokens the generic BSV-21 sweep cannot sign for (MNEE). */
+export function excludeUnsweepableTokens<T extends { tokenId: string }>(
+	tokens: T[],
+): T[] {
+	return tokens.filter((t) => t.tokenId !== MNEE_TOKEN_ID);
+}
 
 export function isListedOutput(output: TaggedOutput): boolean {
 	if (output.tags?.includes("ordlock")) return true;
@@ -105,7 +119,6 @@ export function planMigration<T extends TaggedOutput>(input: {
 	opns: T[];
 	funding: T[];
 	bsv21: TokenBalance[];
-	mneeBalance: number;
 }): MigrationPlan<T> {
 	const listingsOn = input.types.has("listings");
 	const cancelable = new Set(
@@ -127,9 +140,6 @@ export function planMigration<T extends TaggedOutput>(input: {
 			: [],
 		sweepFunding: input.types.has("bsv") ? input.funding : [],
 		sweepBsv21: input.types.has("bsv21") ? input.bsv21 : [],
-		sweepMnee:
-			input.mneeBalance > 0 &&
-			(input.types.has("bsv21") || input.types.has("bsv")),
 	};
 }
 
@@ -139,8 +149,7 @@ export function plannedCount(plan: MigrationPlan): number {
 		plan.sweepListed.length +
 		plan.sweepOrdinals.length +
 		plan.sweepFunding.length +
-		plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0) +
-		(plan.sweepMnee ? 1 : 0)
+		plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0)
 	);
 }
 

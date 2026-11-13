@@ -7,9 +7,11 @@ import {
 	ASSET_TYPES,
 	cancelListedAssets,
 	defaultAssetTypes,
+	excludeUnsweepableTokens,
 	isListedOutput,
 	listedFromLegacy,
 	listedFromWallet,
+	MNEE_TOKEN_ID,
 	mergeListed,
 	planMigration,
 	plannedCount,
@@ -83,15 +85,13 @@ describe("migration listing plan", () => {
 					isActive: true,
 				},
 			],
-			mneeBalance: 2,
 		});
 		assert.equal(all.cancel.length, 1);
 		assert.equal(all.sweepListed.length, 1);
 		assert.equal(all.sweepOrdinals.length, 1);
 		assert.equal(all.sweepFunding.length, 1);
 		assert.equal(all.sweepBsv21.length, 1);
-		assert.equal(all.sweepMnee, true);
-		assert.equal(plannedCount(all), 6);
+		assert.equal(plannedCount(all), 5);
 
 		const listingsOnly = planMigration({
 			types: new Set(["listings"]),
@@ -101,14 +101,12 @@ describe("migration listing plan", () => {
 			opns: [],
 			funding,
 			bsv21: all.sweepBsv21,
-			mneeBalance: 2,
 		});
 		assert.equal(listingsOnly.cancel.length, 1);
 		assert.equal(listingsOnly.sweepListed.length, 1);
 		assert.equal(listingsOnly.sweepOrdinals.length, 0);
 		assert.equal(listingsOnly.sweepFunding.length, 0);
 		assert.equal(listingsOnly.sweepBsv21.length, 0);
-		assert.equal(listingsOnly.sweepMnee, false);
 		assert.deepEqual(
 			[...toggleAssetType(defaultAssetTypes(), "bsv")],
 			[...ASSET_TYPES.filter((type) => type !== "bsv")],
@@ -167,5 +165,14 @@ describe("migration listing UI contract", () => {
 			read("lib/wallet/migration-listings.ts"),
 			/sellOrdinal|auto-send|seedPhrase/,
 		);
+	});
+});
+
+describe("excludeUnsweepableTokens", () => {
+	it("drops MNEE, which the plain P2PKH sweep cannot sign, and keeps other tokens", () => {
+		const other = { tokenId: `${"b".repeat(64)}_0`, amount: "5" };
+		const mnee = { tokenId: MNEE_TOKEN_ID, amount: "2" };
+		assert.deepEqual(excludeUnsweepableTokens([mnee, other]), [other]);
+		assert.deepEqual(excludeUnsweepableTokens([other]), [other]);
 	});
 });
