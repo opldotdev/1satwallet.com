@@ -33,29 +33,29 @@ interface contributes **21 methods × 2 adapters = 42 transport passes**. The
 seven action/output methods are covered separately in
 `wallet-actions.test.ts`.
 
-| Method | Direct | Real `CWIRelay` | Additional executable evidence |
-| --- | --- | --- | --- |
-| `getPublicKey` | pass | pass | Identity-key retrieval plus installed BRC-42 counterparty-derived key agreement |
-| `revealCounterpartyKeyLinkage` | pass | pass | BRC-72 decryption to the expected BRC-69 shared secret and BRC-94 Schnorr proof verification |
-| `revealSpecificKeyLinkage` | pass | pass | BRC-72 decryption to the expected BRC-69 HMAC and BRC-97 proof-type-0 no-proof marker |
-| `encrypt` | pass | pass | Installed BRC-2 round trip, binary edge bytes |
-| `decrypt` | pass | pass | Installed BRC-2 round trip, privileged request shape |
-| `createHmac` | pass | pass | Installed BRC-56 create/verify pair |
-| `verifyHmac` | pass | pass | Installed BRC-56 create/verify pair |
-| `createSignature` | pass | pass | Installed BRC-3 counterparty signature |
-| `verifySignature` | pass | pass | Installed BRC-3 counterparty verification |
-| `acquireCertificate` | pass | pass | BRC-52 direct-acquisition shape and SDK validator |
-| `listCertificates` | pass | pass | BRC-52 filters, paging, keyring, SDK validator |
-| `proveCertificate` | pass | pass | BRC-52/53 selective field shape and SDK validator |
-| `relinquishCertificate` | pass | pass | BRC-52 identity tuple and SDK validator |
-| `discoverByIdentityKey` | pass | pass | BRC-52 identity result and SDK validator |
-| `discoverByAttributes` | pass | pass | BRC-52 attribute query and SDK validator |
-| `isAuthenticated` | pass | pass | Public result fidelity |
-| `waitForAuthentication` | pass | pass | Public result fidelity |
-| `getHeight` | pass | pass | Public result fidelity |
-| `getHeaderForHeight` | pass | pass | 80-byte header hex and SDK integer validator |
-| `getNetwork` | pass | pass | Public result fidelity |
-| `getVersion` | pass | pass | Public result fidelity |
+| Method                         | Direct | Real `CWIRelay` | Additional executable evidence                                                               |
+| ------------------------------ | ------ | --------------- | -------------------------------------------------------------------------------------------- |
+| `getPublicKey`                 | pass   | pass            | Identity-key retrieval plus installed BRC-42 counterparty-derived key agreement              |
+| `revealCounterpartyKeyLinkage` | pass   | pass            | BRC-72 decryption to the expected BRC-69 shared secret and BRC-94 Schnorr proof verification |
+| `revealSpecificKeyLinkage`     | pass   | pass            | BRC-72 decryption to the expected BRC-69 HMAC and BRC-97 proof-type-0 no-proof marker        |
+| `encrypt`                      | pass   | pass            | Installed BRC-2 round trip, binary edge bytes                                                |
+| `decrypt`                      | pass   | pass            | Installed BRC-2 round trip, privileged request shape                                         |
+| `createHmac`                   | pass   | pass            | Installed BRC-56 create/verify pair                                                          |
+| `verifyHmac`                   | pass   | pass            | Installed BRC-56 create/verify pair                                                          |
+| `createSignature`              | pass   | pass            | Installed BRC-3 counterparty signature                                                       |
+| `verifySignature`              | pass   | pass            | Installed BRC-3 counterparty verification                                                    |
+| `acquireCertificate`           | pass   | pass            | BRC-52 direct-acquisition shape and SDK validator                                            |
+| `listCertificates`             | pass   | pass            | BRC-52 filters, paging, keyring, SDK validator                                               |
+| `proveCertificate`             | pass   | pass            | BRC-52/53 selective field shape and SDK validator                                            |
+| `relinquishCertificate`        | pass   | pass            | BRC-52 identity tuple and SDK validator                                                      |
+| `discoverByIdentityKey`        | pass   | pass            | BRC-52 identity result and SDK validator                                                     |
+| `discoverByAttributes`         | pass   | pass            | BRC-52 attribute query and SDK validator                                                     |
+| `isAuthenticated`              | pass   | pass            | Public result fidelity                                                                       |
+| `waitForAuthentication`        | pass   | pass            | Public result fidelity                                                                       |
+| `getHeight`                    | pass   | pass            | Public result fidelity                                                                       |
+| `getHeaderForHeight`           | pass   | pass            | 80-byte header hex and SDK integer validator                                                 |
+| `getNetwork`                   | pass   | pass            | Public result fidelity                                                                       |
+| `getVersion`                   | pass   | pass            | Public result fidelity                                                                       |
 
 The corpus distributes BRC-43 security levels `0`, `1`, and `2`, explicit
 counterparties, privileged reasons, exact origin forwarding, byte values at
@@ -70,18 +70,18 @@ authoritative BRC-52 certificate primitives.
 
 ## Blocked live adapters
 
-| Adapter or behavior | Why it is not a CI conformance claim |
-| --- | --- |
-| Built-in funded action lifecycle | Requires a browser IndexedDB wallet, keys, funds, permission interaction, and network services. |
-| Desktop localhost wallet | Requires a running user wallet and cannot be a deterministic repository fixture. |
-| Yours/injected wallet | Requires the extension and user approval in an interactive browser profile. |
-| Embedded mobile wallet | The host must inject a complete BRC-100 `WalletInterface`; the current native one-shot payment session is not that interface. |
-| `inputBEEF` spend validity and broadcast results | The corpus proves public request and transport fidelity only; cryptographic transaction validity and miner responses belong to wallet-toolbox/live integration suites. |
-| Permission prompt approval/denial | The relay test proves thrown wallet denial is transported faithfully; it does not simulate the `WalletPermissionsManager` UI or permission-token lifecycle. |
-| Browser multi-origin isolation | Repository tests exercise the relay protocol in process, not independent browser origins or browser-enforced channel boundaries. |
-| Hosted-wallet Playwright flow | There is no deterministic browser fixture that provisions a wallet, completes permission UI, and controls multiple top-level origins. |
-| Certificate acquisition/issuance network flow | Public BRC-52 shapes and SDK validators execute, but a live certifier, signature validation, encrypted field keyrings, and revocation UTXO checks require an integration fixture. |
-| Chain services (`getHeight`, `getHeaderForHeight`) | Transport and public result shapes execute; no network result is claimed without a controlled chain-service adapter. |
+| Adapter or behavior                                | Why it is not a CI conformance claim                                                                                                                                              |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Built-in funded action lifecycle                   | Requires a browser IndexedDB wallet, keys, funds, permission interaction, and network services.                                                                                   |
+| Desktop localhost wallet                           | Requires a running user wallet and cannot be a deterministic repository fixture.                                                                                                  |
+| Yours/injected wallet                              | Requires the extension and user approval in an interactive browser profile.                                                                                                       |
+| Embedded mobile wallet                             | The host must inject a complete BRC-100 `WalletInterface`; the current native one-shot payment session is not that interface.                                                     |
+| `inputBEEF` spend validity and broadcast results   | The corpus proves public request and transport fidelity only; cryptographic transaction validity and miner responses belong to wallet-toolbox/live integration suites.            |
+| Permission prompt approval/denial                  | The relay test proves thrown wallet denial is transported faithfully; it does not simulate the `WalletPermissionsManager` UI or permission-token lifecycle.                       |
+| Browser multi-origin isolation                     | Repository tests exercise the relay protocol in process, not independent browser origins or browser-enforced channel boundaries.                                                  |
+| Hosted-wallet Playwright flow                      | There is no deterministic browser fixture that provisions a wallet, completes permission UI, and controls multiple top-level origins.                                             |
+| Certificate acquisition/issuance network flow      | Public BRC-52 shapes and SDK validators execute, but a live certifier, signature validation, encrypted field keyrings, and revocation UTXO checks require an integration fixture. |
+| Chain services (`getHeight`, `getHeaderForHeight`) | Transport and public result shapes execute; no network result is claimed without a controlled chain-service adapter.                                                              |
 
 Live coverage should be added only when a reproducible funded sandbox or
 provider-owned test adapter exists. Until then, treating these rows as passing

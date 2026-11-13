@@ -9,32 +9,41 @@ This document describes the wallet-side redirect fallback contract for CWI.
 Endpoint: `POST /api/cwi/authorize/init`
 
 Headers:
+
 - `Origin` (required)
 
 Body:
+
 ```json
 {
-  "call": "createSignature",
-  "args": { "data": [1,2,3], "protocolID": [0, "tests"], "keyID": "1", "counterparty": "self" },
-  "redirect_uri": "https://app.example.com/cwi/callback",
-  "state": "opaque-client-state",
-  "nonce": "opaque-client-nonce",
-  "code_challenge": "BASE64URL_PKCE_CHALLENGE",
-  "code_challenge_method": "S256"
+	"call": "createSignature",
+	"args": {
+		"data": [1, 2, 3],
+		"protocolID": [0, "tests"],
+		"keyID": "1",
+		"counterparty": "self"
+	},
+	"redirect_uri": "https://app.example.com/cwi/callback",
+	"state": "opaque-client-state",
+	"nonce": "opaque-client-nonce",
+	"code_challenge": "BASE64URL_PKCE_CHALLENGE",
+	"code_challenge_method": "S256"
 }
 ```
 
 Response:
+
 ```json
 {
-  "requestId": "...",
-  "authorizeUrl": "https://wallet.example.com/wallet/cwi/authorize?requestId=...",
-  "expiresAt": 1738840000000,
-  "supportedMethods": ["..."]
+	"requestId": "...",
+	"authorizeUrl": "https://wallet.example.com/wallet/cwi/authorize?requestId=...",
+	"expiresAt": 1738840000000,
+	"supportedMethods": ["..."]
 }
 ```
 
 Validation rules:
+
 - `Origin` must be `https` in production.
 - `http://localhost` and `http://127.0.0.1` are allowed in non-production.
 - `redirect_uri` must be absolute URL with matching origin to `Origin`.
@@ -49,6 +58,7 @@ Validation rules:
 Page: `GET /wallet/cwi/authorize?requestId=...`
 
 Behavior:
+
 - Loads request details via `GET /api/cwi/authorize/request`.
 - Requires unlocked wallet.
 - On approve:
@@ -62,9 +72,11 @@ Behavior:
 ## 3) Callback Redirect Shape
 
 Success:
+
 - `?code=<one-time-code>&state=<state>`
 
 Failure:
+
 - `?error=<error>&error_description=<description>&error_code=<numeric-code>&state=<state>`
 - `error_stack` is included only in non-production environments when the
   originating wallet error provides one.
@@ -76,33 +88,38 @@ No operation result is returned in URL params.
 Endpoint: `POST /api/cwi/token`
 
 Headers:
+
 - `Origin` (required)
 
 Body:
+
 ```json
 {
-  "code": "one-time-code",
-  "code_verifier": "BASE64URL_PKCE_VERIFIER",
-  "redirect_uri": "https://app.example.com/cwi/callback"
+	"code": "one-time-code",
+	"code_verifier": "BASE64URL_PKCE_VERIFIER",
+	"redirect_uri": "https://app.example.com/cwi/callback"
 }
 ```
 
 Success response:
+
 ```json
 {
-  "result": { "...": "wallet operation result" }
+	"result": { "...": "wallet operation result" }
 }
 ```
 
 Error response:
+
 ```json
 {
-  "error": "invalid_grant",
-  "error_description": "authorization_code_already_consumed"
+	"error": "invalid_grant",
+	"error_description": "authorization_code_already_consumed"
 }
 ```
 
 Security checks:
+
 - Code exists, not expired, not consumed.
 - PKCE verifier matches stored challenge.
 - `Origin` and `redirect_uri` match stored request binding.
@@ -111,9 +128,11 @@ Security checks:
 ## 5) Convex Tables
 
 `cwiAuthRequests`
+
 - request lifecycle + PKCE + state/nonce + method metadata
 
 `cwiAuthCodes`
+
 - one-time code artifacts for token exchange
 
 Both include expiry fields and index coverage for request/code lookup.
@@ -127,6 +146,7 @@ npm run cwi:e2e:redirect
 ```
 
 Optional environment overrides:
+
 - `CWI_BASE_URL` (default: `http://localhost:8255`)
 - `CWI_DAPP_ORIGIN` (default: `http://localhost:3333`)
 - `CWI_REDIRECT_URI` (default: `http://localhost:3333/cwi/callback`)
@@ -134,6 +154,7 @@ Optional environment overrides:
 - `CWI_APPROVE_ARGS` (JSON string; default: `{}`)
 
 The harness verifies:
+
 - authorize init and request retrieval
 - approval callback (`code` + `state`)
 - token exchange success

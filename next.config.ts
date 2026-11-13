@@ -29,6 +29,14 @@ export const sensitiveRouteHeaders = [
 const nextConfig: NextConfig = {
 	/* config options here */
 	reactCompiler: true,
+	turbopack: {
+		resolveAlias: {
+			// @1sat/actions pulls in xdelta3-wasm, whose wasm loader has a
+			// Node-only `require("fs")` branch guarded by a runtime check.
+			// Browser bundles get an empty module for it.
+			fs: { browser: "./lib/empty-module.ts" },
+		},
+	},
 	async headers() {
 		return [
 			{

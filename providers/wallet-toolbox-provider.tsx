@@ -68,7 +68,7 @@ import {
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
-import { migrateIfNeeded } from "@/lib/wallet/legacy-basket-migrate";
+import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -337,11 +337,12 @@ export function WalletToolboxProvider({
 	// -- OneSat action context --
 	const oneSatContext = useMemo<OneSatContext | null>(() => {
 		if (!wallet) return null;
-		return createOneSatContext(wallet, {
+		return createWalletContext(wallet, {
 			services: services ?? undefined,
 			chain,
+			builtIn: connectionMode === "built-in",
 		});
-	}, [wallet, services, chain]);
+	}, [wallet, services, chain, connectionMode]);
 
 	// -- Balance hook --
 	const savedConnectionOption =
@@ -380,33 +381,6 @@ export function WalletToolboxProvider({
 		balanceError,
 		syncStatus: balanceSyncStatus,
 	} = balanceResult;
-
-	useEffect(() => {
-		if (!wallet || !identityKey || !isInitialized) return;
-		let cancelled = false;
-		void migrateIfNeeded({
-			wallet,
-			identityHex: identityKey,
-			storage: window.localStorage,
-		})
-			.then((result) => {
-				if (cancelled || !result.ran || result.totalMoved === 0) return;
-				refreshBalance();
-			})
-			.catch(() => {
-				if (cancelled) return;
-				reportDiagnostic({
-					category: "action",
-					code: "action.failed",
-					operation: "wallet.migrate-legacy-baskets",
-					recoverable: true,
-					context: { retryable: true },
-				});
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [wallet, identityKey, isInitialized, refreshBalance]);
 
 	// -- Outpoint script resolution --
 	const resolveOutpointScript = useCallback(

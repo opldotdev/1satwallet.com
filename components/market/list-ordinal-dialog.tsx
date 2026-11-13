@@ -1,10 +1,6 @@
 "use client";
 
-import {
-	cancelOrdinalListing,
-	createContext,
-	type WalletOutput,
-} from "@1sat/actions";
+import { cancelOrdinalListing, type WalletOutput } from "@1sat/actions";
 import { readAssetIdTag } from "@1sat/types";
 import { Loader2, X } from "lucide-react";
 import { useCallback, useState } from "react";
@@ -33,8 +29,7 @@ export const ListOrdinalDialog = ({
 	open,
 	onOpenChange,
 }: ListOrdinalDialogProps) => {
-	const { wallet, services, chain, depositAddress, refreshBalance } =
-		useWalletToolbox();
+	const { oneSatContext, depositAddress, refreshBalance } = useWalletToolbox();
 	const { play } = useSound();
 	const [status, setStatus] = useState<"idle" | "busy" | "error">("idle");
 	const [error, setError] = useState("");
@@ -42,7 +37,7 @@ export const ListOrdinalDialog = ({
 	const listed = isListed(ordinal);
 
 	const run = useCallback(async () => {
-		if (!wallet || !depositAddress) return;
+		if (!oneSatContext || !depositAddress) return;
 		setStatus("busy");
 		setError("");
 		try {
@@ -51,11 +46,7 @@ export const ListOrdinalDialog = ({
 			if (!listed) {
 				throw new Error(LISTING_CREATE_OFF_MESSAGE);
 			}
-			const ctx = createContext(wallet, {
-				services: services ?? undefined,
-				chain,
-			});
-			const result = await cancelOrdinalListing.execute(ctx, { id });
+			const result = await cancelOrdinalListing.execute(oneSatContext, { id });
 			if (result.error) {
 				setStatus("error");
 				setError(result.error);
@@ -72,9 +63,7 @@ export const ListOrdinalDialog = ({
 			play("error");
 		}
 	}, [
-		wallet,
-		services,
-		chain,
+		oneSatContext,
 		depositAddress,
 		listed,
 		ordinal,

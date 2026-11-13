@@ -68,6 +68,7 @@ function tokenDetails(tokenId = TOKEN_ID, active = true): TokenDetailResponse {
 			output_count: 0,
 			fee_per_output: 0,
 			fee_address: "",
+			min_funding: 0,
 			is_whitelisted: false,
 			is_blacklisted: false,
 		},

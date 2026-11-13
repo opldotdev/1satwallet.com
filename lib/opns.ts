@@ -35,6 +35,12 @@ import {
 import { getName, getOriginOutpoint } from "@/lib/wallet/wallet-output-utils";
 
 export const OPNS_CONTENT_TYPE = "application/op-ns";
+
+/**
+ * BRC-169 ecosystem domain written into a published name's `profile`.
+ * Readers resolve the identity at `https://<domain>/manifest.json`.
+ */
+export const OPNS_PROFILE_DOMAIN = "1sat.name";
 export type OpnsState<T> =
 	| { status: "ready"; data: T }
 	| { status: "not-found" }
@@ -257,8 +263,11 @@ export async function executeOwnedOpnsOperation(
 		case "publish":
 			return registerOpns.execute(ctx, {
 				id: operation.id,
-				profileName: operation.profileName,
-				avatar: operation.avatar,
+				profile: {
+					domain: OPNS_PROFILE_DOMAIN,
+					name: operation.profileName,
+					avatar: operation.avatar,
+				},
 			});
 		case "unpublish":
 			return deregisterOpns.execute(ctx, { id: operation.id });
