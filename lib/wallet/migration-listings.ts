@@ -30,7 +30,6 @@ export type MigrationPlan<T extends TaggedOutput = TaggedOutput> = {
 	sweepOrdinals: T[];
 	sweepFunding: T[];
 	sweepBsv21: TokenBalance[];
-	sweepMnee: boolean;
 };
 
 export function isListedOutput(output: TaggedOutput): boolean {
@@ -105,7 +104,6 @@ export function planMigration<T extends TaggedOutput>(input: {
 	opns: T[];
 	funding: T[];
 	bsv21: TokenBalance[];
-	mneeBalance: number;
 }): MigrationPlan<T> {
 	const listingsOn = input.types.has("listings");
 	const cancelable = new Set(
@@ -127,9 +125,6 @@ export function planMigration<T extends TaggedOutput>(input: {
 			: [],
 		sweepFunding: input.types.has("bsv") ? input.funding : [],
 		sweepBsv21: input.types.has("bsv21") ? input.bsv21 : [],
-		sweepMnee:
-			input.mneeBalance > 0 &&
-			(input.types.has("bsv21") || input.types.has("bsv")),
 	};
 }
 
@@ -139,8 +134,7 @@ export function plannedCount(plan: MigrationPlan): number {
 		plan.sweepListed.length +
 		plan.sweepOrdinals.length +
 		plan.sweepFunding.length +
-		plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0) +
-		(plan.sweepMnee ? 1 : 0)
+		plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0)
 	);
 }
 

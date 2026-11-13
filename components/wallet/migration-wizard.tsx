@@ -20,7 +20,6 @@ import {
 	FundingSection,
 	ListingsSection,
 	LockedSection,
-	MneeSection,
 	OpnsSection,
 	OrdinalsSection,
 	RunSection,
@@ -231,7 +230,6 @@ export function MigrationWizard() {
 				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
 				funding: assets.funding,
 				bsv21: assets.bsv21Tokens,
-				mneeBalance: assets.mneeBalance,
 			}),
 		[
 			selectedTypes,
@@ -241,7 +239,6 @@ export function MigrationWizard() {
 			unlistedOpns,
 			assets.funding,
 			assets.bsv21Tokens,
-			assets.mneeBalance,
 		],
 	);
 
@@ -359,7 +356,7 @@ export function MigrationWizard() {
 				const totalSweepable =
 					plan.sweepFunding.length + sweepOrdinals.length + bsv21OutputCount;
 
-				if (totalSweepable > 0 || plan.sweepMnee) {
+				if (totalSweepable > 0) {
 					setProgress(
 						`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 					);
@@ -382,7 +379,6 @@ export function MigrationWizard() {
 						funding: plan.sweepFunding,
 						ordinals: sweepOrdinals,
 						bsv21Tokens: plan.sweepBsv21,
-						mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
 					});
 
 					setSweepResult({ ...result, cancelTxids });
@@ -416,14 +412,12 @@ export function MigrationWizard() {
 		walletKeys,
 		migrationStatus,
 		toolbox,
-		assets.mneeBalance,
 		assets.rescan,
 		sweepOrdinals,
 		bsv21OutputCount,
 		plan.cancel,
 		plan.sweepFunding,
 		plan.sweepBsv21,
-		plan.sweepMnee,
 	]);
 
 	const runDelistOnly = useCallback(async () => {
@@ -524,11 +518,10 @@ export function MigrationWizard() {
 						typeCounts={{
 							listings: listings.length,
 							ordinals: unlistedOrdinals.length + unlistedOpns.length,
-							bsv21:
-								assets.bsv21Tokens.reduce(
-									(sum, token) => sum + token.outputs.length,
-									0,
-								) + (assets.mneeBalance > 0 ? 1 : 0),
+							bsv21: assets.bsv21Tokens.reduce(
+								(sum, token) => sum + token.outputs.length,
+								0,
+							),
 							bsv: assets.funding.length,
 						}}
 						selectedOrdinals={selectedOrdinals}
@@ -692,7 +685,7 @@ function ScanStep({
 				</div>
 				<h2 className="text-xl font-semibold">Scanning Legacy Addresses</h2>
 				<p className="text-sm text-muted-foreground animate-pulse">
-					{scanDetail ?? "Looking for BSV, ordinals, tokens and MNEE..."}
+					{scanDetail ?? "Looking for BSV, ordinals and tokens..."}
 				</p>
 			</div>
 			<div className="mx-auto max-w-sm space-y-4">
@@ -808,10 +801,7 @@ function PreviewStep({
 					</>
 				)}
 				{selectedTypes.has("bsv21") && (
-					<>
-						<TokensSection tokens={assets.bsv21Tokens} />
-						<MneeSection mneeBalance={assets.mneeBalance} />
-					</>
+					<TokensSection tokens={assets.bsv21Tokens} />
 				)}
 				<Bsv20Section tokens={assets.bsv20Tokens} />
 				<LockedSection locked={withoutListed(assets.locked)} />
@@ -973,14 +963,6 @@ function CompleteStep({
 							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
 						</div>
 					))}
-					{sweepResult.mneeTxid && (
-						<div className="flex justify-between border-b border-border/30 pb-2">
-							<span className="text-muted-foreground">MNEE Sweep</span>
-							<code className="text-xs font-mono">
-								{sweepResult.mneeTxid.slice(0, 16)}...
-							</code>
-						</div>
-					)}
 					{sweepResult.errors.length > 0 && (
 						<div className="space-y-1 pt-2">
 							<p className="text-sm font-medium text-destructive">
@@ -997,7 +979,6 @@ function CompleteStep({
 						sweepResult.ordinalTxids.length === 0 &&
 						sweepResult.bsv21Txids.length === 0 &&
 						(sweepResult.cancelTxids?.length ?? 0) === 0 &&
-						!sweepResult.mneeTxid &&
 						sweepResult.errors.length === 0 && (
 							<p className="text-center text-muted-foreground">
 								No assets found at legacy addresses.

@@ -153,7 +153,7 @@ only in the restricted evidence location approved by the release owner.
   broadcast. Paymail stays disabled under OPL-4014 and OPL-4015.
 - Ordinals: send, burn confirmation, list, cancel, stale-output rejection, and
   post-action invalidation before claiming OPL-3969.
-- BSV21, OpNS, inscriptions, marketplace, certificate, identity, lock, and MNEE
+- BSV21, OpNS, inscriptions, marketplace, certificate, identity, and lock
   actions are tested only if enabled; otherwise confirm their entry points are
   hidden or capability-gated and list them as unavailable.
 - Verify action history exposes truthful BRC-100 pagination and BRC-153
@@ -329,7 +329,7 @@ This list is a release-notes floor, not a backlog substitute:
 - public testnet under OPL-3992;
 - full multi-account Yours restore under OPL-4018;
 - unfinished ordinal, BSV21, OpNS, inscription/collection, marketplace, BAP,
-  social, BSV lock, MNEE, certificate interoperability, and identity-discovery
+  social, BSV lock, certificate interoperability, and identity-discovery
   work tracked by OPL-3969 through OPL-3979;
 - authenticated accessibility and production performance certification under
   OPL-4019 and OPL-4020.

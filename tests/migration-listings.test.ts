@@ -83,15 +83,13 @@ describe("migration listing plan", () => {
 					isActive: true,
 				},
 			],
-			mneeBalance: 2,
 		});
 		assert.equal(all.cancel.length, 1);
 		assert.equal(all.sweepListed.length, 1);
 		assert.equal(all.sweepOrdinals.length, 1);
 		assert.equal(all.sweepFunding.length, 1);
 		assert.equal(all.sweepBsv21.length, 1);
-		assert.equal(all.sweepMnee, true);
-		assert.equal(plannedCount(all), 6);
+		assert.equal(plannedCount(all), 5);
 
 		const listingsOnly = planMigration({
 			types: new Set(["listings"]),
@@ -101,14 +99,12 @@ describe("migration listing plan", () => {
 			opns: [],
 			funding,
 			bsv21: all.sweepBsv21,
-			mneeBalance: 2,
 		});
 		assert.equal(listingsOnly.cancel.length, 1);
 		assert.equal(listingsOnly.sweepListed.length, 1);
 		assert.equal(listingsOnly.sweepOrdinals.length, 0);
 		assert.equal(listingsOnly.sweepFunding.length, 0);
 		assert.equal(listingsOnly.sweepBsv21.length, 0);
-		assert.equal(listingsOnly.sweepMnee, false);
 		assert.deepEqual(
 			[...toggleAssetType(defaultAssetTypes(), "bsv")],
 			[...ASSET_TYPES.filter((type) => type !== "bsv")],

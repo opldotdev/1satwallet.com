@@ -19,7 +19,6 @@ import {
 	FundingSection,
 	ListingsSection,
 	LockedSection,
-	MneeSection,
 	OpnsSection,
 	OrdinalsSection,
 	RunSection,
@@ -77,7 +76,7 @@ function ScanningState({ scanDetail }: { scanDetail: string | null }) {
 					<CardTitle>Scanning Legacy Addresses</CardTitle>
 					<CardDescription className="animate-pulse">
 						{scanDetail ??
-							"Looking for BSV, ordinals, tokens and MNEE at your legacy addresses..."}
+							"Looking for BSV, ordinals and tokens at your legacy addresses..."}
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">
@@ -193,14 +192,6 @@ function CompletionState({
 								</code>
 							</div>
 						))}
-						{sweepResult.mneeTxid && (
-							<div className="flex justify-between">
-								<span className="text-muted-foreground">MNEE Sweep</span>
-								<code className="text-xs font-mono">
-									{sweepResult.mneeTxid.slice(0, 16)}...
-								</code>
-							</div>
-						)}
 						{sweepResult.errors.length > 0 && (
 							<div className="space-y-1">
 								<p className="text-sm font-medium text-destructive">
@@ -217,7 +208,6 @@ function CompletionState({
 							sweepResult.ordinalTxids.length === 0 &&
 							sweepResult.bsv21Txids.length === 0 &&
 							(sweepResult.cancelTxids?.length ?? 0) === 0 &&
-							!sweepResult.mneeTxid &&
 							sweepResult.errors.length === 0 && (
 								<p className="text-sm text-muted-foreground">
 									No assets found at legacy addresses.
@@ -401,11 +391,10 @@ export default function MigratePage() {
 		() => ({
 			listings: listings.length,
 			ordinals: unlistedOrdinals.length + unlistedOpns.length,
-			bsv21:
-				assets.bsv21Tokens.reduce(
-					(sum, token) => sum + token.outputs.length,
-					0,
-				) + (assets.mneeBalance > 0 ? 1 : 0),
+			bsv21: assets.bsv21Tokens.reduce(
+				(sum, token) => sum + token.outputs.length,
+				0,
+			),
 			bsv: assets.funding.length,
 		}),
 		[
@@ -413,7 +402,6 @@ export default function MigratePage() {
 			unlistedOrdinals.length,
 			unlistedOpns.length,
 			assets.bsv21Tokens,
-			assets.mneeBalance,
 			assets.funding.length,
 		],
 	);
@@ -434,7 +422,6 @@ export default function MigratePage() {
 				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
 				funding: assets.funding,
 				bsv21: assets.bsv21Tokens,
-				mneeBalance: assets.mneeBalance,
 			}),
 		[
 			selectedTypes,
@@ -444,7 +431,6 @@ export default function MigratePage() {
 			unlistedOpns,
 			assets.funding,
 			assets.bsv21Tokens,
-			assets.mneeBalance,
 		],
 	);
 
@@ -479,7 +465,6 @@ export default function MigratePage() {
 					0,
 				) ===
 				0 &&
-			assets.mneeBalance <= 0 &&
 			listings.length === 0
 		) {
 			// Already migrated and legacy addresses are empty
@@ -493,7 +478,6 @@ export default function MigratePage() {
 		phase,
 		assets.loading,
 		assets.error,
-		assets.mneeBalance,
 		assets.funding.length,
 		assets.ordinals.length,
 		assets.opnsNames.length,
@@ -605,7 +589,6 @@ export default function MigratePage() {
 					funding: [],
 					ordinals: plan.sweepListed,
 					bsv21Tokens: [],
-					mneeBalance: 0,
 				});
 				result = { ...result, cancelTxids: cancelled.txids };
 			}
@@ -699,7 +682,7 @@ export default function MigratePage() {
 				sweepOrdinals.length +
 				plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0);
 
-			if (totalSweepable > 0 || plan.sweepMnee) {
+			if (totalSweepable > 0) {
 				setProgress(
 					`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 				);
@@ -725,7 +708,6 @@ export default function MigratePage() {
 					funding: plan.sweepFunding,
 					ordinals: sweepOrdinals,
 					bsv21Tokens: plan.sweepBsv21,
-					mneeBalance: plan.sweepMnee ? assets.mneeBalance : 0,
 				});
 
 				setSweepResult({ ...result, cancelTxids: cancelled.txids });
@@ -762,7 +744,6 @@ export default function MigratePage() {
 		sweepOrdinals,
 		plan.sweepFunding,
 		plan.sweepBsv21,
-		plan.sweepMnee,
 		runDelist,
 	]);
 
@@ -908,10 +889,7 @@ export default function MigratePage() {
 							)}
 
 							{selectedTypes.has("bsv21") && (
-								<>
-									<TokensSection tokens={assets.bsv21Tokens} />
-									<MneeSection mneeBalance={assets.mneeBalance} />
-								</>
+								<TokensSection tokens={assets.bsv21Tokens} />
 							)}
 
 							<Bsv20Section tokens={assets.bsv20Tokens} />
@@ -923,8 +901,7 @@ export default function MigratePage() {
 
 						{totalAssets === 0 &&
 							listings.length === 0 &&
-							assets.bsv20Tokens.length === 0 &&
-							assets.mneeBalance <= 0 && (
+							assets.bsv20Tokens.length === 0 && (
 								<Card>
 									<CardContent className="py-8 text-center text-muted-foreground">
 										No assets found at legacy addresses.

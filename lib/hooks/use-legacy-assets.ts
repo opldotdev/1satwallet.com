@@ -12,6 +12,15 @@ import { createStackServices, stackContentUrl } from "@/lib/stack";
 
 export type { TokenBalance };
 
+/**
+ * MNEE's BSV-21 token id. MNEE outputs are cosigner-locked (P2PKH plus an
+ * approver signature), so the generic BSV-21 sweep cannot sign them; they
+ * are left out of the sweep entirely. Same id @1sat/wallet's Bsv21Indexer
+ * routes to its own basket.
+ */
+const MNEE_TOKEN_ID =
+	"ae59f3b898ec61acbdb6cc7a245fabeded0c094bf046f35206a3aec60ef88127_0";
+
 // IndexedOutput enriched with display metadata resolved from its events
 export interface EnrichedOrdinal extends IndexedOutput {
 	origin?: string;
@@ -31,10 +40,6 @@ export interface LegacyAssets {
 	locked: IndexedOutput[];
 	run: IndexedOutput[];
 	totalBsv: number;
-	/** MNEE balance (decimal) at the legacy addresses — swept via the cosigner API */
-	mneeBalance: number;
-	/** MNEE token id, used to exclude MNEE from the generic BSV-21 sweep */
-	mneeTokenId: string | null;
 	rescan: () => void;
 }
 
@@ -79,8 +84,6 @@ export function useLegacyAssets(
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<ScanResult | null>(null);
-	const [mneeBalance, setMneeBalance] = useState(0);
-	const [mneeTokenId, setMneeTokenId] = useState<string | null>(null);
 
 	// Scanning needs services only (no wallet) — a standalone instance so the
 	// banner works even when the BRC-100 wallet failed to initialize
@@ -115,28 +118,11 @@ export function useLegacyAssets(
 						),
 					),
 				];
-				// MNEE lives behind its own cosigner API — query alongside the
-				// stack scan; failures degrade to a zero balance
-				const mneePromise = Promise.all([
-					services.mnee
-						.getBalances(addresses)
-						.then((bals) =>
-							(bals ?? []).reduce((sum, b) => sum + b.precised, 0),
-						)
-						.catch(() => 0),
-					services.mnee
-						.getConfig()
-						.then((cfg) => cfg?.tokenId ?? null)
-						.catch(() => null),
-				]);
 				const scanResult = await scanAddresses(services, addresses, (p) =>
 					progressRef.current?.(p),
 				);
-				const [mneeBal, mneeId] = await mneePromise;
 				if (cancelled) return;
 				setResult(scanResult);
-				setMneeBalance(mneeBal);
-				setMneeTokenId(mneeId);
 			} catch (err) {
 				if (cancelled) return;
 				setError(
@@ -161,10 +147,9 @@ export function useLegacyAssets(
 		funding: result?.funding ?? [],
 		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
 		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
-		// MNEE is cosigner-locked — it cannot be swept by the generic BSV-21
-		// path, so it is excluded here and handled via sweepLegacyMnee
+		// MNEE is cosigner-locked — the generic BSV-21 sweep cannot sign it
 		bsv21Tokens: (result?.bsv21Tokens ?? [])
-			.filter((t) => !mneeTokenId || t.tokenId !== mneeTokenId)
+			.filter((t) => t.tokenId !== MNEE_TOKEN_ID)
 			.map((t) => ({
 				...t,
 				icon: resolveIconUrl(t.tokenId, t.icon),
@@ -173,8 +158,6 @@ export function useLegacyAssets(
 		locked: result?.locked ?? [],
 		run: result?.run ?? [],
 		totalBsv: result?.totalFundingSats ?? 0,
-		mneeBalance,
-		mneeTokenId,
 		rescan,
 	};
 }

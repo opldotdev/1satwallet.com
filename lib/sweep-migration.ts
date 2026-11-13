@@ -2,7 +2,6 @@
 
 import {
 	createContext,
-	deriveDepositAddresses,
 	prepareSweepInputs,
 	sweepBsv,
 	sweepBsv21,
@@ -12,7 +11,6 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
-import { sweepLegacyMnee } from "@/lib/sweep-legacy-mnee";
 
 // Chunk sizes: each chunk is its own transaction, so one bad output or a
 // single oversized tx can't sink an entire large sweep, and each completed
@@ -44,7 +42,6 @@ export interface SweepResult {
 	bsvTxids: string[];
 	ordinalTxids: string[];
 	bsv21Txids: string[];
-	mneeTxid?: string;
 	cancelTxids?: string[];
 	errors: string[];
 }
@@ -60,8 +57,6 @@ export interface MigrationSweepParams {
 	funding: IndexedOutput[];
 	ordinals: IndexedOutput[];
 	bsv21Tokens: TokenBalance[];
-	/** MNEE balance (decimal) at the legacy addresses; > 0 triggers an MNEE sweep */
-	mneeBalance?: number;
 }
 
 const getOwner = (output: IndexedOutput): string | undefined =>
@@ -192,7 +187,6 @@ export async function executeMigrationSweep(
 		funding,
 		ordinals,
 		bsv21Tokens,
-		mneeBalance = 0,
 	} = params;
 
 	const ctx = createContext(wallet, { services, chain });
@@ -245,9 +239,6 @@ export async function executeMigrationSweep(
 			txids: [],
 		});
 	}
-	if (mneeBalance > 0) {
-		steps.push({ id: "mnee", label: "MNEE", status: "pending", txids: [] });
-	}
 
 	const totalUnits =
 		fundingChunks.length +
@@ -255,8 +246,7 @@ export async function executeMigrationSweep(
 		activeTokens.reduce(
 			(sum, t) => sum + chunk(t.outputs, TOKEN_CHUNK_SIZE).length,
 			0,
-		) +
-		(mneeBalance > 0 ? 1 : 0);
+		);
 	let completedUnits = 0;
 
 	const emit = (message: string) => {
@@ -422,53 +412,6 @@ export async function executeMigrationSweep(
 				}),
 			(txid) => result.bsv21Txids.push(txid),
 		);
-	}
-
-	// 4. MNEE — cosigner-locked, swept via the MNEE API with raw legacy keys
-	// to a P1SAT deposit address of the BRC-100 wallet
-	if (mneeBalance > 0) {
-		const step = stepById("mnee");
-		if (step) step.status = "active";
-		try {
-			const { derivations } = await deriveDepositAddresses.execute(ctx, {
-				count: 1,
-			});
-			const destinationAddress = derivations[0]?.address;
-			if (!destinationAddress) {
-				throw new Error("Failed to derive a deposit address");
-			}
-			const mneeResult = await sweepLegacyMnee({
-				mneeClient: services.mnee,
-				legacyKeys: [...keyMap.values()],
-				destinationAddress,
-				onProgress: (message) => {
-					if (step) step.detail = message;
-					emit(message);
-				},
-			});
-			if (mneeResult.error) {
-				if (step) {
-					step.status = "error";
-					step.error = mneeResult.error;
-				}
-				result.errors.push(`MNEE sweep: ${mneeResult.error}`);
-			} else if (mneeResult.txid) {
-				result.mneeTxid = mneeResult.txid;
-				if (step) {
-					step.status = "done";
-					step.txids.push(mneeResult.txid);
-				}
-			}
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			if (step) {
-				step.status = "error";
-				step.error = message;
-			}
-			result.errors.push(`MNEE sweep: ${message}`);
-		}
-		if (step) step.detail = undefined;
-		completedUnits++;
 	}
 
 	emit("Sweep complete");
