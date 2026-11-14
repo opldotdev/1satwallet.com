@@ -118,7 +118,7 @@ export function OwnedOpns() {
 						{LISTING_CREATE_OFF_MESSAGE}
 					</p>
 					{!marketAvailable && !stackFeatures.isPending && (
-						<p className="mt-1 text-xs text-amber-300" role="status">
+						<p className="mt-1 text-xs text-warning" role="status">
 							Market capability is unavailable. Existing wallet OrdLock
 							cancellation remains available.
 						</p>

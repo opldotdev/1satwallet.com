@@ -371,7 +371,7 @@ export function Bsv21AuthorityManager({
 									className={`flex gap-2 rounded-md border p-3 text-sm ${
 										isPermanentTermination(review.kind)
 											? "border-destructive bg-destructive/10 text-destructive"
-											: "border-amber-500/40 bg-amber-500/5"
+											: "border-warning/40 bg-warning/5"
 									}`}
 								>
 									<AlertTriangle className="mt-0.5 size-4 shrink-0" />
