@@ -667,7 +667,7 @@ export function InscriptionStudio() {
 										<span>BAP/Sigma required by action</span>
 									</div>
 								)}
-								<div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+								<div className="rounded-md border border-warning/30 bg-warning/10 p-3">
 									Network fee and total are not quoted by the installed action.
 									The connected wallet calculates them and must ask for final
 									approval.

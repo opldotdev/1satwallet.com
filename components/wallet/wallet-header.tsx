@@ -43,7 +43,7 @@ export function WalletHeader() {
 			<div className="flex h-9 items-center gap-3 text-xs md:justify-end">
 				<span className="flex min-w-32 items-center gap-2" role="status">
 					<span
-						className={`size-1.5 shrink-0 rounded-full ${isInitialized ? "bg-emerald-500" : "bg-muted-foreground"}`}
+						className={`size-1.5 shrink-0 rounded-full ${isInitialized ? "bg-success" : "bg-muted-foreground"}`}
 					/>
 					{label}
 				</span>

@@ -156,7 +156,7 @@ function ConnectedWalletHome() {
 			</section>
 
 			{connectionMode === "built-in" && legacyBalance > 0 && (
-				<div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+				<div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
 					<div>
 						<p className="font-medium">Legacy balance found</p>
 						<p className="text-muted-foreground text-sm">
@@ -200,7 +200,7 @@ export function WalletHome() {
 		return initError ? (
 			<FailedWalletHome message={initError} />
 		) : (
-			<LoadingHome message="Unlock your wallet to continue." />
+			<LockedWalletHome external={false} />
 		);
 	}
 	return <WalletConnectCarousel />;
