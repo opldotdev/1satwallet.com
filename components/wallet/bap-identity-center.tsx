@@ -57,9 +57,11 @@ import {
 	BAP_DISCOVERY_PAGE_SIZE,
 	type BapAttestationReview,
 	type BapProfileDraft,
+	bapDisplayName,
 	buildBapAttestationReview,
 	hasProfileErrors,
 	identityActionMessage,
+	mergeBapProfile,
 	normalizeBapDiscovery,
 	profileDraftFromRecord,
 	validateBapProfile,
@@ -72,7 +74,7 @@ const PROFILE_FIELDS: Array<{
 	placeholder: string;
 }> = [
 	{ field: "name", label: "Name", placeholder: "Satoshi Nakamoto" },
-	{ field: "alternateName", label: "Handle", placeholder: "satoshi" },
+	{ field: "alternateName", label: "Display name", placeholder: "satoshi" },
 	{ field: "email", label: "Email", placeholder: "satoshi@example.com" },
 	{ field: "paymail", label: "Paymail", placeholder: "satoshi@1sat.app" },
 	{
@@ -114,16 +116,31 @@ function ProfileEditor({
 	const { oneSatContext, refreshBalance } = useWalletToolbox();
 	const queryClient = useQueryClient();
 	const stackFeatures = useStackFeatures();
-	const [draft, setDraft] = useState(() => profileDraftFromRecord(profile));
+	// What the editor opened with: a field still equal to it was not edited,
+	// so its published value is kept on save.
+	const [baseline, setBaseline] = useState(() =>
+		profileDraftFromRecord(profile),
+	);
+	const [draft, setDraft] = useState(baseline);
 	const [reviewOpen, setReviewOpen] = useState(false);
 	const [status, setStatus] = useState<ActionStatus>(null);
 	const [operation, setOperation] = useState<
 		"profile" | "publish" | "rotate" | null
 	>(null);
 	const validation = useMemo(() => validateBapProfile(draft), [draft]);
-	const profileEntries = Object.entries(validation.profile).filter(
-		([field]) => field !== "@type",
+	const reviewedRecord = useMemo(
+		() => mergeBapProfile(profile, baseline, draft),
+		[profile, baseline, draft],
 	);
+	const profileEntries = Object.entries(reviewedRecord)
+		.filter(([field]) => field !== "@type")
+		.map(
+			([field, value]) =>
+				[
+					field,
+					typeof value === "string" ? value : JSON.stringify(value),
+				] as const,
+		);
 
 	const invalidateIdentity = async () => {
 		await Promise.all([
@@ -140,10 +157,29 @@ function ProfileEditor({
 		setOperation("profile");
 		setStatus(null);
 		try {
+			// Merge over the record as published now, not as first loaded, so a
+			// field another client changed meanwhile is not overwritten.
+			const current = await getProfile.execute(oneSatContext, {});
+			if (current.error && !current.error.startsWith("no-profile:")) {
+				throw new Error("profile-read-failed");
+			}
+			const record = mergeBapProfile(current.profile, baseline, draft);
+			if (JSON.stringify(record) !== JSON.stringify(reviewedRecord)) {
+				setStatus({
+					kind: "error",
+					message:
+						"The published profile changed since you reviewed it. Nothing was sent; review it again.",
+				});
+				await onRefresh();
+				return;
+			}
 			const result = await updateProfile.execute(oneSatContext, {
-				profile: validation.profile,
+				profile: record,
 			});
 			if (result.error) throw new Error(result.error);
+			const saved = profileDraftFromRecord(record);
+			setBaseline(saved);
+			setDraft(saved);
 			let indexMessage = " The 1Sat BAP index has not been confirmed.";
 			if (stackFeatures.data?.features.identity && result.bapId) {
 				try {
@@ -381,7 +417,7 @@ function ProfileEditor({
 						<DialogTitle>Review public profile transaction</DialogTitle>
 						<DialogDescription>
 							The active wallet will sign, fund, and broadcast these exact
-							public fields.
+							public fields. Published fields this page does not edit are kept.
 						</DialogDescription>
 					</DialogHeader>
 					<dl className="max-h-72 space-y-3 overflow-auto rounded-md border p-3 text-sm">
@@ -700,9 +736,7 @@ function DiscoveryPanel() {
 							<div className="flex flex-wrap items-center gap-2">
 								<BadgeCheck className="h-4 w-4" />
 								<strong>
-									{identity.name ??
-										identity.alternateName ??
-										"Indexed BAP identity"}
+									{bapDisplayName(identity) ?? "Indexed BAP identity"}
 								</strong>
 							</div>
 							<p className="mt-1 break-all font-mono text-muted-foreground text-xs">

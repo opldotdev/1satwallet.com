@@ -33,6 +33,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { useSound } from "@/hooks/use-sound";
 import { CURRENCY_KEY, PRIVACY_MODE_KEY } from "@/lib/constants";
+import { walletStorageHost } from "@/lib/wallet/storage-endpoint";
 import { useSettingsStorage } from "@/lib/wallet-storage";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -45,7 +46,9 @@ export function WalletSettingsForm() {
 		connectionMode,
 		providerType,
 		disconnectExternalWallet,
+		chain,
 	} = useWalletToolbox();
+	const storageHost = walletStorageHost(chain);
 	const [isPrivacyModeEnabled, setIsPrivacyModeEnabled] =
 		useSettingsStorage<boolean>(PRIVACY_MODE_KEY, false);
 	const [currency, setCurrency] = useSettingsStorage<string>(
@@ -78,6 +81,24 @@ export function WalletSettingsForm() {
 						</div>
 					</div>
 				</CardHeader>
+				{connectionMode === "built-in" && (
+					<CardContent>
+						<div className="flex flex-col space-y-1">
+							<Label className="text-base">Wallet Storage</Label>
+							<span className="text-sm text-muted-foreground">
+								{storageHost ? (
+									<>
+										Active store:{" "}
+										<code className="break-all font-mono">{storageHost}</code>.
+										A copy in this browser is kept in sync as a backup.
+									</>
+								) : (
+									"Active store: this browser."
+								)}
+							</span>
+						</div>
+					</CardContent>
+				)}
 				{connectionMode === "external" && (
 					<CardContent>
 						<Button

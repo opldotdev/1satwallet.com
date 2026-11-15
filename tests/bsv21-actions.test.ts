@@ -201,6 +201,18 @@ describe("canonical BSV21 action dispatch", () => {
 			bsv21ActionFailureMessage("overlay-validation-failed"),
 			/changed/,
 		);
+		assert.match(
+			bsv21ActionFailureMessage(new Error("tokens-queued")),
+			/haven't been checked[\s\S]*try again in a few minutes/,
+		);
+		assert.match(
+			bsv21ActionFailureMessage("token-not-active"),
+			/overlay that checks this token isn't funded/,
+		);
+		assert.match(
+			bsv21ActionFailureMessage("insufficient-valid-tokens"),
+			/could be verified by the overlay/,
+		);
 		const opaque = bsv21ActionFailureMessage({ seed: "never display" });
 		assert.match(opaque, /failed/);
 		assert.doesNotMatch(opaque, /seed|never display/);

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	bapDisplayName,
 	buildBapAttestationReview,
 	identityActionMessage,
 	isSafePublicImageUrl,
+	mergeBapProfile,
 	normalizeBapDiscovery,
 	profileDraftFromRecord,
 	validateBapProfile,
@@ -156,4 +158,73 @@ test("wallet rejection messages never echo provider payloads", () => {
 		"The wallet did not authorize this request. Nothing was changed.",
 	);
 	assert.doesNotMatch(message, /super-secret/);
+});
+
+test("profile save keeps published fields the editor does not edit", () => {
+	const published = {
+		"@context": "https://schema.org",
+		"@type": "Person",
+		name: "Alice",
+		alternateName: "alice",
+		image: { "@type": "ImageObject", url: "https://example.com/a.png" },
+		banner: `1sat://${"ef".repeat(32)}_0`,
+		logo: "https://example.com/logo.png",
+		url: "https://alice.example",
+		sameAs: ["https://x.com/alice"],
+		email: "alice@example.com",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = {
+		...baseline,
+		alternateName: "Alice B",
+		description: "Builder",
+		email: "",
+	};
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		"@context": "https://schema.org",
+		"@type": "Person",
+		name: "Alice",
+		alternateName: "Alice B",
+		description: "Builder",
+		image: { "@type": "ImageObject", url: "https://example.com/a.png" },
+		banner: `1sat://${"ef".repeat(32)}_0`,
+		logo: "https://example.com/logo.png",
+		url: "https://alice.example",
+		sameAs: ["https://x.com/alice"],
+	});
+});
+
+test("profile save keeps fields another client changed after the editor opened", () => {
+	const opened = { "@type": "Person", name: "Alice", alternateName: "alice" };
+	const baseline = profileDraftFromRecord(opened);
+	const current = { ...opened, name: "Alice Cooper", banner: "https://b.png" };
+	const draft = { ...baseline, description: "Hi" };
+	assert.deepEqual(mergeBapProfile(current, baseline, draft), {
+		"@type": "Person",
+		name: "Alice Cooper",
+		alternateName: "alice",
+		banner: "https://b.png",
+		description: "Hi",
+	});
+	assert.deepEqual(mergeBapProfile(undefined, baseline, draft), {
+		"@type": "Person",
+		description: "Hi",
+	});
+});
+
+test("profile save ignores a non-object published alias", () => {
+	const baseline = profileDraftFromRecord(undefined);
+	const draft = { ...baseline, name: "Alice" };
+	for (const legacy of ["hello", ["a", "b"], 42]) {
+		assert.deepEqual(mergeBapProfile(legacy, baseline, draft), {
+			"@type": "Person",
+			name: "Alice",
+		});
+	}
+});
+
+test("display name prefers alternateName, then name", () => {
+	assert.equal(bapDisplayName({ name: "Alice", alternateName: "ali" }), "ali");
+	assert.equal(bapDisplayName({ name: "Alice", alternateName: " " }), "Alice");
+	assert.equal(bapDisplayName({}), undefined);
 });
