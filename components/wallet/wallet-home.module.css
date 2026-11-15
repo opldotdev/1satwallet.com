@@ -1,5 +1,4 @@
 .home {
-	font-family: var(--font-mono);
 	display: flex;
 	flex-direction: column;
 	gap: 24px;
@@ -30,6 +29,7 @@
 	color: var(--muted-foreground);
 }
 .amount {
+	font-family: var(--font-mono);
 	display: flex;
 	flex-wrap: wrap;
 	align-items: baseline;
@@ -63,7 +63,6 @@
 	background: var(--muted);
 	color: var(--foreground);
 	border: 0;
-	border-radius: 4px;
 	font-size: 14px;
 	gap: 12px;
 }
@@ -72,16 +71,15 @@
 }
 .action svg,
 .accent {
-	color: var(--primary);
+	color: var(--brand);
 	filter: drop-shadow(
-		0 0 5px color-mix(in srgb, var(--primary) 17%, transparent)
+		0 0 5px color-mix(in srgb, var(--brand) 17%, transparent)
 	);
 }
 .accent {
-	width: 23px;
-	height: 23px;
+	width: 20px;
+	height: 20px;
 	flex-shrink: 0;
-	stroke-width: 1.6;
 }
 .details {
 	display: grid;
@@ -130,7 +128,7 @@
 }
 .assetRow:hover h3,
 .activity:hover h3 {
-	color: var(--primary);
+	color: var(--brand);
 }
 .connection {
 	grid-column: 2;
@@ -147,6 +145,7 @@
 	padding: 14px 0;
 }
 .taskStatus {
+	font-family: var(--font-mono);
 	color: var(--muted-foreground);
 	font-size: 10px;
 }
@@ -185,6 +184,7 @@
 	padding: 24px 0 0;
 }
 .identity code {
+	font-family: var(--font-mono);
 	margin-left: auto;
 	font-size: 12px;
 	color: var(--muted-foreground);

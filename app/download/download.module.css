@@ -81,7 +81,7 @@
 	align-items: center;
 	gap: 13px;
 	border-radius: 999px;
-	background: #ffd600;
+	background: #f0bb00;
 	color: #050505;
 	padding: 16px 32px;
 	min-height: 58px;
@@ -218,7 +218,7 @@
 	font-size: 16px;
 }
 .warning {
-	color: #ffd600;
+	color: #f0bb00;
 	margin: 0 auto 20px;
 }
 .close {
@@ -248,11 +248,11 @@
 .notice:focus-visible,
 .close:focus-visible,
 .confirm:focus-visible {
-	outline: 2px solid #ffd600;
+	outline: 2px solid #f0bb00;
 	outline-offset: 5px;
 }
 .primary:hover {
-	background: #ffe033;
+	background: #ffcc1a;
 }
 .notice:hover {
 	background: #191919;

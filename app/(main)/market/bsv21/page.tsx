@@ -48,7 +48,7 @@ export default async function MarketBSV21Page({
 					</p>
 				) : null}
 			</form>
-			<div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+			<div className="rounded-md border border-warning/40 bg-warning/5 p-4 text-sm">
 				<p className="font-medium">
 					Registry browsing is temporarily unavailable
 				</p>

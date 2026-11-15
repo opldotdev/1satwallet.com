@@ -36,8 +36,8 @@
 	left: 0;
 	right: 0;
 	height: 2px;
-	background: var(--primary);
-	box-shadow: 0 0 9px color-mix(in srgb, var(--primary) 25%, transparent);
+	background: var(--brand);
+	box-shadow: 0 0 9px color-mix(in srgb, var(--brand) 25%, transparent);
 }
 .trigger:focus-visible {
 	outline: 2px solid var(--ring);

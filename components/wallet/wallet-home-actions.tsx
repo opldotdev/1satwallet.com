@@ -84,8 +84,7 @@ export function WalletHomeActions() {
 		if (destination.includes("@")) {
 			setSendState({
 				status: "error",
-				message:
-					"Paymail sends are blocked on OPL-4014 and OPL-4015 while payment outputs and delivery failures are hardened.",
+				message: "Paymail addresses aren't supported yet. Enter a BSV address.",
 			});
 			return;
 		}
@@ -235,7 +234,7 @@ export function WalletHomeActions() {
 					showCloseButton={sendState.status !== "success"}
 					className={
 						sendState.status === "success"
-							? "pay-success-card max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl bg-popover p-6 text-center sm:p-8 [--primary:var(--chart-1)] [--primary-foreground:var(--foreground)] dark:[--primary:var(--ring)] dark:[--primary-foreground:var(--background)]"
+							? "pay-success-card max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-3xl bg-popover p-6 text-center sm:p-8"
 							: undefined
 					}
 				>
@@ -252,17 +251,17 @@ export function WalletHomeActions() {
 							<PaySuccessMark />
 							<div className="pay-success-copy space-y-2">
 								<DialogTitle className="font-bold text-2xl text-foreground leading-tight">
-									Payment Successful
+									Payment sent
 								</DialogTitle>
 								<DialogDescription className="text-muted-foreground text-sm">
-									Your payment has been processed.
+									It will confirm shortly.
 								</DialogDescription>
 								<p className="pt-2 font-bold text-3xl text-foreground break-all">
 									{formatSatoshisAsBsv(sendState.satoshis)} BSV
 								</p>
 							</div>
 							<DialogClose asChild>
-								<Button className="h-14 w-full rounded-full bg-primary font-bold text-primary-foreground">
+								<Button className="h-14 w-full rounded-full bg-brand font-bold text-brand-foreground hover:bg-brand/90">
 									Done
 								</Button>
 							</DialogClose>
@@ -303,8 +302,7 @@ export function WalletHomeActions() {
 								</div>
 							</dl>
 							<p className="text-muted-foreground text-xs">
-								The installed standard payment action does not expose a fee
-								quote before it broadcasts.
+								The network fee is added when the payment is sent.
 							</p>
 							<div className="grid grid-cols-2 gap-2">
 								<Button
@@ -363,9 +361,7 @@ export function WalletHomeActions() {
 								</div>
 							)}
 							<p className="text-muted-foreground text-xs">
-								P2PKH addresses only. Paymail is blocked on OPL-4014 and
-								OPL-4015; the installed SDK has no identity-to-payment
-								resolution contract.
+								BSV addresses only. Paymail isn't supported yet.
 							</p>
 							<Button
 								className="w-full"

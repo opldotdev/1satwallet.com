@@ -29,7 +29,6 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { LegacySweepBanner } from "@/components/wallet/legacy-sweep-banner";
-import { UnlockWalletDialog } from "@/components/wallet/unlock-wallet-dialog";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { useSound } from "@/hooks/use-sound";
 import { PRIVACY_MODE_KEY } from "@/lib/constants";
@@ -59,7 +58,6 @@ const navData: Array<{
 			{
 				title: "Identity",
 				url: "/wallet/identity",
-				shortcut: "g i",
 				feature: "identity",
 			},
 			{
@@ -104,7 +102,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 		PRIVACY_MODE_KEY,
 		false,
 	);
-	const [isUnlockDialogOpen, setIsUnlockDialogOpen] = useState(false);
 	const [, copy] = useCopyWithSound();
 	const { play } = useSound();
 	const { isMobile, setOpenMobile } = useSidebar();
@@ -168,7 +165,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 				<SidebarHeader className="p-4 pb-0">
 					<div className="flex flex-col items-center justify-center h-24 text-muted-foreground">
 						<Loader2 className="h-6 w-6 animate-spin" />
-						<p className="text-sm mt-2">Loading Wallet...</p>
+						<p className="text-sm mt-2">Loading wallet…</p>
 					</div>
 				</SidebarHeader>
 				<SidebarContent>
@@ -238,7 +235,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 						onClick={handleNav}
 					>
 						<span className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-							Total Balance
+							Spendable balance
 							{isSyncing && <Loader2 className="h-3 w-3 animate-spin" />}
 						</span>
 						<div className="flex items-baseline gap-2">
@@ -246,10 +243,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 								{isExternal && !hasWalletBalance
 									? "Provider-managed"
 									: isPrivacyModeEnabled
-										? "*****"
+										? "••••••••"
 										: usdBalance
 											? `$${usdBalance.toFixed(2)}`
-											: "$ ---"}
+											: "—"}
 							</span>
 							{(!isExternal || hasWalletBalance) && (
 								<span className="text-sm text-muted-foreground">USD</span>
@@ -259,7 +256,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 							{isExternal && !hasWalletBalance
 								? "Balance stays in the connected wallet"
 								: isPrivacyModeEnabled
-									? "*****"
+									? "••••••••"
 									: `${bsvBalance.toFixed(8)} BSV`}
 						</span>
 					</Link>
@@ -293,7 +290,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 										</Button>
 									</TooltipTrigger>
 									<TooltipContent>
-										<p>{copiedAddress ? "Copied!" : "Copy Address"}</p>
+										<p>{copiedAddress ? "Copied!" : "Copy address"}</p>
 									</TooltipContent>
 								</Tooltip>
 							</TooltipProvider>
@@ -360,10 +357,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 				/>
 			</SidebarFooter>
 			<SidebarRail />
-			<UnlockWalletDialog
-				open={isUnlockDialogOpen}
-				onOpenChange={setIsUnlockDialogOpen}
-			/>
 		</Sidebar>
 	);
 }

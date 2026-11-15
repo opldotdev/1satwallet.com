@@ -251,7 +251,7 @@ export function MnemonicGrid({
 									className={`font-mono max-w-48 ${
 										hasInput
 											? isCorrect
-												? "border-green-600 focus-visible:ring-green-600/50"
+												? "border-success focus-visible:ring-success/50"
 												: "border-destructive focus-visible:ring-destructive/50"
 											: ""
 									}`}
@@ -259,7 +259,7 @@ export function MnemonicGrid({
 									spellCheck={false}
 								/>
 								{hasInput && isCorrect && (
-									<Check className="h-4 w-4 text-green-600 shrink-0" />
+									<Check className="h-4 w-4 text-success shrink-0" />
 								)}
 							</div>
 						);

@@ -210,7 +210,7 @@ function PermissionCard({
 	return (
 		<Card className="w-full max-w-sm">
 			<CardHeader className="text-center space-y-1">
-				<ShieldAlert className="h-10 w-10 mx-auto text-amber-500 mb-2" />
+				<ShieldAlert className="h-10 w-10 mx-auto text-warning mb-2" />
 				<CardTitle className="text-lg">Permission Request</CardTitle>
 				<CardDescription className="truncate">
 					{permission.originator}
@@ -260,7 +260,7 @@ function PermissionCard({
 					</p>
 				)}
 				{suspiciousSpendingDescription && (
-					<p className="text-sm text-amber-600">
+					<p className="text-sm text-warning">
 						Warning: the description contains a satoshi amount that conflicts
 						with the structured total above.
 					</p>
@@ -367,7 +367,7 @@ function GroupedPermissionCard({
 	return (
 		<Card className="w-full max-w-sm">
 			<CardHeader className="text-center space-y-1">
-				<ShieldAlert className="h-10 w-10 mx-auto text-amber-500 mb-2" />
+				<ShieldAlert className="h-10 w-10 mx-auto text-warning mb-2" />
 				<CardTitle className="text-lg">App Permissions</CardTitle>
 				<CardDescription className="truncate">
 					{permission.originator}
@@ -410,7 +410,7 @@ function GroupedPermissionCard({
 					</p>
 				)}
 				{suspiciousSpendingDescription && (
-					<p className="text-sm text-amber-600">
+					<p className="text-sm text-warning">
 						Warning: the spending description conflicts with its structured
 						monthly limit.
 					</p>
@@ -513,7 +513,7 @@ function CounterpartyPermissionCard({
 	return (
 		<Card className="w-full max-w-sm">
 			<CardHeader className="text-center space-y-1">
-				<ShieldAlert className="h-10 w-10 mx-auto text-amber-500 mb-2" />
+				<ShieldAlert className="h-10 w-10 mx-auto text-warning mb-2" />
 				<CardTitle className="text-lg">Counterparty Access</CardTitle>
 				<CardDescription className="truncate">
 					{permission.originator}

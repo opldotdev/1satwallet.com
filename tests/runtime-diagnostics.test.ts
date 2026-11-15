@@ -26,7 +26,6 @@ describe("runtime diagnostics", () => {
 			"providers/wallet-toolbox-provider.tsx",
 			"components/wallet-bridge.tsx",
 			"components/app-sidebar.tsx",
-			"components/wallet/transaction-timeline.tsx",
 			"app/(main)/inscribe/page.tsx",
 			"app/(main)/wallet/opns/page.tsx",
 			"app/(main)/wallet/permissions/page.tsx",

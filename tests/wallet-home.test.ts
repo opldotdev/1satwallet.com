@@ -71,8 +71,9 @@ describe("wallet home amount parsing", () => {
 		assert.match(source, /sendBsv\.execute\(oneSatContext/);
 		assert.match(source, /queryKey: \["wallet-actions"\]/);
 		assert.match(source, /refreshBalance\(\)/);
-		assert.match(source, /OPL-4014/);
-		assert.match(source, /OPL-4015/);
+		assert.match(source, /destination\.includes\("@"\)/);
+		assert.match(source, /Paymail isn't supported yet/);
+		assert.doesNotMatch(source, /OPL-\d+/);
 	});
 });
 
@@ -94,7 +95,7 @@ describe("payment success presentation", () => {
 		const source = read("components/wallet/wallet-home-actions.tsx");
 		assert.match(source, /<PaySuccessMark/);
 		assert.doesNotMatch(source, /text-emerald-500|<Check\b/);
-		assert.match(source, /bg-primary[^\n]*text-primary-foreground/);
+		assert.match(source, /bg-brand[^\n]*text-brand-foreground/);
 		assert.match(source, /<DialogClose asChild>[\s\S]*?Done/);
 		assert.match(source, /formatSatoshisAsBsv\(sendState.satoshis\)/);
 	});

@@ -21,16 +21,16 @@ export const PAY_SUCCESS_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox=
   <circle class="disk" cx="110" cy="110" r="48" fill="currentColor"/>
   <path class="check" d="M88 110 L103 125 L133 95" pathLength="1" fill="none" stroke="white" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
   <g transform="translate(110 110)" fill="none" stroke-width="4" stroke-linecap="round">
-    <g transform="rotate(-90)" stroke="var(--primary)"><path class="tick" d="M0 0 H10"/></g>
+    <g transform="rotate(-90)" stroke="var(--brand)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(-54)" stroke="var(--chart-3)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(-18)" stroke="var(--chart-4)"><path class="tick" d="M0 0 H10"/></g>
-    <g transform="rotate(18)" stroke="var(--primary)"><path class="tick" d="M0 0 H10"/></g>
+    <g transform="rotate(18)" stroke="var(--brand)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(54)" stroke="var(--chart-3)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(90)" stroke="var(--chart-4)"><path class="tick" d="M0 0 H10"/></g>
-    <g transform="rotate(126)" stroke="var(--primary)"><path class="tick" d="M0 0 H10"/></g>
+    <g transform="rotate(126)" stroke="var(--brand)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(162)" stroke="var(--chart-3)"><path class="tick" d="M0 0 H10"/></g>
     <g transform="rotate(198)" stroke="var(--chart-4)"><path class="tick" d="M0 0 H10"/></g>
-    <g transform="rotate(234)" stroke="var(--primary)"><path class="tick" d="M0 0 H10"/></g>
+    <g transform="rotate(234)" stroke="var(--brand)"><path class="tick" d="M0 0 H10"/></g>
   </g>
 </svg>`;
 
