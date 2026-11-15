@@ -73,6 +73,7 @@ import {
 	providerCapability,
 	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
+import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
 import {
 	diagnoseNoWalletResult,
 	statusAfterDisconnect,
@@ -818,12 +819,7 @@ export function WalletToolboxProvider({
 				const storageIdentityKey =
 					await loadOrCreateWalletStorageIdentity(chain);
 
-				// wallet.1sat.app is the hosted BRC-100 storage server (the old
-				// api.1sat.app/1sat/wallet URL 404s, and wallet-browser >=0.0.7x
-				// verifies the storage connection eagerly at init)
-				const activeRemote =
-					process.env.NEXT_PUBLIC_WALLET_STORAGE_URL ||
-					(chain === "main" ? "https://wallet.1sat.app" : undefined);
+				const activeRemote = walletStorageUrl(chain);
 				const result = await createWebWallet({
 					privateKey: rootKey,
 					chain,

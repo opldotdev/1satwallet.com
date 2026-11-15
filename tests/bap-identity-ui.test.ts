@@ -56,3 +56,22 @@ describe("bap live-region hygiene", () => {
 		);
 	});
 });
+
+describe("bap profile editor", () => {
+	it("labels alternateName as the display name and shows it first", () => {
+		assert.match(bapSource, /field: "alternateName", label: "Display name"/);
+		assert.doesNotMatch(bapSource, /label: "Handle"/);
+		assert.match(bapSource, /bapDisplayName\(identity\)/);
+	});
+	it("merges edits over a fresh read of the published profile before saving", () => {
+		const save = bapSource.slice(
+			bapSource.indexOf("const saveProfile"),
+			bapSource.indexOf("const publish ="),
+		);
+		assert.match(save, /getProfile\.execute[\s\S]*mergeBapProfile/);
+		assert.match(
+			save,
+			/updateProfile\.execute\(oneSatContext, \{\s*profile: record,/,
+		);
+	});
+});

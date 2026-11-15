@@ -108,6 +108,45 @@ export function validateBapProfile(
 	return { profile, errors };
 }
 
+/**
+ * The record to publish: the currently published profile with the editor's
+ * changes laid over it. `updateProfile` writes the object it is given whole,
+ * so keys this editor does not show (banner, logo, url, sameAs, `@context`,
+ * anything another client published) must be carried over. A field whose
+ * draft still matches `baseline` (what the editor opened with) keeps its
+ * published value, whatever its JSON type. A changed field left empty is
+ * removed. This matches the iOS app's and Sigma's publish merge.
+ */
+export function mergeBapProfile(
+	published: unknown,
+	baseline: BapProfileDraft,
+	draft: BapProfileDraft,
+): Record<string, unknown> {
+	// A legacy ALIAS can decode to a plain string or array; only merge objects.
+	const record: Record<string, unknown> =
+		published !== null &&
+		typeof published === "object" &&
+		!Array.isArray(published)
+			? { ...(published as Record<string, unknown>) }
+			: {};
+	if (typeof record["@type"] !== "string") record["@type"] = "Person";
+	const { profile } = validateBapProfile(draft);
+	for (const field of Object.keys(FIELD_LIMITS) as (keyof BapProfileDraft)[]) {
+		if (draft[field].trim() === baseline[field].trim()) continue;
+		if (profile[field]) record[field] = profile[field];
+		else delete record[field];
+	}
+	return record;
+}
+
+/** Preferred public name: `alternateName`, then `name` (Sigma's order). */
+export function bapDisplayName(profile: {
+	name?: string;
+	alternateName?: string;
+}): string | undefined {
+	return profile.alternateName?.trim() || profile.name?.trim() || undefined;
+}
+
 export function hasProfileErrors(
 	errors: ValidatedBapProfile["errors"],
 ): boolean {

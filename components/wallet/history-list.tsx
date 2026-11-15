@@ -1,23 +1,29 @@
 "use client";
 
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
 	ACTION_HISTORY_PAGE_SIZE,
 	type ActionHistoryState,
 	actionAmountLabel,
+	actionBlockTimes,
 	actionExplorerUrl,
 	actionHistoryForIdentity,
 	actionReferenceLabel,
+	actionTimeLabel,
 	listActionHistoryPage,
+	orderActionsNewestFirst,
 	ordinaryActionLabels,
 } from "@/lib/wallet/action-history";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
+const NO_BLOCK_TIMES: ReadonlyMap<string, number> = new Map();
+
 const HistoryList = () => {
-	const { chain, identityKey, isInitialized, wallet } = useWalletToolbox();
+	const { chain, identityKey, isInitialized, services, wallet } =
+		useWalletToolbox();
 	const [history, setHistory] = useState<ActionHistoryState>({
 		identityKey: null,
 		actions: null,
@@ -26,6 +32,10 @@ const HistoryList = () => {
 	});
 	const [pagination, setPagination] = useState({ identityKey, page: 0 });
 	const [refreshRevision, setRefreshRevision] = useState(0);
+	const [blockTimes, setBlockTimes] = useState<{
+		actions: ActionHistoryState["actions"];
+		times: ReadonlyMap<string, number>;
+	}>({ actions: null, times: NO_BLOCK_TIMES });
 	const requestSequence = useRef(0);
 	const requestId = useRef("");
 	const page = pagination.identityKey === identityKey ? pagination.page : 0;
@@ -42,7 +52,7 @@ const HistoryList = () => {
 		}
 
 		setHistory({ identityKey, actions: null, totalActions: 0, error: null });
-		void listActionHistoryPage(wallet, page * ACTION_HISTORY_PAGE_SIZE).then(
+		void listActionHistoryPage(wallet, page).then(
 			(result) => {
 				if (requestId.current !== currentRequest) return;
 				setHistory({
@@ -67,6 +77,24 @@ const HistoryList = () => {
 			requestId.current = "cancelled";
 		};
 	}, [identityKey, isInitialized, page, refreshRevision, wallet]);
+
+	useEffect(() => {
+		if (!services || !actions?.length) return;
+		let cancelled = false;
+		void actionBlockTimes(services, actions).then((times) => {
+			if (!cancelled) setBlockTimes({ actions, times });
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [actions, services]);
+
+	const times =
+		blockTimes.actions === actions ? blockTimes.times : NO_BLOCK_TIMES;
+	const orderedActions = useMemo(
+		() => (actions ? orderActionsNewestFirst(actions, times) : null),
+		[actions, times],
+	);
 
 	if (!wallet) {
 		return (
@@ -152,9 +180,11 @@ const HistoryList = () => {
 				</Button>
 			</div>
 			<ul className="flex flex-col divide-y divide-border/60">
-				{actions.map((action) => {
+				{(orderedActions ?? actions).map((action) => {
 					const explorerUrl = actionExplorerUrl(action.txid, chain);
 					const referenceLabel = actionReferenceLabel(action);
+					const time = times.get(action.txid);
+					const timeLabel = actionTimeLabel(action, time);
 					return (
 						<li
 							key={action.txid}
@@ -162,6 +192,23 @@ const HistoryList = () => {
 						>
 							<div className="min-w-0 flex-1">
 								<div className="text-sm">{action.description}</div>
+								{timeLabel && (
+									<time
+										className="block text-xs text-muted-foreground"
+										dateTime={
+											time === undefined
+												? undefined
+												: new Date(time).toISOString()
+										}
+										title={
+											time === undefined
+												? undefined
+												: new Date(time).toLocaleString()
+										}
+									>
+										{timeLabel}
+									</time>
+								)}
 								{explorerUrl ? (
 									<a
 										href={explorerUrl}

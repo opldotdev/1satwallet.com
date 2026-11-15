@@ -97,9 +97,22 @@ export function parseBsv21Destination(
 	}
 }
 
+// `sendBsv21` with `validateOverlay` returns these codes as `result.error`.
+// Copy follows the iOS app's Bsv21OverlayIssue (after yours-wallet).
+const BSV21_OVERLAY_MESSAGES: Record<string, string> = {
+	"tokens-queued":
+		"These tokens haven't been checked by the token overlay yet. Nothing was sent; try again in a few minutes.",
+	"token-not-active":
+		"The overlay that checks this token isn't funded, so your tokens can't be checked before sending. Nothing was sent.",
+	"insufficient-valid-tokens":
+		"Not enough of your tokens could be verified by the overlay to cover this transfer. Nothing was sent.",
+};
+
 export function bsv21ActionFailureMessage(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
 	const normalized = message.toLowerCase();
+	const overlayMessage = BSV21_OVERLAY_MESSAGES[normalized.trim()];
+	if (overlayMessage) return overlayMessage;
 	if (
 		normalized.includes("denied") ||
 		normalized.includes("reject") ||

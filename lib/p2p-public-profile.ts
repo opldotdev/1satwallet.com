@@ -1,6 +1,7 @@
 import { getProfile, type OneSatContext } from "@1sat/actions";
 import { createStackServices } from "@/lib/stack";
 import {
+	bapDisplayName,
 	hasControlCharacter,
 	isSafePublicImageUrl,
 	profileDraftFromRecord,
@@ -41,7 +42,7 @@ export async function publicProfileClaimFromWallet(
 	const result = await getProfile.execute(ctx, {});
 	if (result.error) return undefined;
 	const draft = profileDraftFromRecord(result.profile);
-	const displayName = publicDisplayName(draft.name || draft.alternateName);
+	const displayName = publicDisplayName(bapDisplayName(draft) ?? "");
 	const avatarUrl = publicAvatarUrl(draft.image, ctx.chain ?? "main");
 	if (!displayName && !avatarUrl) return undefined;
 	return {

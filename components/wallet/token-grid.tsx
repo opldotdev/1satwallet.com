@@ -128,11 +128,11 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 				getBsv21Balances.execute(oneSatContext, {}),
 			]);
 			const current = balances.find((item) => item.id === token.id);
-			if (
-				!details.status?.is_active ||
-				!current ||
-				BigInt(current.amt) < amount
-			) {
+			if (!details.status?.is_active) {
+				setReviewAmount(null);
+				throw new Error("token-not-active");
+			}
+			if (!current || BigInt(current.amt) < amount) {
 				setReviewAmount(null);
 				throw new Error(
 					"The indexed token balance changed. Refresh and review again.",
