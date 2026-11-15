@@ -41,6 +41,7 @@ export function OrdinalsGrid() {
 		isBalanceLoading,
 		identityKey,
 		refreshBalance,
+		chain,
 	} = useWalletToolbox();
 	const [selectedOutpoints, setSelectedOutpoints] = useState<Set<string>>(
 		new Set(),
@@ -205,7 +206,11 @@ export function OrdinalsGrid() {
 					{ordinals.map((ordinal: WalletOutput) => {
 						const outpoint = getDisplayOutpoint(ordinal);
 						const metadata = metadataQuery.data?.[`${outpoint}:-2`];
-						const presentation = getOrdinalPresentation(ordinal, metadata);
+						const presentation = getOrdinalPresentation(
+							ordinal,
+							metadata,
+							chain,
+						);
 						const selected = selectedOutpoints.has(ordinal.outpoint);
 						const actionable = !!ordinalAssetId(ordinal);
 						return (
@@ -225,6 +230,7 @@ export function OrdinalsGrid() {
 											name: presentation.name,
 											previewUrl: presentation.artworkUrl,
 											externalUrl: presentation.href,
+											chain,
 										})
 									}
 								>

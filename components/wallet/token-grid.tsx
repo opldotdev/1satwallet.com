@@ -20,6 +20,7 @@ import {
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
 import { useSound } from "@/hooks/use-sound";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
@@ -177,11 +178,26 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 		token.id,
 	]);
 
+	const marketHref = `/market/bsv21/${token.id}`;
+	const summary = (
+		<>
+			<div className="flex items-center gap-2">
+				<span className="font-semibold text-foreground">{ticker}</span>
+				<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs uppercase">
+					BSV21
+				</span>
+			</div>
+			<div className="truncate text-muted-foreground text-sm">
+				{formatBsv21Amount(token.amt, token.dec)} tokens
+			</div>
+		</>
+	);
+
 	return (
 		<div className="group flex items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50">
 			<div className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-muted">
 				<Image
-					src={token.icon || getOrdinalThumbnail(token.id, 100)}
+					src={token.icon || getOrdinalThumbnail(token.id, 100, chain)}
 					alt=""
 					fill
 					sizes="48px"
@@ -189,21 +205,17 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 					unoptimized
 				/>
 			</div>
-			<Link
-				className="min-w-0 flex-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				href={`/market/bsv21/${token.id}`}
-				onClick={() => play("click")}
-			>
-				<div className="flex items-center gap-2">
-					<span className="font-semibold text-foreground">{ticker}</span>
-					<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs uppercase">
-						BSV21
-					</span>
-				</div>
-				<div className="truncate text-muted-foreground text-sm">
-					{formatBsv21Amount(token.amt, token.dec)} tokens
-				</div>
-			</Link>
+			{isRouteAvailableOn(chain, marketHref) ? (
+				<Link
+					className="min-w-0 flex-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					href={`/market/bsv21/${token.id}`}
+					onClick={() => play("click")}
+				>
+					{summary}
+				</Link>
+			) : (
+				<div className="min-w-0 flex-1">{summary}</div>
+			)}
 			<div className="hidden max-w-24 truncate font-mono text-muted-foreground text-xs sm:block">
 				{token.id.slice(0, 8)}…
 			</div>

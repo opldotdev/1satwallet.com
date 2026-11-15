@@ -35,7 +35,9 @@ import {
 } from "@/components/ui/tooltip";
 import { useSound } from "@/hooks/use-sound";
 import { useSoundSettings } from "@/hooks/use-sound-settings";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import type { StackFeature } from "@/lib/stack-features";
 
 // Custom 1Sat Icon in Lucide style
@@ -173,6 +175,13 @@ export function LeftSidebar({
 	const { play } = useSound();
 	const { muted, toggleMuted } = useSoundSettings();
 	const featuresQuery = useStackFeatures();
+	const chain = useWalletChain();
+	const groups = navData
+		.map((group) => ({
+			...group,
+			items: group.items.filter((item) => isRouteAvailableOn(chain, item.url)),
+		}))
+		.filter((group) => group.items.length > 0);
 
 	return (
 		<Sidebar {...props}>
@@ -208,7 +217,7 @@ export function LeftSidebar({
 
 			<SidebarContent>
 				<nav aria-label="Application navigation">
-					{navData.map((group) => (
+					{groups.map((group) => (
 						<SidebarGroup key={group.title}>
 							<SidebarGroupLabel>{group.title}</SidebarGroupLabel>
 

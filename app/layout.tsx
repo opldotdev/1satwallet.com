@@ -8,8 +8,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { WalletBridge } from "@/components/wallet-bridge";
 import { QueryProvider } from "@/providers/query-provider";
+import { WalletChainProvider } from "@/providers/wallet-chain-provider";
 import { WalletProvider } from "@/providers/wallet-provider";
-import { WalletToolboxProvider } from "@/providers/wallet-toolbox-provider";
 import { ConvexClientProvider } from "./ConvexClientProvider";
 import "./globals.css";
 import "./animations.css";
@@ -96,11 +96,11 @@ export default function RootLayout({
 						<ThemeTokenProvider>
 							<QueryProvider>
 								<WalletProvider>
-									<WalletToolboxProvider>
+									<WalletChainProvider>
 										<KeyboardShortcuts />
 										<WalletBridge>{children}</WalletBridge>
 										<Toaster position="bottom-right" />
-									</WalletToolboxProvider>
+									</WalletChainProvider>
 								</WalletProvider>
 							</QueryProvider>
 						</ThemeTokenProvider>

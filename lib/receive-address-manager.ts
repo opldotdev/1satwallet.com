@@ -6,6 +6,7 @@ import {
 	BRC29_PROTOCOL_ID,
 } from "@1sat/wallet-browser";
 import { PublicKey, Utils, type WalletInterface } from "@bsv/sdk";
+import type { Chain } from "@/lib/chain-endpoints";
 import type { ReceiveAddressState } from "@/lib/receive-address-state";
 
 export const RECEIVE_ADDRESS_PREFIX = "1sat";
@@ -13,6 +14,8 @@ export const RECEIVE_ADDRESS_WINDOW = 5;
 
 interface DeriveAddressArgs {
 	wallet: WalletInterface;
+	/** The address format: 1… on main, m/n… on test. */
+	chain: Chain;
 	identityKey: string;
 	index: number;
 	prefix?: string;
@@ -21,6 +24,7 @@ interface DeriveAddressArgs {
 
 interface BuildManagerArgs {
 	wallet: WalletInterface;
+	chain: Chain;
 	identityKey: string;
 	state: ReceiveAddressState;
 	prefix?: string;
@@ -29,6 +33,7 @@ interface BuildManagerArgs {
 
 interface AdvanceManagerArgs {
 	wallet: WalletInterface;
+	chain: Chain;
 	identityKey: string;
 	state: ReceiveAddressState;
 	addressManager: AddressManager;
@@ -89,6 +94,7 @@ async function callGetPublicKey(
 
 export async function deriveReceiveAddress({
 	wallet,
+	chain,
 	identityKey,
 	index,
 	prefix = RECEIVE_ADDRESS_PREFIX,
@@ -106,7 +112,7 @@ export async function deriveReceiveAddress({
 		},
 		originator,
 	);
-	const address = PublicKey.fromString(result.publicKey).toAddress().toString();
+	const address = PublicKey.fromString(result.publicKey).toAddress(chain);
 
 	return {
 		address,
@@ -148,6 +154,7 @@ export function getActiveReceiveAddresses(
 
 export async function buildReceiveAddressManager({
 	wallet,
+	chain,
 	identityKey,
 	state,
 	prefix = RECEIVE_ADDRESS_PREFIX,
@@ -158,6 +165,7 @@ export async function buildReceiveAddressManager({
 		derivations.push(
 			await deriveReceiveAddress({
 				wallet,
+				chain,
 				identityKey,
 				index: i,
 				prefix,
@@ -176,6 +184,7 @@ export async function buildReceiveAddressManager({
 
 export async function advanceReceiveAddress({
 	wallet,
+	chain,
 	identityKey,
 	state,
 	addressManager,
@@ -198,6 +207,7 @@ export async function advanceReceiveAddress({
 	for (let i = state.maxDerivedIndex + 1; i <= targetMax; i++) {
 		const derivation = await deriveReceiveAddress({
 			wallet,
+			chain,
 			identityKey,
 			index: i,
 			prefix,

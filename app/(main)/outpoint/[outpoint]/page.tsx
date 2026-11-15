@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { toBitcoin } from "satoshi-token";
 import Artifact from "@/components/artifact";
+import { MainnetOnly } from "@/components/mainnet-only";
 import BuyButton from "@/components/market/buy-button";
 import {
 	fetchStackCapabilities,
@@ -211,13 +212,15 @@ const Outpoint = async ({
 									{toBitcoin(activeListing.price)} BSV
 								</span>
 							</div>
-							<BuyButton
-								outpoint={activeListing.outpoint}
-								price={activeListing.price}
-								contentType={contentType}
-								origin={origin}
-								name={mapName}
-							/>
+							<MainnetOnly fallback={null}>
+								<BuyButton
+									outpoint={activeListing.outpoint}
+									price={activeListing.price}
+									contentType={contentType}
+									origin={origin}
+									name={mapName}
+								/>
+							</MainnetOnly>
 						</div>
 					) : (
 						<div className="text-sm text-muted-foreground">

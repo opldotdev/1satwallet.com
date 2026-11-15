@@ -1,20 +1,15 @@
 import { OneSatServices } from "@1sat/client";
-import {
-	type Capability,
-	ONESAT_MAINNET_URL,
-	ONESAT_TESTNET_URL,
-} from "@1sat/types";
-
-type Chain = "main" | "test";
+import type { Capability } from "@1sat/types";
+import { type Chain, endpointsOf } from "@/lib/chain-endpoints";
 
 const trimTrailingSlash = (url: string) => url.replace(/\/$/, "");
 
 export const STACK_URL = trimTrailingSlash(
-	process.env.NEXT_PUBLIC_ONESAT_STACK_URL || ONESAT_MAINNET_URL,
+	process.env.NEXT_PUBLIC_ONESAT_STACK_URL || endpointsOf("main").services,
 );
 
 export const TEST_STACK_URL = trimTrailingSlash(
-	process.env.NEXT_PUBLIC_ONESAT_TEST_STACK_URL || ONESAT_TESTNET_URL,
+	process.env.NEXT_PUBLIC_ONESAT_TEST_STACK_URL || endpointsOf("test").services,
 );
 
 export const stackUrlForChain = (chain: Chain) =>
@@ -82,6 +77,14 @@ export const createStackServices = (chain: Chain = "main") =>
 	new OneSatStackServices(chain, stackUrlForChain(chain));
 
 export const stackServices = createStackServices();
+let testStackServices: OneSatStackServices | undefined;
+
+/** One shared read-only client per chain. */
+export function stackServicesFor(chain: Chain): OneSatStackServices {
+	if (chain === "main") return stackServices;
+	testStackServices ??= createStackServices("test");
+	return testStackServices;
+}
 export const marketClient = stackServices.market;
 export const ownerClient = stackServices.owner;
 export const txoClient = stackServices.txo;
@@ -93,8 +96,8 @@ export const toStackOutpoint = (outpoint: string) => outpoint.replace("_", ".");
 
 export const toUrlOutpoint = (outpoint: string) => outpoint.replace(".", "_");
 
-export const stackContentUrl = (outpoint: string) =>
-	ordfsClient.getContentUrl(toUrlOutpoint(outpoint));
+export const stackContentUrl = (outpoint: string, chain: Chain = "main") =>
+	stackServicesFor(chain).ordfs.getContentUrl(toUrlOutpoint(outpoint));
 
 export interface ListingData {
 	outpoint: string;

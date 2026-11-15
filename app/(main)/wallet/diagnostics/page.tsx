@@ -12,6 +12,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import {
 	createCorrelationId,
 	reportDiagnostic,
@@ -35,6 +36,7 @@ function StatusRow({ label, value }: { label: string; value: string }) {
 export default function WalletDiagnosticsPage() {
 	const wallet = useWallet();
 	const toolbox = useWalletToolbox();
+	const chain = useWalletChain();
 	const { syncEvents, clearSyncEvents } = useWalletDiagnostics();
 	const [pendingAction, setPendingAction] = useState<string | null>(null);
 	const reportedSyncFailures = useRef(new Set<string>());
@@ -154,7 +156,7 @@ export default function WalletDiagnosticsPage() {
 							<StatusRow label="Connection" value={toolbox.connectionStatus} />
 							<StatusRow label="Mode" value={toolbox.connectionMode} />
 							<StatusRow label="Provider" value={providerName} />
-							<StatusRow label="Chain" value={toolbox.chain} />
+							<StatusRow label="Chain" value={chain} />
 						</CardContent>
 					</Card>
 

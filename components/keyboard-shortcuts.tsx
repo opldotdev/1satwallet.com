@@ -12,7 +12,9 @@ import {
 	CommandList,
 	CommandShortcut,
 } from "@/components/ui/command";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import type { StackFeature } from "@/lib/stack-features";
 
 const commands: Array<{
@@ -75,6 +77,7 @@ export function KeyboardShortcuts() {
 	const router = useRouter();
 	const { resolvedTheme, setTheme } = useTheme();
 	const features = useStackFeatures().data?.features;
+	const chain = useWalletChain();
 	const [commandMenuOpen, setCommandMenuOpen] = React.useState(false);
 	// We can't easily access both sidebar contexts here because they are nested.
 	// This component needs to be inside the context to toggle.
@@ -111,42 +114,45 @@ export function KeyboardShortcuts() {
 
 			if (gPressedAt.current && e.timeStamp - gPressedAt.current <= 1000) {
 				gPressedAt.current = 0;
+				const go = (href: string) => {
+					if (isRouteAvailableOn(chain, href)) router.push(href);
+				};
 				switch (key) {
 					case "h":
-						router.push("/");
+						go("/");
 						break;
 					case "w":
-						router.push("/wallet");
+						go("/wallet");
 						break;
 					case "m":
-						if (features?.ordinalMarket) router.push("/market/ordinals");
+						if (features?.ordinalMarket) go("/market/ordinals");
 						break;
 					case "v":
-						if (features?.bsv21) router.push("/market/bsv21");
+						if (features?.bsv21) go("/market/bsv21");
 						break;
 					case "i":
-						if (features?.inscribe) router.push("/inscribe");
+						if (features?.inscribe) go("/inscribe");
 						break;
 					case "d":
-						router.push("/docs");
+						go("/docs");
 						break;
 					case "s":
-						router.push("/settings");
+						go("/settings");
 						break;
 					case "o":
-						if (features?.ordinals) router.push("/wallet/ordinals");
+						if (features?.ordinals) go("/wallet/ordinals");
 						break;
 					case "1":
-						if (features?.bsv21) router.push("/wallet/bsv21");
+						if (features?.bsv21) go("/wallet/bsv21");
 						break;
 					case ",":
-						router.push("/wallet/settings");
+						go("/wallet/settings");
 						break;
 					case "y":
-						router.push("/wallet/history");
+						go("/wallet/history");
 						break;
 					case "a":
-						if (features?.activity) router.push("/activity");
+						if (features?.activity) go("/activity");
 						break;
 				}
 			} else if (key === "g") {
@@ -158,7 +164,7 @@ export function KeyboardShortcuts() {
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [features, resolvedTheme, router, setTheme]);
+	}, [chain, features, resolvedTheme, router, setTheme]);
 
 	return (
 		<CommandDialog open={commandMenuOpen} onOpenChange={setCommandMenuOpen}>
@@ -168,6 +174,7 @@ export function KeyboardShortcuts() {
 				<CommandGroup heading="Navigate">
 					{commands.map((command) => {
 						if (command.feature && !features?.[command.feature]) return null;
+						if (!isRouteAvailableOn(chain, command.href)) return null;
 						return (
 							<CommandItem
 								key={command.href}

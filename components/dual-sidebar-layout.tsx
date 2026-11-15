@@ -4,6 +4,7 @@ import { PanelLeft } from "lucide-react";
 import type * as React from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { LeftSidebar } from "@/components/left-sidebar";
+import { MainnetOnly } from "@/components/mainnet-only";
 import { SidebarSoundEffects } from "@/components/sidebar-sound-effects";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,7 +94,10 @@ export function DualSidebarLayout({ children }: { children: React.ReactNode }) {
 		<SidebarProvider defaultOpen={false} cookieName="sidebar_left">
 			<LeftSidebarWrapper>
 				<FullScreenUnlock />
-				<MigrationWizard />
+				{/* Legacy assets live on mainnet only. */}
+				<MainnetOnly fallback={null}>
+					<MigrationWizard />
+				</MainnetOnly>
 				<LeftSidebar side="left" collapsible="icon" />
 				<InnerLayout>{children}</InnerLayout>
 			</LeftSidebarWrapper>

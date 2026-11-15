@@ -1,19 +1,17 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { fetchStackCapabilities, STACK_URL } from "@/lib/stack";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
+import { fetchStackCapabilities, stackUrlForChain } from "@/lib/stack";
 import { createStackFeatureRegistry } from "@/lib/stack-features";
 
-export const stackFeatureRegistryQueryKey = [
-	"stack-feature-registry",
-	STACK_URL,
-] as const;
-
+/** Capabilities of the stack for the wallet's network. */
 export function useStackFeatures() {
+	const stackUrl = stackUrlForChain(useWalletChain());
 	return useQuery({
-		queryKey: stackFeatureRegistryQueryKey,
+		queryKey: ["stack-feature-registry", stackUrl],
 		queryFn: async () =>
-			createStackFeatureRegistry(await fetchStackCapabilities()),
+			createStackFeatureRegistry(await fetchStackCapabilities(stackUrl)),
 		staleTime: 60_000,
 		refetchInterval: 60_000,
 	});

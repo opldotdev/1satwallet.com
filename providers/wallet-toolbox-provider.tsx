@@ -68,6 +68,7 @@ import {
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
+import { externalNetworkMismatch } from "@/lib/wallet/external-network";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import {
 	providerCapability,
@@ -453,6 +454,7 @@ export function WalletToolboxProvider({
 			try {
 				const advanced = await advanceReceiveAddress({
 					wallet,
+					chain,
 					identityKey,
 					state: receiveState,
 					addressManager,
@@ -661,6 +663,26 @@ export function WalletToolboxProvider({
 					return false;
 				}
 
+				const networkError = await externalNetworkMismatch(
+					result.wallet,
+					chain,
+				);
+				if (networkError) {
+					pendingResult = null;
+					result.disconnect();
+					if (generation !== connectionGenerationRef.current) return false;
+					localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
+					localStorage.removeItem(CONNECTION_OPTION_KEY);
+					setConnectionStatus("disconnected");
+					setInitError(networkError);
+					initGuardRef.current = false;
+					return false;
+				}
+				if (generation !== connectionGenerationRef.current) {
+					result.disconnect();
+					return false;
+				}
+
 				const externalServices = createStackServices(chain);
 				let addresses: string[];
 				try {
@@ -862,6 +884,7 @@ export function WalletToolboxProvider({
 
 				const receiveResult = await buildReceiveAddressManager({
 					wallet: result.wallet,
+					chain,
 					identityKey: newIdentityKey,
 					state: receiveState,
 					prefix: RECEIVE_ADDRESS_PREFIX,
@@ -984,6 +1007,15 @@ export function WalletToolboxProvider({
 			setIsInitializing(true);
 			try {
 				const result = await prepareWalletSwitch(option);
+				const networkError = await externalNetworkMismatch(
+					result.wallet,
+					chain,
+				);
+				if (networkError) {
+					result.disconnect();
+					setInitError(`${networkError} The current wallet is unchanged.`);
+					return false;
+				}
 				const externalServices = createStackServices(chain);
 				let addresses: string[];
 				try {
