@@ -125,4 +125,22 @@ describe("testnet surfaces", () => {
 		assert.match(header, /Testnet/);
 		assert.match(header, /href=\{faucet\}/);
 	});
+
+	it("refreshes the testnet notice once the wallet is on mainnet", () => {
+		assert.match(
+			read("app/(main)/not-on-testnet/page.tsx"),
+			/NotOnTestnetRoute/,
+		);
+		const route = read("components/not-on-testnet-route.tsx");
+		assert.match(route, /readWalletChain\(\) === "main"/);
+		assert.match(route, /router\.refresh\(\)/);
+		assert.match(route, /subscribeWalletChain\(refreshOnMainnet\)/);
+	});
+
+	it("never offers a legacy key address on testnet", () => {
+		assert.match(
+			read("components/app-sidebar.tsx"),
+			/isExternal \|\| chain === "test" \? "" : identityAddress \|\| payAddress/,
+		);
+	});
 });

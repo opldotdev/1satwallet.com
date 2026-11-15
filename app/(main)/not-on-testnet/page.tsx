@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { NotOnTestnet } from "@/components/not-on-testnet";
+import { NotOnTestnetRoute } from "@/components/not-on-testnet-route";
 
 // The proxy serves this page in place of mainnet-only pages on testnet.
 export const metadata: Metadata = {
@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function NotOnTestnetPage() {
-	return <NotOnTestnet />;
+	return <NotOnTestnetRoute />;
 }

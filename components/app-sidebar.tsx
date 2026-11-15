@@ -97,6 +97,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 		isInitialized,
 		initError,
 		connectionMode,
+		chain,
 	} = useWalletToolbox();
 
 	const [isPrivacyModeEnabled] = useSettingsStorage<boolean>(
@@ -151,8 +152,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	}, [walletKeys]);
 
 	const isExternal = connectionMode === "external";
+	// The legacy key addresses are mainnet-format and untracked on testnet
 	const resolvedDepositAddress =
-		depositAddress || (isExternal ? "" : identityAddress || payAddress);
+		depositAddress ||
+		(isExternal || chain === "test" ? "" : identityAddress || payAddress);
 
 	const handleCopyAddress = () => {
 		copy(resolvedDepositAddress);
