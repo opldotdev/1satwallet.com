@@ -228,7 +228,7 @@ export default function ImportPassphrasePage() {
 									)}
 							</div>
 
-							{fixedNetwork ? (
+							{fixedNetwork === "main" ? null : fixedNetwork ? (
 								<p className="text-xs text-muted-foreground">
 									Network: {CHAIN_NAME[fixedNetwork]}. Set by this backup.
 								</p>

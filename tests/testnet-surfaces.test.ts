@@ -145,9 +145,15 @@ describe("testnet surfaces", () => {
 		assert.match(importPage, /importWallet\(walletKeys, passphrase, network\)/);
 		assert.match(importPage, /finalNetwork,\s*\)/);
 		assert.match(importPage, /Set by this backup\./);
+		// Mainnet needs nothing from the person; a mainnet backup shows no line.
+		assert.match(importPage, /fixedNetwork === "main" \? null/);
 		const choice = read("components/wallet/network-choice.tsx");
-		assert.match(choice, /Network\. This cannot be changed later\./);
-		assert.ok(choice.indexOf("Mainnet") < choice.indexOf("Testnet"));
+		// Testnet sits behind a collapsed developer option, closed by default
+		// unless testnet is already selected or a note explains a preselection.
+		assert.match(choice, /Developer options/);
+		assert.match(choice, /useState\(false\)/);
+		assert.match(choice, /opened \|\| value === "test" \|\| Boolean\(note\)/);
+		assert.match(choice, /onChange\(checked \? "test" : "main"\)/);
 	});
 
 	it("syncs messages from the chain's messagebox", () => {
