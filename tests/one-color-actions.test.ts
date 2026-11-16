@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import type { Deploy1ColorInput, OneSatContext } from "@1sat/actions";
+import type {
+	Deploy1ColorInput,
+	OneSatContext,
+	Send1ColorInput,
+	Send1ColorResult,
+} from "@1sat/actions";
 import { HttpError } from "@1sat/client";
 import { OneColor } from "@1sat/templates";
 import {
@@ -18,15 +23,25 @@ import {
 } from "@bsv/sdk";
 import {
 	describeOneColorDeployFailure,
+	describeOneColorSendFailure,
 	executeOneColorDeploy,
+	executeOneColorSend,
 	formatOneColorAmount,
+	isPendingOneColorSend,
+	normalizeHandle,
 	ONE_COLOR_MAX_AMOUNT,
 	ONE_COLOR_MAX_ICON_BYTES,
 	type OneColorActionSet,
+	OneColorHandleLookupError,
 	oneColorDeployFailureMessage,
+	oneColorMemoError,
+	oneColorSendAmountError,
+	oneColorSendPlanLabels,
 	oneColorSupplyError,
 	parseOneColorAmount,
+	parseOneColorSendDescription,
 	runOneColorDeploy,
+	runOneColorSend,
 } from "@/lib/wallet/one-color-actions";
 
 const ctx = { chain: "test" } as unknown as OneSatContext;
@@ -40,7 +55,7 @@ function recordingActions(
 	},
 ) {
 	const calls: Deploy1ColorInput[] = [];
-	const actions: OneColorActionSet = {
+	const actions: Pick<OneColorActionSet, "deploy"> = {
 		deploy: async (_ctx, input) => {
 			calls.push(input);
 			return result;
@@ -463,5 +478,538 @@ describe("1Color deploy entry point", () => {
 		assert.match(component, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
 		assert.match(component, /Supply model/);
 		assert.match(component, /Mint authority/);
+	});
+});
+
+const ASSET_ID = `${txid}_0`;
+
+function recordingSend(
+	result: Send1ColorResult,
+	resolve: (handle: string) => Promise<unknown> = async () => ({}),
+) {
+	const calls: Send1ColorInput[] = [];
+	const resolved: string[] = [];
+	const actions: Pick<OneColorActionSet, "send" | "resolveHandle"> = {
+		send: async (_ctx, input) => {
+			calls.push(input);
+			return result;
+		},
+		resolveHandle: async (handle) => {
+			resolved.push(handle);
+			return resolve(handle);
+		},
+	};
+	return { calls, resolved, actions };
+}
+
+describe("normalizeHandle (Yours)", () => {
+	it("accepts name@domain with or without the leading @, trimmed", () => {
+		assert.equal(normalizeHandle("a@b"), "@a@b");
+		assert.equal(normalizeHandle("@a@b"), "@a@b");
+		assert.equal(
+			normalizeHandle("  @alice@testnet.1sat.app "),
+			"@alice@testnet.1sat.app",
+		);
+		assert.equal(
+			normalizeHandle("deggen+conf@lkup.net"),
+			"@deggen+conf@lkup.net",
+		);
+	});
+
+	it("rejects bare names, extra @, spaces, addresses and empty input", () => {
+		for (const invalid of [
+			"a",
+			"@a",
+			"a@b@c",
+			"@a@b@c",
+			"a b@c",
+			"a@b c",
+			"@@a@b",
+			"1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+			"",
+		]) {
+			assert.equal(normalizeHandle(invalid), null, invalid);
+		}
+	});
+});
+
+describe("oneColorSendAmountError", () => {
+	it("allows up to the available balance at 0, 8 and 18 decimals, above 2^53", () => {
+		assert.equal(oneColorSendAmountError("5", 0, 5n), null);
+		assert.equal(oneColorSendAmountError("0.00000001", 8, 1n), null);
+		assert.equal(oneColorSendAmountError("1", 18, 10n ** 18n), null);
+		assert.equal(
+			oneColorSendAmountError("9007199254740993", 0, 9_007_199_254_740_993n),
+			null,
+		);
+	});
+
+	it("uses Yours' messages for malformed and over-balance amounts", () => {
+		for (const invalid of ["", "0", ".", "-1", "1e3", "1.001"]) {
+			assert.equal(
+				oneColorSendAmountError(invalid, 2, 10_000n),
+				"Enter a valid amount.",
+				invalid,
+			);
+		}
+		assert.equal(
+			oneColorSendAmountError("9007199254740994", 0, 9_007_199_254_740_993n),
+			"Amount exceeds available balance.",
+		);
+	});
+});
+
+describe("executeOneColorSend", () => {
+	it("passes the exact input to send1Color, handle normalized, amount as a string", async () => {
+		const { calls, actions } = recordingSend({
+			txid,
+			tx: [1],
+			delivered: "envelope",
+			messageId: "m1",
+		});
+		const result = await executeOneColorSend(
+			ctx,
+			{
+				assetId: ASSET_ID,
+				amount: 9_007_199_254_740_993n,
+				handle: " alice@testnet.1sat.app ",
+				memo: "  thanks  ",
+			},
+			actions,
+		);
+		assert.equal(result.delivered, "envelope");
+		assert.deepEqual(calls, [
+			{
+				assetId: ASSET_ID,
+				amount: "9007199254740993",
+				destination: { handle: "@alice@testnet.1sat.app" },
+				memo: "thanks",
+			},
+		]);
+	});
+
+	it("leaves out an empty memo", async () => {
+		const { calls, actions } = recordingSend({ txid, delivered: "envelope" });
+		await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "@a@b.c", memo: "   " },
+			actions,
+		);
+		assert.equal("memo" in calls[0], false);
+	});
+
+	it("refuses a bad handle or amount before the wallet is asked", async () => {
+		const { calls, actions } = recordingSend({ txid });
+		const cases: [Parameters<typeof executeOneColorSend>[1], string][] = [
+			[{ assetId: ASSET_ID, amount: 1n, handle: "alice" }, "handle-invalid"],
+			[
+				{ assetId: ASSET_ID, amount: 0n, handle: "@a@b.c" },
+				"amount-must-be-positive",
+			],
+			[
+				{
+					assetId: ASSET_ID,
+					amount: ONE_COLOR_MAX_AMOUNT + 1n,
+					handle: "@a@b.c",
+				},
+				"amount-out-of-range",
+			],
+			[
+				{
+					assetId: ASSET_ID,
+					amount: 1n,
+					handle: "@a@b.c",
+					memo: "é".repeat(1001),
+				},
+				"memo-too-long",
+			],
+		];
+		for (const [input, error] of cases) {
+			assert.deepEqual(await executeOneColorSend(ctx, input, actions), {
+				error,
+			});
+		}
+		assert.equal(calls.length, 0);
+	});
+
+	it("looks the handle up before the send, and a failed lookup never reaches the wallet", async () => {
+		const ok = recordingSend({ txid, delivered: "envelope" });
+		await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "Alice@Example.COM" },
+			ok.actions,
+		);
+		assert.deepEqual(ok.resolved, ["@Alice@Example.COM"]);
+
+		const unreachable = new TypeError("Failed to fetch");
+		const down = recordingSend({ txid }, async () => {
+			throw unreachable;
+		});
+		const thrown = await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "@alice@Example.COM" },
+			down.actions,
+		).then(
+			() => null,
+			(error: unknown) => error,
+		);
+		assert.ok(thrown instanceof OneColorHandleLookupError);
+		assert.equal(thrown.domain, "example.com");
+		assert.equal(thrown.cause, unreachable);
+		assert.equal(down.calls.length, 0);
+	});
+
+	it("keeps the txid of a send whose delivery failed", async () => {
+		const { actions } = recordingSend({
+			txid,
+			tx: [1],
+			error: "delivery-failed: sendMessage 503",
+		});
+		const result = await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "@a@b.c" },
+			actions,
+		);
+		assert.equal(result.txid, txid);
+		assert.equal(result.error, "delivery-failed: sendMessage 503");
+	});
+
+	it("reports no-transaction when the action returns no txid", async () => {
+		const { actions } = recordingSend({});
+		assert.deepEqual(
+			await executeOneColorSend(
+				ctx,
+				{ assetId: ASSET_ID, amount: 1n, handle: "@a@b.c" },
+				actions,
+			),
+			{ error: "no-transaction" },
+		);
+	});
+
+	it("runs the SDK send as one noSend createAction that the pending scan recognises", async () => {
+		const recipient = PrivateKey.fromHex("22".repeat(32))
+			.toPublicKey()
+			.toString();
+		const realFetch = globalThis.fetch;
+		const fetched: string[] = [];
+		globalThis.fetch = (async (url: string | URL | Request) => {
+			const u = String(url);
+			fetched.push(u);
+			if (u === "https://lkup.net/manifest.json") {
+				return new Response(
+					JSON.stringify({ metanet: { handles: { version: "1.0" } } }),
+				);
+			}
+			if (
+				u ===
+				"https://lkup.net/.well-known/metanet-handles/resolve?handle=deggen"
+			) {
+				return new Response(
+					JSON.stringify({
+						handle: "deggen",
+						domain: "lkup.net",
+						identityKey: recipient,
+						certificate: { subject: recipient },
+						messagebox: "https://messagebox.lkup.net",
+						ttl: 3600,
+						revoked: false,
+					}),
+				);
+			}
+			throw new Error(`unexpected fetch ${u}`);
+		}) as typeof fetch;
+		const proto = new ProtoWallet(PrivateKey.fromHex("11".repeat(32)));
+		const created: CreateActionArgs[] = [];
+		const wallet = {
+			getPublicKey: (args: Parameters<WalletInterface["getPublicKey"]>[0]) =>
+				proto.getPublicKey(args),
+			createAction: async (args: CreateActionArgs) => {
+				created.push(args);
+				return {};
+			},
+		} as unknown as WalletInterface;
+		try {
+			const result = await executeOneColorSend(
+				{ wallet, chain: "test" } as unknown as OneSatContext,
+				{ assetId: ASSET_ID, amount: 60n, handle: "deggen@lkup.net" },
+			);
+			// The fake returns no transaction, which the SDK reports itself.
+			assert.deepEqual(result, { error: "no-transaction" });
+		} finally {
+			globalThis.fetch = realFetch;
+		}
+		// Looked up once here, then again by send1Color.
+		assert.equal(fetched.length, 4);
+		assert.equal(created.length, 1);
+		const args = created[0];
+		assert.deepEqual(args.options, { noSend: true, randomizeOutputs: false });
+		assert.equal(args.inputs, undefined);
+		assert.deepEqual(ColorPlan.fromLabels(args.labels)?.operations, [
+			{ assetId: ASSET_ID, operation: "transfer" },
+		]);
+		assert.ok(
+			isPendingOneColorSend(
+				{ status: "nosend", labels: args.labels },
+				oneColorSendPlanLabels(ASSET_ID),
+			),
+		);
+		assert.deepEqual(parseOneColorSendDescription(args.description), {
+			amount: 60n,
+			handle: "@deggen@lkup.net",
+		});
+		const token = OneColor.decode(
+			LockingScript.fromHex(args.outputs?.[0]?.lockingScript ?? ""),
+		);
+		assert.equal(token?.role, "value");
+		assert.equal(token?.amount, 60n);
+	});
+});
+
+describe("oneColorMemoError", () => {
+	it("counts UTF-8 bytes, not characters", () => {
+		assert.equal(oneColorMemoError("a".repeat(2000)), null);
+		assert.equal(oneColorMemoError("é".repeat(1000)), null);
+		assert.match(oneColorMemoError("é".repeat(1001)) ?? "", /2,000 bytes/);
+		assert.match(oneColorMemoError("😀".repeat(501)) ?? "", /2,000 bytes/);
+	});
+});
+
+describe("describeOneColorSendFailure", () => {
+	it("reads every failed handle lookup as not sent", () => {
+		const lookup = (cause: unknown) =>
+			describeOneColorSendFailure(
+				new OneColorHandleLookupError("lkup.net", cause),
+			);
+		for (const cause of [
+			new TypeError("Failed to fetch"),
+			new SyntaxError(
+				"Unexpected token '<', \"<!doctype \"... is not valid JSON",
+			),
+		]) {
+			assert.deepEqual(lookup(cause), {
+				message: "Couldn't reach lkup.net to look up that handle.",
+				mayHaveBeenBuilt: false,
+			});
+		}
+		assert.deepEqual(
+			lookup(new Error("resolve deggen@lkup.net failed: 404 handle-not-found")),
+			{
+				message: "No handle @deggen@lkup.net was found.",
+				mayHaveBeenBuilt: false,
+			},
+		);
+	});
+
+	it("says nothing was sent only for the module's own consent refusal", () => {
+		for (const error of [
+			new ColorConsentDeclinedError("createAction"),
+			"BRC-207: the user declined the createAction request",
+		]) {
+			assert.deepEqual(describeOneColorSendFailure(error), {
+				message: "The wallet declined the send. Nothing was sent.",
+				mayHaveBeenBuilt: false,
+			});
+		}
+	});
+
+	it("maps checks made before the send is built to specific messages", () => {
+		const cases: [string, RegExp][] = [
+			["handle-invalid", /@name@domain/],
+			["handle has no domain: alice", /@name@domain/],
+			["ecosystem aliases are not supported: metanet", /full domain/],
+			["amount-must-be-positive", /greater than zero/],
+			["amount-out-of-range", /exceeds available balance/],
+			["invalid-asset-id: expected <txid>_<vout>", /id isn't valid/],
+			["BRC-232: memo exceeds 2000 UTF-8 bytes", /memo is too long/],
+			[
+				"resolve deggen@lkup.net failed: 404 handle-not-found",
+				/No handle @deggen@lkup\.net was found/,
+			],
+			["resolve deggen@lkup.net failed: 503", /didn't answer/],
+			["manifest fetch failed for lkup.net: 502", /didn't answer/],
+			["manifest fetch failed for lkup.net: 404", /doesn't offer handles/],
+			["lkup.net does not offer handle resolution", /doesn't offer handles/],
+			[
+				"lkup.net metanet.handles version 2.0 is not supported",
+				/doesn't offer handles/,
+			],
+			[
+				"certificate subject does not match identity key for a@b.c",
+				/doesn't match its key/,
+			],
+			[
+				`BRC-207: insufficient spendable balance of ${ASSET_ID}`,
+				/Not enough spendable tokens/,
+			],
+			[
+				`BRC-207: the overlay has no admitted deploy for ${ASSET_ID}`,
+				/hasn't admitted/,
+			],
+			[
+				`No 1Color overlay is configured for token ${ASSET_ID} on this network.`,
+				/No 1Color overlay/,
+			],
+			[
+				"WERR_INSUFFICIENT_FUNDS: Insufficient funds in the available inputs",
+				/Not enough BSV/,
+			],
+		];
+		for (const [error, expected] of cases) {
+			const failure = describeOneColorSendFailure(new Error(error));
+			assert.match(failure.message, expected, error);
+			assert.equal(failure.mayHaveBeenBuilt, false, error);
+			assert.doesNotMatch(failure.message, /Nothing was sent/, error);
+			assert.ok(failure.message.length < 160, error);
+		}
+	});
+
+	it("treats no-transaction and unknown failures as possibly built", () => {
+		for (const error of [
+			new Error("no-transaction"),
+			new Error("something unexpected"),
+			new HttpError(502, "Bad Gateway"),
+		]) {
+			const failure = describeOneColorSendFailure(error);
+			assert.equal(failure.mayHaveBeenBuilt, true, error.message);
+			assert.equal(
+				failure.message,
+				"The send may have gone out. Check Waiting to be claimed before sending again.",
+				error.message,
+			);
+		}
+	});
+});
+
+describe("runOneColorSend", () => {
+	const harness = (send: OneColorActionSet["send"], refreshFails = false) => {
+		const steps: string[] = [];
+		const logged: [string, unknown, { txid?: string } | undefined][] = [];
+		return {
+			steps,
+			logged,
+			options: {
+				actions: {
+					resolveHandle: async () => ({}),
+					send: async (...args: Parameters<OneColorActionSet["send"]>) => {
+						steps.push("send");
+						return send(...args);
+					},
+				},
+				refresh: async () => {
+					steps.push("refresh");
+					if (refreshFails) throw new Error("listOutputs failed");
+				},
+				log: (
+					operation: string,
+					error: unknown,
+					details?: { txid?: string },
+				) => {
+					logged.push([operation, error, details]);
+				},
+			},
+		};
+	};
+	const input = { assetId: ASSET_ID, amount: 5n, handle: "alice@b.c" };
+
+	it("refreshes and reports a delivered send", async () => {
+		const { steps, logged, options } = harness(async () => ({
+			txid,
+			delivered: "envelope",
+		}));
+		assert.deepEqual(await runOneColorSend(ctx, input, options), {
+			kind: "sent",
+			txid,
+			message:
+				"Sent to @alice@b.c. They receive it when their wallet next syncs.",
+		});
+		assert.deepEqual(steps, ["send", "refresh"]);
+		assert.deepEqual(logged, []);
+	});
+
+	it("reports a failed delivery as built but not delivered, with its txid logged", async () => {
+		const { steps, logged, options } = harness(async () => ({
+			txid,
+			tx: [1],
+			error: "delivery-failed: sendMessage 503",
+		}));
+		const outcome = await runOneColorSend(ctx, input, options);
+		assert.equal(outcome.kind, "undelivered");
+		assert.equal(outcome.kind === "undelivered" && outcome.txid, txid);
+		assert.match(outcome.message, /^Built, but not delivered to @alice@b\.c\./);
+		assert.deepEqual(steps, ["send", "refresh"]);
+		assert.equal(logged.length, 1);
+		assert.equal(logged[0][0], "send-delivery");
+		assert.equal(
+			(logged[0][1] as Error).message,
+			"delivery-failed: sendMessage 503",
+		);
+		assert.deepEqual(logged[0][2], { txid });
+	});
+
+	it("still refreshes when the action throws, and logs a failed refresh", async () => {
+		const { steps, logged, options } = harness(async () => {
+			throw new Error("something unexpected");
+		}, true);
+		const outcome = await runOneColorSend(ctx, input, options);
+		assert.equal(outcome.kind === "failed" && outcome.mayHaveBeenBuilt, true);
+		assert.deepEqual(steps, ["send", "refresh"]);
+		assert.deepEqual(
+			logged.map(([operation]) => operation),
+			["send", "holdings-refresh"],
+		);
+	});
+
+	it("reports a consent refusal as not sent", async () => {
+		const { options } = harness(async () => ({
+			error: new ColorConsentDeclinedError("createAction").message,
+		}));
+		assert.deepEqual(await runOneColorSend(ctx, input, options), {
+			kind: "failed",
+			message: "The wallet declined the send. Nothing was sent.",
+			mayHaveBeenBuilt: false,
+		});
+	});
+});
+
+describe("1Color send entry point", () => {
+	const read = (path: string) =>
+		readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+
+	it("is the token page's Send button, testnet only, writing through colorContext", () => {
+		const detail = read("components/wallet/one-color-detail.tsx");
+		assert.match(detail, /<OneColorSendDialog/);
+		assert.match(detail, /<OneColorPendingSends/);
+		assert.doesNotMatch(detail, /Send isn't available yet/);
+		assert.ok(
+			detail.indexOf("<OneColorPendingSends") <
+				detail.indexOf('aria-labelledby="one-color-history"'),
+		);
+		const component = read("components/wallet/one-color-send.tsx");
+		assert.match(component, /isOneColorAvailable\(chain\)/);
+		assert.match(component, /runOneColorSend\(colorContext, review,/);
+		assert.match(component, /runOneColorCancel\(colorContext, send,/);
+		assert.doesNotMatch(component, /oneSatContext|\bwallet\b\s*[,}]/);
+		assert.match(component, />Handle</);
+		assert.match(component, /Waiting to be claimed/);
+		assert.match(component, /truncated \?/);
+	});
+
+	it("closes the review after a possible send and keeps Send busy until holdings are re-read", () => {
+		const component = read("components/wallet/one-color-send.tsx");
+		assert.match(component, /if \(outcome\.mayHaveBeenBuilt\) resetForm\(\)/);
+		// One write at a time, even for two taps in the same frame.
+		assert.equal(component.match(/inFlight\.current\) return;/g)?.length, 2);
+		// Cancel re-reads the balance too, through the same refresh as Send.
+		assert.match(
+			component,
+			/refresh: refreshAfterWrite,\n\t\t}\);[\s\S]*refresh: refreshAfterWrite,/,
+		);
+		const runAt = component.indexOf("await runOneColorSend(");
+		assert.ok(runAt > 0);
+		assert.ok(runAt < component.indexOf("setBusy(false)", runAt));
+		assert.match(component, /if \(busy\) return;/);
+		assert.match(component, /refreshBalance\(\)/);
+		assert.match(component, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
+		assert.match(component, /w-full sm:w-auto/);
 	});
 });
