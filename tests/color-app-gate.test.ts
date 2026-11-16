@@ -924,7 +924,7 @@ describe("apps never see admin-only module actions or outputs in listActions", (
 		);
 	});
 
-	it("stops scanning at the cap and counts the rest as an upper bound", async () => {
+	it("stops scanning at the cap and ends the total there", async () => {
 		const actions = history(LIST_SCAN_MAX + 5);
 		const { calls, listActions } = counted(actions);
 		const result = await listActionsForApp(
@@ -938,8 +938,25 @@ describe("apps never see admin-only module actions or outputs in listActions", (
 		);
 		assert.equal(scanned, LIST_SCAN_MAX);
 		assert.ok(calls.every((call) => Number(call.limit) <= LIST_SCAN_PAGE));
-		assert.equal(result.totalActions, LIST_SCAN_MAX / 2 + 5);
+		// Nothing past the cap can be read, so a pager stops at the cap.
+		assert.equal(result.totalActions, LIST_SCAN_MAX / 2);
 		assert.deepEqual(result.actions, []);
+	});
+
+	it("rescans when an action in the window is relabelled in place", async () => {
+		const actions = history(100);
+		const { calls, listActions } = counted(actions);
+		const cache = createListScanCache();
+		const page = () =>
+			listActionsForApp(listActions, { labels: [], limit: 3 }, APP, cache);
+		await page();
+		actions[3] = { txid: "3", labels: ["p color plan"] };
+		const result = await page();
+		assert.deepEqual(
+			result.actions.map((action) => action.txid),
+			["1", "5", "7"],
+		);
+		assert.equal(calls.length, 5);
 	});
 
 	it("passes a spec-op label through once and only filters the result", async () => {

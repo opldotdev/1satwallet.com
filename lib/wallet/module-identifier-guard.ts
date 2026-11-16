@@ -333,7 +333,9 @@ export const createListScanCache = (): ListScanCache => new Map();
  * total for the query changes.
  *
  * `totalActions` is the visible actions found so far plus the actions not
- * yet scanned: an upper bound, exact once a scan has reached the end.
+ * yet scanned: an upper bound, exact once a scan has reached the end. Once a
+ * scan reaches the 10,000-action cap it is the visible actions found, since
+ * nothing past the cap can be read.
  *
  * A request carrying a spec-op label goes to the wallet once, as asked, and
  * only its result is filtered; its `totalActions` is the wallet's total less
@@ -427,8 +429,12 @@ export async function listActionsForApp(
 		scan: ListScan,
 		retry: boolean,
 	): Promise<ListedActions> => {
+		// Past the scan cap nothing more can be read, so the total stops at
+		// what was found and a `while (offset < total)` pager ends.
 		const totalActions =
-			scan.visible.length + Math.max(0, scan.sourceTotal - scan.scanned);
+			scan.scanned >= LIST_SCAN_MAX
+				? scan.visible.length
+				: scan.visible.length + Math.max(0, scan.sourceTotal - scan.scanned);
 		const window = scan.visible.slice(offset, wanted);
 		if (window.length === 0) return { totalActions, actions: [] };
 		const first = window[0];
@@ -446,12 +452,18 @@ export async function listActionsForApp(
 			cache.delete(key);
 			return await read(await scanTo(undefined), false);
 		}
+		const kept = window
+			.map((position) => full.actions[position - first])
+			.filter((action) => action !== undefined && !isHiddenAction(action));
+		// An action in the window was relabelled or removed with the total
+		// unchanged: the scan is stale, so scan again from 0, once.
+		if (kept.length < window.length && retry) {
+			cache.delete(key);
+			return await read(await scanTo(undefined), false);
+		}
 		return {
 			totalActions,
-			actions: window
-				.map((position) => full.actions[position - first])
-				.filter((action) => action !== undefined && !isHiddenAction(action))
-				.map((action) => forApp(action, args)),
+			actions: kept.map((action) => forApp(action, args)),
 		};
 	};
 
