@@ -7,7 +7,6 @@ import {
 	ExternalLink,
 	Loader2,
 	RefreshCw,
-	Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useState } from "react";
@@ -40,6 +39,7 @@ import {
 } from "@/lib/wallet/one-color";
 import type { OneColorSendOutcome } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { OneColorMintDialog } from "./one-color-mint";
 import { OneColorReceiveDialog } from "./one-color-receive";
 import { OneColorPendingSends, OneColorSendDialog } from "./one-color-send";
 
@@ -82,39 +82,32 @@ function useOverlayOrigin(assetId: string) {
 	});
 }
 
-/**
- * Receive, Send and Mint. Mint is offered only to an authority holder and
- * stays disabled until its batch lands.
- */
+/** Receive, Send and Mint. Mint is offered only to an authority holder. */
 function OneColorActions({
 	token,
-	onSendStart,
+	onWriteStart,
 	onSendOutcome,
+	onMinted,
 }: {
 	token: OneColorBalance;
-	onSendStart: () => void;
+	/** A send or mint is starting: the last one's result no longer applies. */
+	onWriteStart: () => void;
 	onSendOutcome: (outcome: DeliveredSend) => void;
+	onMinted: (message: string) => void;
 }) {
 	return (
-		<div className="space-y-1">
-			<div className="flex flex-wrap gap-2">
-				<OneColorReceiveDialog />
-				<OneColorSendDialog
-					token={token}
-					onStart={onSendStart}
-					onOutcome={onSendOutcome}
-				/>
-				{token.authorities > 0 ? (
-					<Button size="sm" variant="outline" disabled>
-						<Sparkles className="size-4" data-icon="inline-start" /> Mint
-					</Button>
-				) : null}
-			</div>
-			{token.authorities > 0 ? (
-				<p className="text-xs text-muted-foreground">
-					Mint isn't available yet.
-				</p>
-			) : null}
+		<div className="flex flex-wrap gap-2">
+			<OneColorReceiveDialog />
+			<OneColorSendDialog
+				token={token}
+				onStart={onWriteStart}
+				onOutcome={onSendOutcome}
+			/>
+			<OneColorMintDialog
+				token={token}
+				onStart={onWriteStart}
+				onMinted={onMinted}
+			/>
 		</div>
 	);
 }
@@ -265,7 +258,11 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const [undelivered, setUndelivered] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
-	const onSendStart = useCallback(() => setLastSend(null), []);
+	const [lastMint, setLastMint] = useState<string | null>(null);
+	const onWriteStart = useCallback(() => {
+		setLastSend(null);
+		setLastMint(null);
+	}, []);
 	const onSendOutcome = useCallback((outcome: DeliveredSend) => {
 		setLastSend(outcome);
 		if (outcome.kind === "undelivered") {
@@ -344,9 +341,15 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 					</div>
 					<OneColorActions
 						token={token}
-						onSendStart={onSendStart}
+						onWriteStart={onWriteStart}
 						onSendOutcome={onSendOutcome}
+						onMinted={setLastMint}
 					/>
+					{lastMint ? (
+						<p className="text-sm text-primary" role="status">
+							{lastMint}
+						</p>
+					) : null}
 					{lastSend ? (
 						<p
 							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}

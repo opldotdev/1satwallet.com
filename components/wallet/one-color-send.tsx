@@ -41,13 +41,13 @@ import {
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 /** Scrolls inside the viewport on short screens; footer buttons full width on phones. */
-const SHEET_CLASS = "max-h-[calc(100dvh-2rem)] overflow-y-auto";
-const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
+export const SHEET_CLASS = "max-h-[calc(100dvh-2rem)] overflow-y-auto";
+export const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
 
 const DELIVERY_NOTE =
 	"Delivered to the handle's mailbox and claimed when their wallet next syncs.";
 
-function logSendFailure(
+export function logOneColorFailure(
 	operation: string,
 	cause: unknown,
 	details?: { txid?: string },
@@ -66,10 +66,10 @@ function logSendFailure(
 }
 
 /**
- * After a send or a cancel: re-reads the BSV balance and the holdings,
+ * After a send, cancel or mint: re-reads the BSV balance and the holdings,
  * history and pending sends (all under `["one-color"]`).
  */
-function useRefreshAfterWrite() {
+export function useRefreshAfterWrite() {
 	const queryClient = useQueryClient();
 	const { refreshBalance } = useWalletToolbox();
 	return useCallback(async () => {
@@ -165,7 +165,7 @@ export function OneColorSendDialog({
 		// Holdings are re-read before `busy` clears, so Send stays disabled until
 		// the wallet's own read shows whether a send was built.
 		const outcome = await runOneColorSend(colorContext, review, {
-			log: logSendFailure,
+			log: logOneColorFailure,
 			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
@@ -357,7 +357,7 @@ function CancelSendDialog({
 		setBusy(true);
 		setError(null);
 		const outcome = await runOneColorCancel(colorContext, send, {
-			log: logSendFailure,
+			log: logOneColorFailure,
 			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
