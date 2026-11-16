@@ -1,0 +1,90 @@
+name: E2E
+
+# Browser tests against a deployed site with a throwaway testnet wallet.
+# Vercel reports each Preview and Production deploy as a deployment_status
+# event; the nightly run tests production and requires the Locks unlock.
+
+on:
+  deployment_status:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Base URL to test
+        required: true
+        default: https://1satwallet.com
+
+# One wallet, one writer: runs queue instead of spending wallet A's coins at
+# the same time, and a queued run is never cancelled.
+concurrency:
+  group: e2e-testnet-wallet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: E2E
+    if: >-
+      github.event_name != 'deployment_status' || (
+        github.event.deployment_status.state == 'success' &&
+        github.event.deployment.creator.login == 'vercel[bot]' &&
+        contains(fromJSON('["Preview", "Production"]'), github.event.deployment.environment)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: e2e-testnet
+    env:
+      CI: "true"
+      E2E_BASE_URL: ${{ github.event.deployment_status.environment_url || inputs.url || 'https://1satwallet.com' }}
+      E2E_REQUIRE_UNLOCK: ${{ github.event_name == 'schedule' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.deployment.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Secrets are only for code on a branch of this repository, never a fork.
+      - name: Require the commit to be on a branch of this repository
+        env:
+          SHA: ${{ github.event.deployment.sha || github.sha }}
+        run: |
+          if [ -z "$(git branch --remotes --contains "$SHA")" ]; then
+            echo "::error::$SHA is not on a branch of ${{ github.repository }}; not running e2e with secrets."
+            exit 1
+          fi
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      # Playwright's test runner runs on Node, not on the Bun runtime.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+
+      - name: Backend reachability
+        run: bun run test:live
+
+      - name: Browser tests
+        run: bun run e2e
+        env:
+          E2E_WALLET_A_BACKUP: ${{ secrets.E2E_WALLET_A_BACKUP }}
+          E2E_WALLET_PASSPHRASE: ${{ secrets.E2E_WALLET_PASSPHRASE }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Summary
+        if: always()
+        run: echo "Tested $E2E_BASE_URL at ${{ github.event.deployment.sha || github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
