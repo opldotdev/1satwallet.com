@@ -146,13 +146,47 @@ describe("findMisroutedModuleIdentifier", () => {
 			assert.deepEqual(findMisroutedModuleIdentifier(args), {
 				field,
 				value: bad,
+				prefix: "p ",
 			});
 		}
 	});
 
-	it("leaves canonical p names, plain names and non-strings alone", () => {
+	it("finds names the wallet lowercases into the reserved admin namespace", () => {
+		const cases: [unknown, string, string][] = [
+			[{ basket: "Admin foo" }, "basket", "Admin foo"],
+			[{ basket: " admin foo" }, "basket", " admin foo"],
+			[
+				{ labels: ["ok", "ADMIN originator x"] },
+				"labels[1]",
+				"ADMIN originator x",
+			],
+			[{ tags: ["\u00a0admin"] }, "tags[0]", "\u00a0admin"],
+			[{ protocolID: [2, " admin keys"] }, "protocolID[1]", " admin keys"],
+			[
+				{ outputs: [{ basket: "Administrator" }] },
+				"outputs[0].basket",
+				"Administrator",
+			],
+			[
+				{ outputs: [{ insertionRemittance: { basket: "AdMin x" } }] },
+				"outputs[0].insertionRemittance.basket",
+				"AdMin x",
+			],
+		];
+		for (const [args, field, value] of cases) {
+			assert.deepEqual(findMisroutedModuleIdentifier(args), {
+				field,
+				value,
+				prefix: "admin",
+			});
+		}
+	});
+
+	it("leaves canonical reserved names, plain names and non-strings alone", () => {
 		for (const args of [
 			{ basket: BASKET, labels: ["p color plan 0 1 ab"], tags: ["p color"] },
+			{ basket: "admin foo", labels: ["admin originator x"] },
+			{ protocolID: [2, "admin keys"], tags: ["my admin", "ad min"] },
 			{ protocolID: PROTOCOL },
 			{ basket: "Default", labels: ["Payments"], tags: [" pcolor"] },
 			{ basket: 1, labels: [null], protocolID: [2] },
@@ -267,8 +301,7 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 		const [event] = getDiagnosticEvents();
 		assert.equal(event.operation, "wallet.module-identifier.listOutputs");
 		const detail = logged.find(
-			(args) =>
-				args[0] === "[wallet] refused a misrouted permission-module name",
+			(args) => args[0] === "[wallet] refused a misrouted reserved name",
 		);
 		assert.deepEqual(detail?.[1], {
 			correlationId: event.correlationId,
@@ -276,6 +309,64 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 			originator: APP,
 			field: "basket",
 			value: ` ${BASKET}`,
+			prefix: "p ",
+		});
+	});
+
+	it("refuses misrouted admin names from an app before the manager sees them", async () => {
+		const { manager, calls, prompts } = setup();
+		for (const call of [
+			manager.listOutputs({ basket: " admin foo" }, APP),
+			manager.relinquishOutput(
+				{ basket: "Admin foo", output: `${"c".repeat(64)}.0` },
+				APP,
+			),
+			manager.listActions({ labels: ["Admin originator other.app"] }, APP),
+			manager.createAction(
+				{ description: "make it", labels: [" admin month 2026-11"] },
+				APP,
+			),
+			manager.createSignature(
+				{
+					protocolID: [2, "Admin keys"],
+					keyID: "1",
+					counterparty: "self",
+					data: [1],
+				},
+				APP,
+			),
+			manager.internalizeAction(
+				{
+					tx: [1],
+					description: "take it in",
+					outputs: [
+						{
+							outputIndex: 0,
+							protocol: "basket insertion",
+							insertionRemittance: { basket: "ADMIN x" },
+						},
+					],
+				},
+				APP,
+			),
+		]) {
+			await assert.rejects(call, {
+				name: "MisroutedModuleIdentifierError",
+				message: /reserved "admin" prefix.*lowercase "admin"/,
+			});
+		}
+		assert.deepEqual(calls, []);
+		assert.deepEqual(prompts, []);
+		const detail = logged.find(
+			(args) => args[0] === "[wallet] refused a misrouted reserved name",
+		);
+		assert.deepEqual(detail?.[1], {
+			correlationId: getDiagnosticEvents()[0].correlationId,
+			method: "listOutputs",
+			originator: APP,
+			field: "basket",
+			value: " admin foo",
+			prefix: "admin",
 		});
 	});
 

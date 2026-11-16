@@ -194,11 +194,11 @@ describe("wallet provider color wiring", () => {
 		);
 		assert.match(
 			embedded,
-			/const localPermissions = localPermissionsRef\.current;\s*if \(!local \|\| !localPermissions\)/,
+			/const localPermissions = localPermissionsRef\.current;[\s\S]*if \(!local \|\| !localPermissions/,
 		);
 		assert.match(
 			embedded,
-			/setPermissionsManager\(localPermissions\.manager\);\s*setColorOverlay\(localPermissions\.colorOverlay\);\s*setConnectionMode\("built-in"\)/,
+			/setPermissionsManager\(localPermissions\.manager\);\s*setColorOverlay\(localPermissions\.colorOverlay\);[\s\S]*setConnectionMode\("built-in"\)/,
 		);
 		const teardown = source.slice(
 			source.indexOf("const teardownWallet"),
@@ -207,6 +207,55 @@ describe("wallet provider color wiring", () => {
 		assert.match(
 			teardown,
 			/walletResultRef\.current = null;\s*localPermissionsRef\.current = null;/,
+		);
+	});
+
+	it("restores the built-in identity and receive addresses when switching back", () => {
+		assert.match(
+			init,
+			/localReceiveRef\.current = \{\s*identityKey: newIdentityKey,\s*addressManager: receiveResult\.addressManager,\s*state: receiveResult\.state,\s*\}/,
+		);
+		const rotation = source.slice(
+			source.indexOf("const _handleQueuedOutpoint"),
+			source.indexOf(
+				"saveReceiveAddressState({ chain, identityKey }, advanced.state)",
+			),
+		);
+		assert.match(
+			rotation,
+			/if \(localReceiveRef\.current\?\.identityKey === identityKey\) \{\s*localReceiveRef\.current = \{\s*identityKey,\s*addressManager: advanced\.addressManager,\s*state: advanced\.state,/,
+		);
+		const embedded = source.slice(
+			source.indexOf("const switchWallet"),
+			source.indexOf(
+				"setIsInitializing(true);",
+				source.indexOf("const switchWallet"),
+			),
+		);
+		assert.match(
+			embedded,
+			/if \(!local \|\| !localPermissions \|\| !localReceive\)/,
+		);
+		for (const restore of [
+			/addressManagerRef\.current = addressManager;/,
+			/receiveStateRef\.current = state;/,
+			/setIdentityKey\(localReceive\.identityKey\);/,
+			/setReceiveAddressIndex\(state\.currentIndex\);/,
+			/setDepositAddress\(getDepositAddress\(addressManager, state\) \|\| null\);/,
+			/setReceiveAddresses\(getActiveReceiveAddresses\(addressManager, state\)\);/,
+			/setTrackedAddresses\(addressManager\.getAddresses\(\)\);/,
+			/setLastRotationOutpoint\(state\.lastRotationOutpoint \?\? null\);/,
+			/setAddressManagerReady\(true\);/,
+		]) {
+			assert.match(embedded, restore);
+		}
+		const teardown = source.slice(
+			source.indexOf("const teardownWallet"),
+			source.indexOf("const teardown = (async"),
+		);
+		assert.match(
+			teardown,
+			/localPermissionsRef\.current = null;\s*localReceiveRef\.current = null;/,
 		);
 	});
 

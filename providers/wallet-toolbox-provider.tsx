@@ -48,6 +48,7 @@ import {
 	advanceReceiveAddress,
 	buildReceiveAddressManager,
 	getActiveReceiveAddresses,
+	getDepositAddress,
 	RECEIVE_ADDRESS_PREFIX,
 	RECEIVE_ADDRESS_WINDOW,
 } from "@/lib/receive-address-manager";
@@ -307,6 +308,13 @@ export function WalletToolboxProvider({
 		manager: WalletPermissionsManager;
 		colorOverlay: ColorOverlay | null;
 	} | null>(null);
+	// The built-in wallet's identity and receive addresses, kept current across
+	// rotations, so switching back from an external wallet restores them too.
+	const localReceiveRef = useRef<{
+		identityKey: string;
+		addressManager: AddressManager;
+		state: ReceiveAddressState;
+	} | null>(null);
 	const walletSessionRef = useRef<WalletSession | null>(null);
 	const walletSessionCleanupRef = useRef<() => void>(() => {});
 	const externalServicesRef = useRef<OneSatServices | null>(null);
@@ -490,6 +498,13 @@ export function WalletToolboxProvider({
 
 				receiveStateRef.current = advanced.state;
 				addressManagerRef.current = advanced.addressManager;
+				if (localReceiveRef.current?.identityKey === identityKey) {
+					localReceiveRef.current = {
+						identityKey,
+						addressManager: advanced.addressManager,
+						state: advanced.state,
+					};
+				}
 
 				saveReceiveAddressState({ chain, identityKey }, advanced.state);
 
@@ -623,6 +638,7 @@ export function WalletToolboxProvider({
 			if (destroyLocal) {
 				walletResultRef.current = null;
 				localPermissionsRef.current = null;
+				localReceiveRef.current = null;
 				for (const module of assetPermissionModulesRef.current)
 					module.dispose();
 				assetPermissionModulesRef.current = [];
@@ -938,6 +954,11 @@ export function WalletToolboxProvider({
 					manager: wpm,
 					colorOverlay: color?.overlay ?? null,
 				};
+				localReceiveRef.current = {
+					identityKey: newIdentityKey,
+					addressManager: receiveResult.addressManager,
+					state: receiveResult.state,
+				};
 				assetPermissionModulesRef.current = pendingPermissionModules;
 				pendingPermissionModules = [];
 				setWallet(result.wallet);
@@ -1019,7 +1040,8 @@ export function WalletToolboxProvider({
 			if (option === "embedded") {
 				const local = walletResultRef.current;
 				const localPermissions = localPermissionsRef.current;
-				if (!local || !localPermissions) {
+				const localReceive = localReceiveRef.current;
+				if (!local || !localPermissions || !localReceive) {
 					setInitError(
 						"Create or import a built-in wallet before switching back. The current wallet is unchanged.",
 					);
@@ -1037,6 +1059,16 @@ export function WalletToolboxProvider({
 				setServices(local.services);
 				setPermissionsManager(localPermissions.manager);
 				setColorOverlay(localPermissions.colorOverlay);
+				const { addressManager, state } = localReceive;
+				addressManagerRef.current = addressManager;
+				receiveStateRef.current = state;
+				setIdentityKey(localReceive.identityKey);
+				setReceiveAddressIndex(state.currentIndex);
+				setDepositAddress(getDepositAddress(addressManager, state) || null);
+				setReceiveAddresses(getActiveReceiveAddresses(addressManager, state));
+				setTrackedAddresses(addressManager.getAddresses());
+				setLastRotationOutpoint(state.lastRotationOutpoint ?? null);
+				setAddressManagerReady(true);
 				setConnectionMode("built-in");
 				setProviderType("1sat-web");
 				setConnectionStatus("ready");
