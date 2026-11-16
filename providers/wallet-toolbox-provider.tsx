@@ -20,10 +20,7 @@ import {
 	createWalletSession,
 	type WalletSession,
 } from "@1sat/connect";
-import {
-	createAssetPermissionModules,
-	type OneSatPermissionModule,
-} from "@1sat/permission-module";
+import { createAssetPermissionModules } from "@1sat/permission-module";
 import {
 	type AddressManager,
 	createWebWallet,
@@ -64,6 +61,12 @@ import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
+	adminOnlyTokenAccess,
+	createColorContext,
+	createWalletColorModule,
+} from "@/lib/wallet/color-module";
+import type { ColorOverlay } from "@/lib/wallet/color-overlay";
+import {
 	connectSelectedWallet,
 	prepareWalletSwitch,
 	type WalletConnectionOption,
@@ -87,6 +90,7 @@ import { useWalletDiagnostics } from "./hooks/use-wallet-diagnostics";
 
 type Chain = "main" | "test";
 export type WalletConnectionMode = "none" | "built-in" | "external";
+type DisposablePermissionModule = { dispose: () => void };
 
 export const WALLET_CONNECTION_MODE_KEY = "1sat-wallet-connection-mode";
 const CONNECTION_OPTION_KEY = "1sat-wallet-connection-option";
@@ -224,6 +228,10 @@ interface WalletToolboxContextValue {
 	hasActiveSync: boolean;
 
 	oneSatContext: OneSatContext | null;
+	/** 1Color writes and the inbox: the permissions manager as the admin. Null off testnet. */
+	colorContext: OneSatContext | null;
+	/** The 1Color overlay, for `resolveOrigin`. Null off testnet. */
+	colorOverlay: ColorOverlay | null;
 
 	balance: WalletBalance | null;
 	ordinals: WalletOutput[];
@@ -298,7 +306,8 @@ export function WalletToolboxProvider({
 	const externalServicesRef = useRef<OneSatServices | null>(null);
 	const connectionGenerationRef = useRef(0);
 	const teardownPromiseRef = useRef<Promise<void> | null>(null);
-	const assetPermissionModulesRef = useRef<OneSatPermissionModule[]>([]);
+	const assetPermissionModulesRef = useRef<DisposablePermissionModule[]>([]);
+	const [colorOverlay, setColorOverlay] = useState<ColorOverlay | null>(null);
 
 	const [isInitialized, setIsInitialized] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -345,6 +354,16 @@ export function WalletToolboxProvider({
 			builtIn: connectionMode === "built-in",
 		});
 	}, [wallet, services, chain, connectionMode]);
+
+	const colorContext = useMemo<OneSatContext | null>(() => {
+		if (!permissionsManager || !colorOverlay || connectionMode !== "built-in")
+			return null;
+		return createColorContext(permissionsManager, {
+			adminOriginator: ADMIN_ORIGINATOR,
+			chain,
+			services: services ?? undefined,
+		});
+	}, [permissionsManager, colorOverlay, services, chain, connectionMode]);
 
 	// -- Balance hook --
 	const savedConnectionOption =
@@ -529,6 +548,7 @@ export function WalletToolboxProvider({
 
 			setWallet(null);
 			setPermissionsManager(null);
+			setColorOverlay(null);
 			setServices(null);
 			setIdentityKey(null);
 			setConnectionMode("none");
@@ -834,7 +854,7 @@ export function WalletToolboxProvider({
 			setIsInitializing(true);
 			setConnectionStatus("authenticating");
 			let pendingResult: WebWalletResult | null = null;
-			let pendingPermissionModules: OneSatPermissionModule[] = [];
+			let pendingPermissionModules: DisposablePermissionModule[] = [];
 			try {
 				const rootKey = PrivateKey.fromHex(rootKeyHex);
 				const newIdentityKey = rootKey.toPublicKey().toString();
@@ -860,13 +880,21 @@ export function WalletToolboxProvider({
 					adminOriginator: ADMIN_ORIGINATOR,
 					services: result.services,
 				});
-				pendingPermissionModules = Object.values(assetPermissionModules);
+				const color = createWalletColorModule({
+					wallet: result.wallet,
+					chain,
+					requestTokenAccess: adminOnlyTokenAccess(ADMIN_ORIGINATOR),
+				});
+				const permissionModules = color
+					? { ...assetPermissionModules, color: color.module }
+					: assetPermissionModules;
+				pendingPermissionModules = Object.values(permissionModules);
 				const wpm = new WalletPermissionsManager(
 					result.wallet,
 					ADMIN_ORIGINATOR,
 					{
 						...PERMISSIONS_CONFIG,
-						permissionModules: assetPermissionModules,
+						permissionModules,
 					},
 				);
 				const loadedState = loadReceiveAddressState(
@@ -905,6 +933,7 @@ export function WalletToolboxProvider({
 				setServices(result.services);
 
 				setPermissionsManager(wpm);
+				setColorOverlay(color?.overlay ?? null);
 				setIdentityKey(newIdentityKey);
 				setConnectionMode("built-in");
 				setConnectionStatus("ready");
@@ -1147,6 +1176,8 @@ export function WalletToolboxProvider({
 			clearWalletEvents: clearWalletEvents,
 			hasActiveSync,
 			oneSatContext,
+			colorContext,
+			colorOverlay: colorContext ? colorOverlay : null,
 			balance: balance,
 			ordinals: ordinals,
 			bsv20Tokens: [],
@@ -1191,6 +1222,8 @@ export function WalletToolboxProvider({
 			clearWalletEvents,
 			hasActiveSync,
 			oneSatContext,
+			colorContext,
+			colorOverlay,
 			balance,
 			ordinals,
 			bsv21Balances,
