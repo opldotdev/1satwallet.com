@@ -2,7 +2,9 @@ import { type Chain, endpointsOf } from "@/lib/chain-endpoints";
 
 /**
  * The remote storage the built-in wallet uses as its active store. The local
- * IndexedDB store is registered beside it as a backup.
+ * IndexedDB store is registered beside it as a backup. The chain is the
+ * account's own, fixed at create or import, so an account has exactly one
+ * active store.
  *
  * A wallet has one active storage, and the same keys must never point at two
  * storages, or they diverge. So every chain uses its hosted 1Sat storage, the

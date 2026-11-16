@@ -2,6 +2,8 @@
 
 import { FileUp, Key } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 import {
 	Card,
 	CardContent,
@@ -10,9 +12,16 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { useSound } from "@/hooks/use-sound";
+import { useWallet } from "@/providers/wallet-provider";
 
 export default function ImportSelectPage() {
+	const router = useRouter();
 	const { play } = useSound();
+	const { hasWallet } = useWallet();
+
+	useEffect(() => {
+		if (hasWallet) router.replace("/wallet");
+	}, [hasWallet, router]);
 
 	return (
 		<section className="space-y-6">

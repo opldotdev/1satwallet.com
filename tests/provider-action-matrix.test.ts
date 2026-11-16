@@ -121,7 +121,7 @@ describe("provider action matrix", () => {
 
 	it("keeps the external connector branch away from built-in secrets and stores", () => {
 		const source = read("providers/wallet-toolbox-provider.tsx");
-		const start = source.indexOf("const connectExternalWallet");
+		const start = source.indexOf("const connectExternal = useCallback");
 		const end = source.indexOf("\n\tuseEffect(() => {", start);
 		assert.ok(start >= 0 && end > start);
 		const external = source.slice(start, end);

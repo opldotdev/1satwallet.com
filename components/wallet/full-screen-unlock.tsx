@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useWallet } from "@/providers/wallet-provider";
+import { useWallet, WalletSaveError } from "@/providers/wallet-provider";
 
 export function FullScreenUnlock() {
 	const { isWalletLocked, isWalletInitialized, unlockWallet, hasWallet } =
@@ -37,8 +37,12 @@ export function FullScreenUnlock() {
 			if (!(await unlockWallet(passphrase))) {
 				setError("Invalid passphrase");
 			}
-		} catch {
-			setError("Wallet could not be unlocked. Try again.");
+		} catch (error) {
+			setError(
+				error instanceof WalletSaveError
+					? error.message
+					: "Wallet could not be unlocked. Try again.",
+			);
 		} finally {
 			setIsLoading(false);
 		}

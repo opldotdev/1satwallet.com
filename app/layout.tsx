@@ -99,9 +99,11 @@ export default function RootLayout({
 									<WalletChainProvider>
 										<KeyboardShortcuts />
 										<WalletBridge>{children}</WalletBridge>
-										<Toaster position="bottom-right" />
 									</WalletChainProvider>
 								</WalletProvider>
+								{/* Outside the chain provider, so a toast raised just before
+								    the wallet moves to another network survives the remount. */}
+								<Toaster position="bottom-right" />
 							</QueryProvider>
 						</ThemeTokenProvider>
 					</ThemeProvider>

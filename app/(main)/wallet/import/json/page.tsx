@@ -12,6 +12,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import {
 	type DetectedWalletBackup,
 	detectWalletBackup,
@@ -105,6 +106,9 @@ export default function ImportJsonPage() {
 													<Badge variant="secondary" className="text-[10px]">
 														Yours Wallet
 													</Badge>
+												)}
+												{previewData.backup.network === "test" && (
+													<TestnetBadge className="text-[10px]" />
 												)}
 											</div>
 										</div>

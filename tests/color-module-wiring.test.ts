@@ -275,7 +275,7 @@ describe("wallet provider color wiring", () => {
 		assert.doesNotMatch(source, /setPermissionsManager\(new /);
 	});
 
-	it("destroy waits out a pending teardown, then destroys the built-in wallet", () => {
+	it("destroy and unmount wait out a pending teardown first", () => {
 		const destroy = source.slice(
 			source.indexOf("const destroyWallet"),
 			source.indexOf("const disconnectExternalWallet"),
@@ -284,9 +284,14 @@ describe("wallet provider color wiring", () => {
 			destroy,
 			/while \(teardownPromiseRef\.current\) await teardownPromiseRef\.current;\s*await teardownWallet\("disconnected"\);/,
 		);
+		const unmount = source.slice(source.indexOf("const unmountWallet"));
+		assert.match(
+			unmount,
+			/while \(teardownPromiseRef\.current\) await teardownPromiseRef\.current;\s*await teardownWallet\("disconnected", \{ keepConnection: true \}\);/,
+		);
 		assert.match(
 			source,
-			/useEffect\(\(\) => \(\) => void destroyWallet\(\), \[destroyWallet\]\);/,
+			/useEffect\(\(\) => \(\) => void unmountWallet\(\), \[unmountWallet\]\);/,
 		);
 	});
 

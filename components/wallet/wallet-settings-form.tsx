@@ -13,16 +13,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-	AlertDialog,
-	AlertDialogAction,
-	AlertDialogCancel,
-	AlertDialogContent,
-	AlertDialogDescription,
-	AlertDialogFooter,
-	AlertDialogHeader,
-	AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -41,11 +31,11 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { MessageboxReceiving } from "@/components/wallet/messagebox-receiving";
+import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { useSound } from "@/hooks/use-sound";
-import type { Chain } from "@/lib/chain-endpoints";
 import { CURRENCY_KEY, PRIVACY_MODE_KEY } from "@/lib/constants";
 import { walletStorageHost } from "@/lib/wallet/storage-endpoint";
-import { writeWalletChain } from "@/lib/wallet-chain";
 import { useSettingsStorage } from "@/lib/wallet-storage";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -68,7 +58,6 @@ export function WalletSettingsForm() {
 		"USD",
 	);
 	const [mounted, setMounted] = useState(false);
-	const [pendingChain, setPendingChain] = useState<Chain | null>(null);
 
 	useEffect(() => {
 		setMounted(true);
@@ -104,6 +93,8 @@ export function WalletSettingsForm() {
 								copy in this browser is kept in sync as a backup.
 							</span>
 						</div>
+						<Separator className="my-4" />
+						<MessageboxReceiving />
 					</CardContent>
 				)}
 				{connectionMode === "external" && (
@@ -134,66 +125,22 @@ export function WalletSettingsForm() {
 					</div>
 				</CardHeader>
 				<CardContent className="space-y-6">
-					{/* Network */}
+					{/* Network: fixed per account, never a setting */}
 					<div className="flex items-center justify-between space-x-2">
 						<div className="flex flex-col space-y-1">
-							<Label htmlFor="network" className="text-base">
-								Network
-							</Label>
+							<Label className="text-base">Network</Label>
 							<span className="text-sm text-muted-foreground">
-								Testnet coins have no value. Each network keeps its own balances
-								and assets.
+								{connectionMode === "external"
+									? "Reported by the connected wallet."
+									: "Set when this wallet was created or imported. It cannot be changed."}
 							</span>
 						</div>
-						<Select
-							value={chain}
-							onValueChange={(value) => {
-								play("click");
-								if (value === "main" || value === "test") {
-									if (value !== chain) setPendingChain(value);
-								}
-							}}
-						>
-							<SelectTrigger className="w-[120px]" id="network">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="main">Mainnet</SelectItem>
-								<SelectItem value="test">Testnet</SelectItem>
-							</SelectContent>
-						</Select>
+						{chain === "test" ? (
+							<TestnetBadge />
+						) : (
+							<span className="text-sm font-medium">Mainnet</span>
+						)}
 					</div>
-					<AlertDialog
-						open={pendingChain !== null}
-						onOpenChange={(open) => {
-							if (!open) setPendingChain(null);
-						}}
-					>
-						<AlertDialogContent>
-							<AlertDialogHeader>
-								<AlertDialogTitle>
-									Switch to {pendingChain === "test" ? "Testnet" : "Mainnet"}?
-								</AlertDialogTitle>
-								<AlertDialogDescription>
-									The wallet closes and reopens on{" "}
-									{pendingChain === "test" ? "Testnet" : "Mainnet"}. Balances,
-									assets and history from the current network are not shown
-									there. An external wallet must be connected again.
-								</AlertDialogDescription>
-							</AlertDialogHeader>
-							<AlertDialogFooter>
-								<AlertDialogCancel>Cancel</AlertDialogCancel>
-								<AlertDialogAction
-									onClick={() => {
-										if (pendingChain) writeWalletChain(pendingChain);
-										setPendingChain(null);
-									}}
-								>
-									Switch network
-								</AlertDialogAction>
-							</AlertDialogFooter>
-						</AlertDialogContent>
-					</AlertDialog>
 
 					<Separator />
 
