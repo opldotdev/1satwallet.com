@@ -131,7 +131,11 @@ function ConnectedWalletHome() {
 								</p>
 							) : (
 								<>
-									<p className={styles.amount}>
+									<p
+										className={styles.amount}
+										data-sats={privacyMode ? undefined : balance?.total}
+										data-testid="wallet-balance"
+									>
 										{privacyMode ? "••••••••" : totalBsv?.toFixed(8)}
 										{!privacyMode && <span className={styles.unit}>BSV</span>}
 									</p>
