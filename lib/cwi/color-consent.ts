@@ -10,12 +10,12 @@
  * decides when a saved grant answers without a prompt:
  *
  * - `color_access` for a basket: a basket grant for that app and that
- *   `p color` basket, kept in this chain's color grant store, approves; an
+ *   `p color` basket, kept in this wallet's color grant store for the chain, approves; an
  *   approved prompt saves one. Label reads have no grant and prompt every time.
  * - every send, signature and relinquish prompts every time.
  * - the wallet itself (the admin originator, exact match) is approved without
- *   a prompt: its own views confirm before they call.
- * - an unreadable message or an unknown type is declined without a prompt.
+ *   a prompt, whatever the message: its own views confirm before they call.
+ * - an app's unreadable message or unknown type is declined without a prompt.
  */
 
 import type {
@@ -29,7 +29,10 @@ import {
 	IndexedDbPermissionStore,
 	type IPermissionStore,
 	isExpired,
+	type ListGrantsFilter,
 	normalizeOriginator,
+	type PermissionKey,
+	type StoredGrant,
 } from "@1sat/wallet-browser";
 import {
 	type ColorTokenAccessHandler,
@@ -392,23 +395,165 @@ export const colorPromptRequest = (
  * Grant store and requestTokenAccess
  * ---------------------------------------------------------------------- */
 
-const stores = new Map<Chain, IndexedDbPermissionStore>();
+/** The IndexedDB database name prefix `IndexedDbPermissionStore` uses. */
+const PERMISSION_DATABASE = "1sat-wallet-permissions";
+/** Every color grant store's scope starts with this. */
+const COLOR_SCOPE_PREFIX = "1satwallet-color-";
+
+const colorScope = (chain: Chain, identityKey: string): string =>
+	`${COLOR_SCOPE_PREFIX}${chain}-${identityKey}`;
+
+const logStoreFailure = (
+	operation: string,
+	detail: Record<string, unknown>,
+	error: unknown,
+) => {
+	const event = reportDiagnostic({
+		category: "action",
+		code: "action.failed",
+		operation: `wallet.color-consent.store.${operation}`,
+		recoverable: true,
+		context: { provider: "permissions-manager", retryable: true },
+	});
+	console.error(`[wallet] 1Color grant store: ${operation} failed`, {
+		correlationId: event.correlationId,
+		...detail,
+		error,
+	});
+};
 
 /**
- * This chain's store of color basket grants (IndexedDB database
- * `1sat-wallet-permissions:1satwallet-color-<chain>`). It holds nothing but
- * the grants `createColorTokenAccessHandler` saves; every other permission is
- * an on-chain token of the permissions manager.
+ * An `IndexedDbPermissionStore` that recovers from a failed call.
+ * `IndexedDbPermissionStore` (`@1sat/wallet-browser` 0.1.2) keeps its open
+ * promise even when the open is rejected, so one transient failure (a blocked
+ * upgrade, storage pressure) would fail every later call. After any failed
+ * call this drops that store, logs the failure, and opens a fresh one on the
+ * next call; the error still reaches the caller.
  */
-export function colorPermissionStore(chain: Chain): IndexedDbPermissionStore {
-	let store = stores.get(chain);
+export class RecoveringPermissionStore implements IPermissionStore {
+	readonly scope: string;
+	private store: IndexedDbPermissionStore;
+
+	constructor(scope: string) {
+		this.scope = scope;
+		this.store = new IndexedDbPermissionStore({ scope });
+	}
+
+	private async run<T>(
+		operation: string,
+		call: (store: IndexedDbPermissionStore) => Promise<T>,
+	): Promise<T> {
+		const store = this.store;
+		try {
+			return await call(store);
+		} catch (error) {
+			if (this.store === store) {
+				this.store = new IndexedDbPermissionStore({ scope: this.scope });
+				logStoreFailure(operation, { scope: this.scope }, error);
+				// Release the failed store's connection, if it ever opened. A
+				// rejected open rejects close() with the error logged above.
+				store.close().catch((closeError: unknown) => {
+					if (closeError !== error)
+						logStoreFailure("close", { scope: this.scope }, closeError);
+				});
+			}
+			throw error;
+		}
+	}
+
+	findGrant(key: PermissionKey) {
+		return this.run("findGrant", (store) => store.findGrant(key));
+	}
+	putGrant(grant: StoredGrant) {
+		return this.run("putGrant", (store) => store.putGrant(grant));
+	}
+	deleteGrant(key: PermissionKey) {
+		return this.run("deleteGrant", (store) => store.deleteGrant(key));
+	}
+	deleteAllForOriginator(originator: string) {
+		return this.run("deleteAllForOriginator", (store) =>
+			store.deleteAllForOriginator(originator),
+		);
+	}
+	listGrants(filter?: ListGrantsFilter) {
+		return this.run("listGrants", (store) => store.listGrants(filter));
+	}
+	/** Release the open database handle; the next call reopens it. */
+	close() {
+		return this.store.close();
+	}
+}
+
+const stores = new Map<string, RecoveringPermissionStore>();
+
+/**
+ * One wallet's store of color basket grants on one chain (IndexedDB database
+ * `1sat-wallet-permissions:1satwallet-color-<chain>-<identityKey>`), so a
+ * grant given to an app by one wallet never answers for another. It holds
+ * nothing but the grants `createColorTokenAccessHandler` saves; every other
+ * permission is an on-chain token of the permissions manager.
+ */
+export function colorPermissionStore(
+	chain: Chain,
+	identityKey: string,
+): RecoveringPermissionStore {
+	const scope = colorScope(chain, identityKey);
+	let store = stores.get(scope);
 	if (!store) {
-		store = new IndexedDbPermissionStore({
-			scope: `1satwallet-color-${chain}`,
-		});
-		stores.set(chain, store);
+		store = new RecoveringPermissionStore(scope);
+		stores.set(scope, store);
 	}
 	return store;
+}
+
+const deleteDatabase = (name: string): Promise<void> =>
+	new Promise((resolve, reject) => {
+		const request = indexedDB.deleteDatabase(name);
+		request.onsuccess = () => resolve();
+		request.onerror = () =>
+			reject(request.error ?? new Error(`Could not delete ${name}`));
+	});
+
+/**
+ * Delete the color grant stores when the wallet is removed: `current` (the
+ * removed wallet's store, when its identity key is known) and, where the
+ * browser lists its databases, every other color grant store, since a browser
+ * holds one built-in wallet at a time. Failures are logged and thrown after
+ * every store was tried.
+ */
+export async function deleteColorPermissionStores(
+	current: { chain: Chain; identityKey: string } | null,
+): Promise<void> {
+	const names = new Set<string>();
+	if (current)
+		names.add(
+			`${PERMISSION_DATABASE}:${colorScope(current.chain, current.identityKey)}`,
+		);
+	if (typeof indexedDB.databases === "function") {
+		const listed = await indexedDB.databases();
+		for (const { name } of listed)
+			if (name?.startsWith(`${PERMISSION_DATABASE}:${COLOR_SCOPE_PREFIX}`))
+				names.add(name);
+	}
+	const failures: unknown[] = [];
+	for (const name of names) {
+		const scope = name.slice(PERMISSION_DATABASE.length + 1);
+		const store = stores.get(scope);
+		stores.delete(scope);
+		try {
+			// An open connection would hold the delete until it closes.
+			await store?.close();
+			await deleteDatabase(name);
+		} catch (error) {
+			logStoreFailure("delete", { scope }, error);
+			failures.push(error);
+		}
+	}
+	if (failures.length > 0)
+		throw new AggregateError(
+			failures,
+			"Could not delete saved 1Color permissions.",
+		);
 }
 
 export interface ColorTokenAccessOptions {
@@ -461,6 +606,11 @@ export const createColorTokenAccessHandler = (
 	const { promptHandler, permissionStore, adminOriginator } = options;
 
 	return async (app: string, message: string): Promise<boolean> => {
+		// The wallet's own views confirm before they call. Exact match only:
+		// apps arrive as a hostname without a port, and the relay, bridge and
+		// redirect flows refuse an app on the wallet's own hostname.
+		if (app === adminOriginator) return true;
+
 		let msg: ColorMessage;
 		try {
 			msg = JSON.parse(message) as ColorMessage;
@@ -484,10 +634,6 @@ export const createColorTokenAccessHandler = (
 			});
 			return false;
 		}
-
-		// Exact match only: an app on another port of the wallet's host
-		// normalizes to the same hostname and must still be asked.
-		if (app === adminOriginator) return true;
 
 		if (msg.type !== "color_access")
 			return await promptHandler(colorPromptRequest(app, msg));

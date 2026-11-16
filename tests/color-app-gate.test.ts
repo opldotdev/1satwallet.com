@@ -5,6 +5,7 @@ import { InMemoryPermissionStore } from "@1sat/wallet-browser";
 import {
 	assetBasket,
 	ColorConsentDeclinedError,
+	type ColorPermissionModule,
 	colorProtocolID,
 } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
@@ -16,7 +17,11 @@ import {
 	clearDiagnostics,
 	getDiagnosticEvents,
 } from "@/lib/runtime-diagnostics";
-import { createWalletColorModule } from "@/lib/wallet/color-module";
+import {
+	appGatedColorModule,
+	ColorHandoffUnavailableError,
+	createWalletColorModule,
+} from "@/lib/wallet/color-module";
 import {
 	createListScanCache,
 	findMisroutedModuleIdentifier,
@@ -120,6 +125,7 @@ const setup = (listed: Listed = { actions: [] }, approve = false) => {
 	const color = createWalletColorModule({
 		wallet,
 		chain: "test",
+		identityKey: PUBKEY,
 		adminOriginator: ADMIN,
 		promptHandler: async (request) => {
 			colorPrompts.push(request);
@@ -131,7 +137,7 @@ const setup = (listed: Listed = { actions: [] }, approve = false) => {
 	const manager = guardModuleIdentifiers(
 		new WalletPermissionsManager(wallet, ADMIN, {
 			...CONFIG,
-			permissionModules: { color: color.module },
+			permissionModules: { color: color.permissionModule },
 		}),
 		ADMIN,
 	);
@@ -632,12 +638,76 @@ describe("apps reach 1Color only through its consent", () => {
 		assert.equal(colorPrompts.length, 1);
 	});
 
-	it("registers the module itself, so dispose reaches it", () => {
+	it("registers a gate whose dispose reaches the module", () => {
 		const { color } = setup();
 		const module = color.module as unknown as { selected: Set<string> };
 		module.selected.add(`${"b".repeat(64)}.0`);
-		color.module.dispose();
+		color.permissionModule.dispose();
 		assert.equal(module.selected.size, 0);
+	});
+
+	it("refuses and logs an app's token handoff before the module sees it", async () => {
+		const { manager, calls, color, colorPrompts } = setup(undefined, true);
+		const reached: string[] = [];
+		const onRequest = color.module.onRequest.bind(color.module);
+		color.module.onRequest = async (req) => {
+			reached.push(req.originator);
+			return await onRequest(req);
+		};
+		await assert.rejects(
+			manager.createAction(
+				{
+					description: "hand off tokens",
+					labels: ["p color plan 0 1 ab", "p nosend expiry 1900000000"],
+					options: { noSend: true, randomizeOutputs: false },
+				},
+				APP,
+			),
+			ColorHandoffUnavailableError,
+		);
+		assert.deepEqual(reached, []);
+		assert.deepEqual(colorPrompts, []);
+		assert.ok(!methods(calls).includes("createAction"));
+		assert.ok(
+			getDiagnosticEvents().some(
+				(event) => event.operation === "wallet.color.createAction.handoff",
+			),
+		);
+	});
+
+	it("passes an app's non-handoff createAction and the wallet's handoff to the module", async () => {
+		const gate = appGatedColorModule(
+			{
+				onRequest: async (req: { args: object }) => ({ args: req.args }),
+			} as unknown as ColorPermissionModule,
+			ADMIN,
+		);
+		const handoff = { labels: ["p color plan x", "p nosend expiry never"] };
+		assert.deepEqual(
+			await gate.onRequest({
+				method: "createAction",
+				args: handoff,
+				originator: ADMIN,
+			}),
+			{ args: handoff },
+		);
+		const send = { labels: ["p color plan x"] };
+		assert.deepEqual(
+			await gate.onRequest({
+				method: "createAction",
+				args: send,
+				originator: APP,
+			}),
+			{ args: send },
+		);
+		await assert.rejects(
+			gate.onRequest({
+				method: "createAction",
+				args: { labels: ["p color plan x", " P Nosend Expiry never"] },
+				originator: APP,
+			}),
+			ColorHandoffUnavailableError,
+		);
 	});
 });
 

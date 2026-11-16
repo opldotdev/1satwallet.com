@@ -1,5 +1,6 @@
 "use client";
 
+import { PrivateKey } from "@bsv/sdk";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import {
@@ -13,10 +14,11 @@ import {
 } from "react";
 import type { Chain } from "@/lib/chain-endpoints";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
+import { deleteColorPermissionStores } from "@/lib/cwi/color-consent";
 import { deriveIdentityKey, findKeysFromMnemonic } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
-import { refreshWalletChain } from "@/lib/wallet-chain";
+import { refreshWalletChain, storedAccountNetwork } from "@/lib/wallet-chain";
 import {
 	clearCachedEncryptionKey,
 	loadEncryptedWallet,
@@ -53,6 +55,41 @@ interface WalletContextType {
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
+
+const reportColorGrantFailure = (operation: string, error: unknown) => {
+	const event = reportDiagnostic({
+		category: "action",
+		code: "action.failed",
+		operation: `wallet.delete.color-grants.${operation}`,
+		recoverable: true,
+	});
+	console.error(`[wallet] removing 1Color grants: ${operation} failed`, {
+		correlationId: event.correlationId,
+		error,
+	});
+};
+
+/**
+ * Delete the removed wallet's 1Color grant stores (see
+ * `deleteColorPermissionStores`). The built-in wallet's identity key is the
+ * identity key's public key, or the pay key's for a legacy wallet without
+ * one. Runs in the background: the wallet is removed either way, and a
+ * failure is logged.
+ */
+const removeColorGrants = (chain: Chain | null, keys: Keys | null): void => {
+	let identityKey: string | null = null;
+	const rootWif = keys?.identityPk || keys?.payPk;
+	if (rootWif) {
+		try {
+			identityKey = PrivateKey.fromWif(rootWif).toPublicKey().toString();
+		} catch (error) {
+			reportColorGrantFailure("identity", error);
+		}
+	}
+	deleteColorPermissionStores(
+		chain && identityKey ? { chain, identityKey } : null,
+	).catch((error: unknown) => reportColorGrantFailure("delete", error));
+};
 
 export function WalletProvider({ children }: { children: ReactNode }) {
 	const router = useRouter();
@@ -216,6 +253,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	const deleteWallet = useCallback(() => {
 		lifecycleGenerationRef.current += 1;
 		if (typeof window !== "undefined") {
+			// Read before the stored wallet goes: its chain, and the identity
+			// key the built-in wallet runs as (null while locked).
+			removeColorGrants(storedAccountNetwork(), walletKeys);
 			localStorage.removeItem(WALLET_STORAGE_KEY);
 			// Tells other listeners in this tab. A browser that refuses a
 			// constructed StorageEvent must not skip the refresh and reset below.
@@ -241,7 +281,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 		setWalletKeys(null);
 		setHasWallet(false);
 		setIsWalletLocked(false);
-	}, []);
+	}, [walletKeys]);
 
 	const value = useMemo(
 		() => ({

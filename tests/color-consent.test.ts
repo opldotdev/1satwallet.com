@@ -374,6 +374,20 @@ describe("createColorTokenAccessHandler", () => {
 		);
 	});
 
+	test("the wallet itself is approved before its message is read", async () => {
+		const { prompts, handler } = setup(false);
+		assert.equal(
+			await handler(ADMIN, JSON.stringify({ type: "color_other" })),
+			true,
+		);
+		assert.equal(await handler(ADMIN, "{not json"), true);
+		assert.equal(prompts.length, 0);
+		assert.deepEqual(
+			logged.filter((args) => args[0] !== "[diagnostic]"),
+			[],
+		);
+	});
+
 	test("a grant store that cannot be read fails the request, logged, with no prompt", async () => {
 		const broken = new InMemoryPermissionStore();
 		broken.findGrant = async () => {

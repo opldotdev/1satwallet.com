@@ -39,25 +39,26 @@ const logFailure = (operation: string, error: unknown) => {
 };
 
 /**
- * The 1Color basket grants apps were given (testnet, built-in wallet only),
- * with revoke. Sends, signatures and label reads keep no grant: they are
+ * The 1Color basket grants apps were given by this wallet (testnet, built-in
+ * wallet only), with revoke. Sends, signatures and label reads keep no grant: they are
  * asked every time, so they never show here.
  */
 export function ColorAppGrants() {
-	const { chain, colorContext } = useWalletToolbox();
-	const enabled = colorContext !== null && isOneColorAvailable(chain);
+	const { chain, colorContext, identityKey } = useWalletToolbox();
+	const enabled =
+		colorContext !== null && identityKey !== null && isOneColorAvailable(chain);
 	const [grants, setGrants] = useState<BasketGrant[]>([]);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [revoking, setRevoking] = useState<string | null>(null);
 
 	const load = useCallback(async () => {
-		if (!enabled) {
+		if (!enabled || identityKey === null) {
 			setGrants([]);
 			setLoadError(null);
 			return;
 		}
 		try {
-			const listed = await colorPermissionStore(chain).listGrants({
+			const listed = await colorPermissionStore(chain, identityKey).listGrants({
 				type: "basket",
 			});
 			setGrants(
@@ -75,17 +76,30 @@ export function ColorAppGrants() {
 			setGrants([]);
 			setLoadError("Could not load 1Color token access. Try again.");
 		}
-	}, [enabled, chain]);
+	}, [enabled, chain, identityKey]);
 
+	// Grants change in the CWI relay while this page is open elsewhere (an app
+	// approved in another tab or window), so reload whenever the page is seen
+	// again, not only on mount.
 	useEffect(() => {
 		void load();
+		const reload = () => {
+			if (document.visibilityState === "visible") void load();
+		};
+		window.addEventListener("focus", reload);
+		document.addEventListener("visibilitychange", reload);
+		return () => {
+			window.removeEventListener("focus", reload);
+			document.removeEventListener("visibilitychange", reload);
+		};
 	}, [load]);
 
 	const revoke = async (grant: BasketGrant) => {
+		if (identityKey === null) return;
 		const id = grantId(grant);
 		setRevoking(id);
 		try {
-			await colorPermissionStore(chain).deleteGrant(grant.key);
+			await colorPermissionStore(chain, identityKey).deleteGrant(grant.key);
 			await load();
 		} catch (error) {
 			logFailure("revoke", error);

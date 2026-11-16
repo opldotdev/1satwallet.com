@@ -27,7 +27,9 @@ export type RefusalReason =
 	/** Args, an output or a remittance that is not a plain object. */
 	| "not-an-object"
 	/** Key linkage for a reserved `p ` or `admin` protocol (apps only). */
-	| "reserved-linkage";
+	| "reserved-linkage"
+	/** `getPublicKey` asking for the identity key with a protocolID (apps only). */
+	| "identity-key-with-protocol";
 
 export interface MisroutedModuleIdentifier {
 	/** Where the value was found, e.g. `outputs[0].insertionRemittance.basket`. */
@@ -59,6 +61,8 @@ const describeRefusal = ({
 			return `Refused: ${field} must be a plain object, not ${value}.`;
 		case "reserved-linkage":
 			return `Refused: key linkage for the reserved "${prefix}" protocol ${quoted} is not available to apps.`;
+		case "identity-key-with-protocol":
+			return "Refused: getPublicKey cannot ask for the identity key together with a protocolID. Ask for the identity key on its own.";
 	}
 };
 
@@ -230,15 +234,33 @@ export function findMisroutedModuleIdentifier(
 /**
  * What an app is held to on top of `findMisroutedModuleIdentifier`: every
  * name already canonical (trimmed, lowercase), so no name means one thing to
- * the manager and another to the wallet; and no `revealSpecificKeyLinkage`
- * for a reserved `p ` or `admin` protocol.
+ * the manager and another to the wallet; no `revealSpecificKeyLinkage` for a
+ * reserved `p ` or `admin` protocol; and no `getPublicKey` that asks for the
+ * identity key together with a protocolID. The manager (wallet-toolbox-client
+ * 2.16.0) hands a `p ` protocol's `getPublicKey` to its module before its own
+ * identity-key prompt, and the wallet underneath returns the identity key
+ * whenever `identityKey` is set, ignoring the protocol. So `p color …` (or a
+ * 1Sat module's `p ` scheme) would give an app the identity key unasked. An
+ * app asks for the identity key on its own, which the manager prompts for.
  */
 export function findRefusedAppName(
 	method: string,
 	args: unknown,
 ): MisroutedModuleIdentifier | null {
 	const hit = walkNames(args, notCanonical);
-	if (hit || method !== "revealSpecificKeyLinkage") return hit;
+	if (hit) return hit;
+	if (method === "getPublicKey") {
+		const call = record(args);
+		// Truthy, as both the manager and the wallet read it.
+		if (call?.identityKey && call.protocolID != null)
+			return {
+				field: "identityKey",
+				value: typeOf(call.identityKey),
+				reason: "identity-key-with-protocol",
+			};
+		return null;
+	}
+	if (method !== "revealSpecificKeyLinkage") return null;
 	const protocolID = record(args)?.protocolID;
 	if (!Array.isArray(protocolID) || typeof protocolID[1] !== "string")
 		return null;

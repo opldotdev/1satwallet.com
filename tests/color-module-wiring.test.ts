@@ -21,6 +21,7 @@ import { withOriginator } from "@/lib/wallet/with-originator";
 const ADMIN = "1satwallet.com";
 const APP = "app.example.com";
 const ASSET = `${"a".repeat(64)}_0`;
+const IDENTITY_KEY = `02${"11".repeat(32)}`;
 
 type Call = { method: string; args: unknown; originator?: string };
 
@@ -42,6 +43,7 @@ const managerFor = (chain: Chain) => {
 	const color = createWalletColorModule({
 		wallet: raw.wallet,
 		chain,
+		identityKey: IDENTITY_KEY,
 		adminOriginator: ADMIN,
 		promptHandler: async (request) => {
 			prompts.push(request);
@@ -50,7 +52,7 @@ const managerFor = (chain: Chain) => {
 		permissionStore: new InMemoryPermissionStore(),
 	});
 	const manager = new WalletPermissionsManager(raw.wallet, ADMIN, {
-		permissionModules: color ? { color: color.module } : {},
+		permissionModules: color ? { color: color.permissionModule } : {},
 	});
 	return { raw, color, manager, prompts };
 };
@@ -142,11 +144,11 @@ describe("wallet provider color wiring", () => {
 	it("registers color with the asset modules and tracks it for dispose", () => {
 		assert.match(
 			init,
-			/createWalletColorModule\(\{[\s\S]*chain,[\s\S]*adminOriginator: ADMIN_ORIGINATOR,\s*promptHandler: requestAssetPermission,/,
+			/createWalletColorModule\(\{[\s\S]*chain,\s*identityKey: newIdentityKey,\s*adminOriginator: ADMIN_ORIGINATOR,\s*promptHandler: requestAssetPermission,/,
 		);
 		assert.match(
 			init,
-			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.module \}\s*:\s*assetPermissionModules/,
+			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.permissionModule \}\s*:\s*assetPermissionModules/,
 		);
 		assert.match(
 			init,
@@ -296,6 +298,31 @@ describe("wallet provider color wiring", () => {
 			source,
 			/useEffect\(\(\) => \(\) => void unmountWallet\(\), \[unmountWallet\]\);/,
 		);
+	});
+
+	it("scopes grants to the wallet and deletes them with it", () => {
+		const walletProvider = readFileSync(
+			join(process.cwd(), "providers/wallet-provider.tsx"),
+			"utf8",
+		);
+		const remove = walletProvider.slice(
+			walletProvider.indexOf("const deleteWallet"),
+			walletProvider.indexOf("const value = useMemo"),
+		);
+		// Read before the stored wallet goes.
+		assert.ok(
+			remove.indexOf("removeColorGrants(storedAccountNetwork(), walletKeys)") <
+				remove.indexOf("localStorage.removeItem(WALLET_STORAGE_KEY)"),
+		);
+		assert.ok(remove.includes("removeColorGrants("));
+		const card = readFileSync(
+			join(process.cwd(), "components/wallet/color-app-grants.tsx"),
+			"utf8",
+		);
+		assert.doesNotMatch(card, /colorPermissionStore\(chain\)/);
+		assert.match(card, /colorPermissionStore\(chain, identityKey\)/);
+		assert.match(card, /addEventListener\("visibilitychange", reload\)/);
+		assert.match(card, /addEventListener\("focus", reload\)/);
 	});
 
 	it("dispose clears the module's in-memory state", () => {

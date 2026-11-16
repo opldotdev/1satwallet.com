@@ -266,13 +266,14 @@ describe("1Color consent through the CWI relay", () => {
 		const color = createWalletColorModule({
 			wallet: raw,
 			chain: "test",
+			identityKey: `02${"11".repeat(32)}`,
 			adminOriginator: ADMIN,
 			promptHandler: requestAssetPermission,
 			permissionStore: new InMemoryPermissionStore(),
 		});
 		assert.ok(color);
 		const manager = new WalletPermissionsManager(raw, ADMIN, {
-			permissionModules: { color: color.module },
+			permissionModules: { color: color.permissionModule },
 		});
 		const relay = new CWIRelay({
 			getWallet: () => manager,
