@@ -103,12 +103,19 @@ export function WalletHomeStatus() {
 					<div className={styles.services}>
 						{[
 							{
+								id: "addresses",
 								title: "Address sync",
 								icon: RefreshCw,
 								task: syncTasks.addresses,
 							},
-							{ title: "Payment inbox", icon: Inbox, task: syncTasks.payments },
 							{
+								id: "payments",
+								title: "Payment inbox",
+								icon: Inbox,
+								task: syncTasks.payments,
+							},
+							{
+								id: "cosign-deliveries",
 								title: "Token inbox",
 								icon: Inbox,
 								task: syncTasks.cosignDeliveries,
@@ -117,13 +124,14 @@ export function WalletHomeStatus() {
 							...(holdsHandle
 								? [
 										{
+											id: "handle-inbox",
 											title: "Handle inbox",
 											icon: AtSign,
 											task: syncTasks.handleInbox,
 										},
 									]
 								: []),
-						].map(({ title, icon: Icon, task }) => (
+						].map(({ id, title, icon: Icon, task }) => (
 							<div key={title} className={styles.serviceRow}>
 								<Icon
 									className={`${styles.accent} ${task.status === "running" ? "motion-safe:animate-spin" : ""}`}
@@ -137,6 +145,9 @@ export function WalletHomeStatus() {
 								</div>
 								<span
 									className={`${styles.taskStatus} ${task.status === "failed" ? styles.failed : ""}`}
+									data-state={task.status}
+									data-task={id}
+									data-testid="wallet-sync-state"
 								>
 									{task.status === "provider-managed"
 										? "Provider managed"

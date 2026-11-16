@@ -1,5 +1,5 @@
 import { ThemeTokenProvider } from "@theme-token/sdk/react";
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono, Space_Grotesk } from "next/font/google";
 import type { WebApplication, WithContext } from "schema-dts";
 import { JsonLd } from "@/components/json-ld";
@@ -50,6 +50,15 @@ export const metadata: Metadata = {
 		title: "1Sat Wallet | BRC-100 Wallet for BSV",
 		description: "Connect or use a BRC-100 wallet for BSV on the web.",
 	},
+};
+
+// Draw under the notch and home indicator; the shell pads itself with the
+// safe-area insets (see dual-sidebar-layout, DialogContent, Sheet). The
+// on-screen keyboard resizes the layout viewport where supported, so dvh
+// sheets and fixed footers stay above it.
+export const viewport: Viewport = {
+	viewportFit: "cover",
+	interactiveWidget: "resizes-content",
 };
 
 const jsonLd: WithContext<WebApplication> = {

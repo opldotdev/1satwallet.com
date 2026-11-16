@@ -185,10 +185,16 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /cursors\.length > 0/);
 		assert.match(presence, /md:hidden/);
 		assert.match(presence, /\[@media\(pointer:coarse\)\]:!block/);
-		assert.match(presence, /fixed bottom-4 left-1\/2/);
+		assert.match(
+			presence,
+			/fixed bottom-\[max\(--spacing\(4\),env\(safe-area-inset-bottom\)\)\] left-1\/2/,
+		);
 		assert.match(presence, /max-w-\[min\(calc\(100vw-8rem\),28rem\)\]/);
 		assert.match(presence, /fixed right-4 top-20/);
-		assert.match(presence, /md:top-auto md:bottom-4/);
+		assert.match(
+			presence,
+			/md:top-auto md:bottom-\[max\(--spacing\(4\),env\(safe-area-inset-bottom\)\)\]/,
+		);
 		assert.match(presence, /min-h-\[44px\]/);
 		assert.match(presence, /min-w-\[44px\]/);
 		assert.match(presence, /publicProfileClaimFromWallet/);

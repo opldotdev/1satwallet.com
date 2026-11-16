@@ -57,7 +57,7 @@ export function FullScreenUnlock() {
 			role="dialog"
 			aria-modal="true"
 			aria-label="Unlock wallet"
-			className="fixed inset-0 z-[120] flex items-center justify-center bg-background/80 backdrop-blur-sm"
+			className="fixed inset-0 z-[120] flex items-center justify-center bg-background/80 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] backdrop-blur-sm"
 		>
 			<div className="w-full max-w-md p-4 animate-in fade-in zoom-in-95 duration-300">
 				<Card className="w-full border-border/50 shadow-2xl bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">

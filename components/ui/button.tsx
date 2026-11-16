@@ -20,13 +20,15 @@ const buttonVariants = cva(
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
       },
+      // Below md every size is at least a 44px tap target (lg 48px). It is
+      // a min size, so a className height override still holds on desktop.
       size: {
-        default: "h-9 px-4 py-2 has-[>svg]:px-3",
-        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5",
-        lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
-        icon: "size-9",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10",
+        default: "h-9 px-4 py-2 has-[>svg]:px-3 max-md:min-h-11",
+        sm: "h-8 rounded-md gap-1.5 px-3 has-[>svg]:px-2.5 max-md:min-h-11",
+        lg: "h-10 rounded-md px-6 has-[>svg]:px-4 max-md:min-h-12",
+        icon: "size-9 max-md:min-h-11 max-md:min-w-11",
+        "icon-sm": "size-8 max-md:min-h-11 max-md:min-w-11",
+        "icon-lg": "size-10 max-md:min-h-11 max-md:min-w-11",
       },
     },
     defaultVariants: {
