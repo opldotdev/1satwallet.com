@@ -131,6 +131,10 @@ describe("wallet backup and restore", () => {
 		);
 		assert.equal(classifyBackupRestoreError(yoursWrong), "wrong-password");
 		assert.equal(
+			classifyBackupRestoreError(new Error("Could not derive decryption key")),
+			"wrong-password",
+		);
+		assert.equal(
 			classifyBackupRestoreError(
 				new Error("Backup is missing valid payment or ordinal keys"),
 			),

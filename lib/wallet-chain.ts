@@ -232,6 +232,9 @@ const store = createWalletChainStore({
 /** The stored built-in account's network; null with no readable wallet. */
 export const storedAccountNetwork = (): Chain | null =>
 	accountNetworkOf(getItem(browserStorage(), WALLET_STORAGE_KEY));
+/** Whether a built-in wallet is stored at all, readable or not. */
+export const hasStoredWallet = (): boolean =>
+	!!getItem(browserStorage(), WALLET_STORAGE_KEY);
 /** The active account's chain. Mainnet on the server. */
 export const readWalletChain = (): Chain => store.read();
 /** Recomputes the active chain and notifies subscribers if it changed. */

@@ -86,6 +86,7 @@ import {
 } from "@/lib/wallet/provider-capabilities";
 import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
 import {
+	hasStoredWallet,
 	readWalletChain,
 	refreshWalletChain,
 	storedAccountNetwork,
@@ -954,7 +955,13 @@ export function WalletToolboxProvider({
 			// The keys must belong to the account stored on this chain. If the
 			// wallet was replaced or removed meanwhile, move the chain and let
 			// the remounted provider (or none) open it.
-			if (storedAccountNetwork() !== chain) {
+			const storedNetwork = storedAccountNetwork();
+			if (storedNetwork !== chain) {
+				if (storedNetwork === null && hasStoredWallet()) {
+					setInitError(
+						"This browser's saved wallet couldn't be read. Import your backup to restore it.",
+					);
+				}
 				reportDiagnostic({
 					category: "provider",
 					code: "provider.failed",

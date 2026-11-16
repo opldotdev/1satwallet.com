@@ -496,7 +496,9 @@ export function classifyBackupRestoreError(
 	const message = error instanceof Error ? error.message : "";
 	return name === "OperationError" ||
 		name === "SyntaxError" ||
-		message.startsWith("Decryption failed")
+		message.startsWith("Decryption failed") ||
+		// A password too short to derive a key is a wrong password too.
+		message === "Could not derive decryption key"
 		? "wrong-password"
 		: "invalid-keys";
 }

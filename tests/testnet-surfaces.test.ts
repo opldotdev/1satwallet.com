@@ -279,7 +279,11 @@ describe("an account on another network replacing this one", () => {
 				provider.indexOf("const initializeWallet = useCallback"),
 			),
 		);
-		assert.match(init, /if \(storedAccountNetwork\(\) !== chain\) \{/);
+		assert.match(init, /const storedNetwork = storedAccountNetwork\(\);/);
+		assert.match(init, /if \(storedNetwork !== chain\) \{/);
+		// An unreadable stored wallet says so instead of failing silently.
+		assert.match(init, /storedNetwork === null && hasStoredWallet\(\)/);
+		assert.match(init, /setInitError\(/);
 		assert.match(init, /refreshWalletChain\(\);\s*return false;/);
 		assert.match(init, /operation: "wallet\.initialize\.chain"/);
 	});
