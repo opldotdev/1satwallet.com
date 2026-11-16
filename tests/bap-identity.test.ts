@@ -411,3 +411,27 @@ test("output indexes are parsed as UInt32 and written in canonical decimal", () 
 		assert.equal(isSafePublicImageUrl(rejected), false, rejected);
 	}
 });
+
+test("an unedited published field that fails validation does not block saving others", () => {
+	const longName = "N".repeat(150);
+	const published = {
+		"@type": "Person",
+		name: longName,
+		email: "not-an-email",
+		paymail: "not paymail",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, description: "Builder" };
+	const result = validateBapProfile(draft, baseline);
+	assert.deepEqual(result.errors, {});
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		description: "Builder",
+	});
+	// Editing the name makes it the editor's to check again.
+	assert.equal(
+		validateBapProfile({ ...draft, name: `${longName}!` }, baseline).errors
+			.name,
+		"Must be 100 characters or fewer.",
+	);
+});

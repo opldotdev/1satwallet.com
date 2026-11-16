@@ -134,10 +134,10 @@ export function isSafePublicImageUrl(value: string): boolean {
 
 /**
  * Validates the editor's fields. With `baseline` (what the editor opened
- * with), an image or banner still equal to it raises no error and is left out
- * of `profile`: `mergeBapProfile` republishes an unedited field verbatim, so
- * a published value this editor would not write (`http://`, `ipfs://`) must
- * not block saving the other fields.
+ * with), a field still equal to it raises no error and is left out of
+ * `profile`: `mergeBapProfile` republishes an unedited field verbatim, so a
+ * published value this editor would not write (an `http://` banner, an
+ * over-long name another client wrote) must not block saving other fields.
  */
 export function validateBapProfile(
 	draft: BapProfileDraft,
@@ -149,13 +149,7 @@ export function validateBapProfile(
 	for (const field of Object.keys(FIELD_LIMITS) as (keyof BapProfileDraft)[]) {
 		const value = draft[field].trim();
 		if (!value) continue;
-		if (
-			(field === "image" || field === "banner") &&
-			baseline !== undefined &&
-			value === baseline[field].trim()
-		) {
-			continue;
-		}
+		if (baseline !== undefined && value === baseline[field].trim()) continue;
 		if (value.length > FIELD_LIMITS[field]) {
 			errors[field] = `Must be ${FIELD_LIMITS[field]} characters or fewer.`;
 			continue;
