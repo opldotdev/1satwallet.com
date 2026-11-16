@@ -9,7 +9,12 @@
 		"lint": "biome check",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write",
-		"cwi:e2e:redirect": "node scripts/cwi-redirect-e2e.mjs"
+		"cwi:e2e:redirect": "node scripts/cwi-redirect-e2e.mjs",
+		"test:live": "bun test ./tests/integration/endpoints.live.ts",
+		"e2e": "playwright test",
+		"e2e:ui": "playwright test --ui",
+		"e2e:report": "playwright show-report",
+		"e2e:wallets:create": "bun e2e/scripts/create-test-wallets.ts"
 	},
 	"dependencies": {
 		"@1sat/actions": "0.1.6",
@@ -68,6 +73,7 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.6.7",
+		"@playwright/test": "^1.65.1",
 		"@tailwindcss/postcss": "^4.3.5",
 		"@types/node": "^26.6.6",
 		"@types/react": "^19.3.0",
