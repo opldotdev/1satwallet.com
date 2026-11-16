@@ -16,7 +16,6 @@ import { type HandleResolution, resolveHandle } from "@1sat/client";
 import { HANDLE_CERT_TYPE } from "@1sat/types";
 import { MasterCertificate, type WalletInterface } from "@bsv/sdk";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import { firstTime } from "@/lib/wallet/peerpay-inbox";
 
 /** A BRC-169 handle certificate held in the wallet, with its fields decrypted. */
 export interface HeldHandle {
@@ -29,6 +28,24 @@ export interface HeldHandle {
 /** `@handle@domain`, the form senders type and `resolveHandle` takes. */
 export const formatHandle = (h: Pick<HeldHandle, "handle" | "domain">) =>
 	`@${h.handle}@${h.domain}`;
+
+/**
+ * Messages already logged as waiting in a box, so one that stays there is
+ * logged once, not every run. Its own set, capped: past the cap the oldest
+ * is forgotten.
+ */
+const loggedWaiting = new Set<string>();
+const LOGGED_WAITING_CAP = 500;
+
+function firstTimeWaiting(key: string): boolean {
+	if (loggedWaiting.has(key)) return false;
+	if (loggedWaiting.size >= LOGGED_WAITING_CAP) {
+		const oldest = loggedWaiting.values().next();
+		if (!oldest.done) loggedWaiting.delete(oldest.value);
+	}
+	loggedWaiting.add(key);
+	return true;
+}
 
 function logFailure(
 	operation: string,
@@ -91,8 +108,13 @@ export async function listHandles(
 export interface HandleInboxSyncResult {
 	/** Messages internalized and acknowledged. */
 	processed: number;
-	/** Handles not resolved, boxes not read, messages left in a box. */
+	/** Handles not resolved, boxes not read, acknowledgements refused. */
 	failed: number;
+	/**
+	 * Messages left in a box (the SDK's `skipped`): logged once each, never a
+	 * task failure, since a message the wallet can't take stays until removed.
+	 */
+	waiting: number;
 	/** 1Color assets received this run. */
 	assetIds: string[];
 }
@@ -106,8 +128,7 @@ export interface HandleInboxSyncOptions {
 	/**
 	 * The 1Color overlay for one asset, which its receipts are submitted to
 	 * before they are internalized. Without it (mainnet) 1Color deliveries stay
-	 * in the box with `overlay-required`, which is not counted as a failure;
-	 * handle payments are still taken.
+	 * in the box with `overlay-required`; handle payments are still taken.
 	 */
 	overlayFor?: OverlayFor;
 	/** For tests: stand-ins for the listing, BRC-169 resolution and the inbox action. */
@@ -169,6 +190,7 @@ export function createHandleInboxSync(
 		const result: HandleInboxSyncResult = {
 			processed: 0,
 			failed: 0,
+			waiting: 0,
 			assetIds: [],
 		};
 
@@ -213,13 +235,10 @@ export function createHandleInboxSync(
 				result.assetIds.push(...receipt.assetIds);
 			}
 			for (const skip of synced.skipped) {
-				const expected = !opts.overlayFor && skip.reason === OVERLAY_REQUIRED;
-				if (!expected) result.failed += 1;
+				result.waiting += 1;
 				// A message waits in its box until it can be taken: logged once.
-				if (!firstTime(`handles:${messageboxUrl}:${skip.messageId}`)) {
-					continue;
-				}
-				if (expected) {
+				if (!firstTimeWaiting(`${messageboxUrl}:${skip.messageId}`)) continue;
+				if (!opts.overlayFor && skip.reason === OVERLAY_REQUIRED) {
 					console.warn(
 						"[handles] 1Color delivery left in the box: this chain has no 1Color overlay",
 						{ messageboxUrl, messageId: skip.messageId },

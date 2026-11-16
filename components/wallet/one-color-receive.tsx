@@ -2,8 +2,8 @@
 
 import { ArrowDownToLine, Copy, ExternalLink, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
 	DialogContent,
 	DialogDescription,
@@ -21,33 +21,57 @@ import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 export const ONE_COLOR_RECEIVE_NOTE =
 	"1Color tokens are sent to a handle, not to an address. Give the sender one of your handles below.";
 
-function HandleRow({ handle }: { handle: string }) {
-	const [, copy] = useCopyWithSound();
+function HandleQr({ handle }: { handle: string }) {
 	return (
-		<div className="flex flex-col items-center gap-3">
-			<div
-				aria-label={`QR code for ${handle}`}
-				className="rounded-lg bg-white p-4"
-				role="img"
-			>
-				<QRCodeSVG size={160} value={handle} />
-			</div>
-			<div className="flex w-full gap-2">
-				<Input
-					aria-label="Handle"
-					className="font-mono text-sm"
-					readOnly
-					value={handle}
-				/>
-				<Button
-					aria-label={`Copy ${handle}`}
-					onClick={() => void copy(handle)}
-					size="icon"
-					variant="outline"
-				>
-					<Copy />
-				</Button>
-			</div>
+		<div
+			aria-label={`QR code for ${handle}`}
+			className="mx-auto w-fit rounded-lg bg-white p-4"
+			role="img"
+		>
+			<QRCodeSVG size={160} value={handle} />
+		</div>
+	);
+}
+
+/**
+ * The selected handle's QR, then every handle with copy. One QR at a time
+ * keeps a wallet with several handles short on a phone.
+ */
+function HandleList({ handles }: { handles: string[] }) {
+	const [, copy] = useCopyWithSound();
+	const [picked, setPicked] = useState(handles[0]);
+	const selected = handles.includes(picked) ? picked : handles[0];
+	return (
+		<div className="space-y-4">
+			<HandleQr handle={selected} />
+			<ul className="space-y-2">
+				{handles.map((handle) => (
+					<li className="flex items-center gap-2" key={handle}>
+						{handles.length > 1 ? (
+							<Button
+								aria-pressed={handle === selected}
+								className="min-w-0 flex-1 justify-start font-mono text-sm"
+								onClick={() => setPicked(handle)}
+								variant={handle === selected ? "secondary" : "ghost"}
+							>
+								<span className="truncate">{handle}</span>
+							</Button>
+						) : (
+							<span className="min-w-0 flex-1 truncate font-mono text-sm">
+								{handle}
+							</span>
+						)}
+						<Button
+							aria-label={`Copy ${handle}`}
+							onClick={() => void copy(handle)}
+							size="icon"
+							variant="outline"
+						>
+							<Copy />
+						</Button>
+					</li>
+				))}
+			</ul>
 		</div>
 	);
 }
@@ -59,7 +83,7 @@ function HandleRow({ handle }: { handle: string }) {
  */
 export function OneColorReceive() {
 	const { chain } = useWalletToolbox();
-	const handles = useWalletHandles();
+	const handles = useWalletHandles({ refetchOnMount: "always" });
 	const registration = endpointsOf(chain).handleRegistration;
 
 	let body: React.ReactNode;
@@ -99,13 +123,8 @@ export function OneColorReceive() {
 			</div>
 		);
 	} else {
-		const unique = [...new Set(handles.data.map(formatHandle))];
 		body = (
-			<div className="space-y-6">
-				{unique.map((handle) => (
-					<HandleRow handle={handle} key={handle} />
-				))}
-			</div>
+			<HandleList handles={[...new Set(handles.data.map(formatHandle))]} />
 		);
 	}
 

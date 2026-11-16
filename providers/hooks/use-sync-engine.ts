@@ -96,11 +96,13 @@ export interface SyncCoordinator {
 	/**
 	 * Runs `names` (every task by default) in order. A run asked for while one
 	 * is in flight joins it when that run covers every name asked for;
-	 * otherwise it starts once that run ends.
+	 * otherwise it starts once that run ends. A `silent` run (the inbox timer's)
+	 * never shows as running and publishes a task only when its outcome changed.
 	 */
 	run: (
 		jobs: SyncJobs,
 		names?: readonly SyncTaskName[],
+		options?: { silent?: boolean },
 	) => { promise: Promise<boolean>; started: boolean };
 	reset: (status?: SyncTaskStatus) => void;
 	stop: () => Promise<void>;
@@ -126,7 +128,19 @@ export function createSyncCoordinator(
 		emit({ ...state, [name]: task });
 	};
 
-	const run: SyncCoordinator["run"] = (jobs, names = TASK_NAMES) => {
+	const sameOutcome = (a: SyncTaskState, b: SyncTaskState) =>
+		a.status === b.status &&
+		a.processed === b.processed &&
+		a.failed === b.failed &&
+		a.error === b.error;
+
+	const run: SyncCoordinator["run"] = (jobs, names = TASK_NAMES, options) => {
+		const silent = options?.silent === true;
+		// A silent run leaves an unchanged outcome alone, so the page stays still.
+		const finish = (name: SyncTaskName, task: SyncTaskState) => {
+			if (silent && sameOutcome(state[name], task)) return;
+			update(name, task);
+		};
 		if (active) {
 			if (names.every((name) => activeNames.includes(name))) {
 				return { promise: active, started: false };
@@ -138,7 +152,7 @@ export function createSyncCoordinator(
 			const pending: Promise<boolean> = active.then(() => {
 				if (queued === pending) queued = null;
 				if (requestedGeneration !== generation) return false;
-				return run(jobs, names).promise;
+				return run(jobs, names, options).promise;
 			});
 			queued = pending;
 			return { promise: pending, started: true };
@@ -150,11 +164,13 @@ export function createSyncCoordinator(
 			for (const name of TASK_NAMES) {
 				if (!names.includes(name)) continue;
 				if (runGeneration !== generation) return false;
-				update(name, { ...state[name], status: "running", error: null });
+				if (!silent) {
+					update(name, { ...state[name], status: "running", error: null });
+				}
 				try {
 					const result = await jobs[name]();
 					if (runGeneration !== generation) return false;
-					update(name, {
+					finish(name, {
 						status: result.failed > 0 ? "failed" : "succeeded",
 						lastRunAt: now(),
 						processed: result.processed,
@@ -173,7 +189,7 @@ export function createSyncCoordinator(
 					});
 					console.error(`[sync] ${name} task threw`, error);
 					if (runGeneration !== generation) return false;
-					update(name, {
+					finish(name, {
 						status: "failed",
 						lastRunAt: now(),
 						processed: null,
@@ -323,11 +339,9 @@ export function useSyncEngine({
 					cosignDeliveries: () =>
 						syncCosignDeliveries.execute(ctx, { messageboxUrl }),
 					handleInbox: async () => {
-						if (!handleInboxSync) {
-							throw new Error(
-								"The 1Color wallet context isn't ready, so the handle inbox wasn't read",
-							);
-						}
+						// On a 1Color chain the inbox waits for the color context; the
+						// next run after it is set reads the box.
+						if (!handleInboxSync) return { processed: 0, failed: 0 };
 						const result = await handleInboxSync();
 						inboxReceived = result.processed > 0;
 						oneColorReceived = result.assetIds.length > 0;
@@ -335,6 +349,7 @@ export function useSyncEngine({
 					},
 				},
 				names,
+				{ silent: names === HANDLE_INBOX_ONLY },
 			);
 
 			if (started) {

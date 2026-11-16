@@ -144,6 +144,42 @@ describe("wallet sync coordinator", () => {
 		]);
 	});
 
+	it("keeps the timer's inbox run silent unless its outcome changes", async () => {
+		const states: SyncTasksState[] = [];
+		let clock = 1;
+		const coordinator = createSyncCoordinator(
+			(next) => {
+				states.push(next);
+			},
+			() => clock,
+		);
+		let outcome = { processed: 0, failed: 0 };
+		const jobs = {
+			...resolvedJobs(async () => {}),
+			handleInbox: async () => outcome,
+		};
+		await coordinator.run(jobs, ["handleInbox"], { silent: true }).promise;
+		// Idle to succeeded is a change: published once, never as running.
+		assert.equal(states.length, 1);
+		assert.equal(states[0].handleInbox.status, "succeeded");
+		assert.equal(states[0].handleInbox.lastRunAt, 1);
+
+		clock = 2;
+		await coordinator.run(jobs, ["handleInbox"], { silent: true }).promise;
+		assert.equal(states.length, 1);
+
+		outcome = { processed: 1, failed: 0 };
+		clock = 3;
+		await coordinator.run(jobs, ["handleInbox"], { silent: true }).promise;
+		assert.equal(states.length, 2);
+		assert.equal(states[1].handleInbox.processed, 1);
+		assert.ok(
+			states.every((state) =>
+				Object.values(state).every((task) => task.status !== "running"),
+			),
+		);
+	});
+
 	it("drops a waiting full run when the identity resets", async () => {
 		let release = () => {};
 		const blocked = new Promise<void>((resolve) => {
@@ -301,6 +337,11 @@ describe("handle inbox wiring", () => {
 			/if \(!canRun\) return;\s*const timer = setInterval\(\s*\(\) => runSync\(HANDLE_INBOX_ONLY\),/,
 		);
 		assert.match(engine, /if \(oneColorReceived\) onOneColorReceived\(\);/);
+		assert.match(engine, /\{ silent: names === HANDLE_INBOX_ONLY \}/);
+		assert.match(
+			engine,
+			/if \(!handleInboxSync\) return \{ processed: 0, failed: 0 \};/,
+		);
 		const provider = readFileSync(
 			join(process.cwd(), "providers/wallet-toolbox-provider.tsx"),
 			"utf8",

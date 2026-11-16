@@ -126,7 +126,12 @@ describe("createHandleInboxSync", () => {
 				return empty();
 			},
 		});
-		assert.deepEqual(await sync(), { processed: 0, failed: 0, assetIds: [] });
+		assert.deepEqual(await sync(), {
+			processed: 0,
+			failed: 0,
+			waiting: 0,
+			assetIds: [],
+		});
 		assert.deepEqual(calls, [
 			{ messageboxUrl: "https://alice.testnet.1sat.app", overlayFor },
 			{ messageboxUrl: "https://bob.testnet.1sat.app", overlayFor },
@@ -192,7 +197,12 @@ describe("createHandleInboxSync", () => {
 				return empty();
 			},
 		});
-		assert.deepEqual(await sync(), { processed: 0, failed: 1, assetIds: [] });
+		assert.deepEqual(await sync(), {
+			processed: 0,
+			failed: 1,
+			waiting: 0,
+			assetIds: [],
+		});
 		assert.deepEqual(calls, [{ messageboxUrl: "https://bob.a.example" }]);
 		assert.deepEqual(
 			(handleLogs()[0][1] as { handle: string }).handle,
@@ -239,6 +249,7 @@ describe("createHandleInboxSync", () => {
 		assert.deepEqual(await sync(), {
 			processed: 2,
 			failed: 2,
+			waiting: 0,
 			assetIds: ["aa_0", "bb_1"],
 		});
 		assert.deepEqual(visited, [
@@ -253,42 +264,53 @@ describe("createHandleInboxSync", () => {
 		);
 	});
 
-	it("leaves 1Color deliveries without an overlay uncounted, counts every other skip", async () => {
-		const skipped = {
-			received: [],
-			skipped: [
-				{ messageId: "token-1", reason: "overlay-required" },
-				{ messageId: "bad-1", reason: "envelope signature does not verify" },
-			],
-		};
-		const noOverlay = createHandleInboxSync(ctx, {
+	it("counts messages left in a box as waiting, never as failed, and logs each once", async () => {
+		const sync = createHandleInboxSync(ctx, {
 			listHandles: async () => [held("a", "main.example")],
 			resolveHandle: async () => resolution("https://main.example", 0),
-			syncInbox: async () => skipped,
+			syncInbox: async () => ({
+				received: [],
+				skipped: [
+					{ messageId: "token-1", reason: "overlay-required" },
+					{ messageId: "bad-1", reason: "envelope signature does not verify" },
+				],
+			}),
 		});
-		assert.deepEqual(await noOverlay(), {
+		assert.deepEqual(await sync(), {
 			processed: 0,
-			failed: 1,
+			failed: 0,
+			waiting: 2,
 			assetIds: [],
 		});
-		const withOverlay = createHandleInboxSync(ctx, {
+		const logs = handleLogs();
+		assert.equal(logs.length, 2);
+		assert.match(String(logs[0][0]), /no 1Color overlay/);
+		assert.match(String(logs[1][0]), /message failed/);
+		// A message waiting in its box is logged once, not every run.
+		const before = logged.length;
+		assert.equal((await sync()).waiting, 2);
+		assert.equal(logged.length, before);
+	});
+
+	it("counts refused acknowledgements as failed but keeps what was received", async () => {
+		const sync = createHandleInboxSync(ctx, {
 			overlayFor: async () => "https://testnet.openex.dev",
 			listHandles: async () => [held("a", "test.example")],
 			resolveHandle: async () => resolution("https://test.example", 0),
 			syncInbox: async () => ({
-				received: [],
-				skipped: [{ messageId: "token-2", reason: "overlay-required" }],
+				received: [
+					{ messageId: "m", txid: "dd", sender: "02", assetIds: ["dd_0"] },
+				],
+				skipped: [],
+				error: "acknowledge-failed: HTTP 503",
 			}),
 		});
-		assert.deepEqual(await withOverlay(), {
-			processed: 0,
+		assert.deepEqual(await sync(), {
+			processed: 1,
 			failed: 1,
-			assetIds: [],
+			waiting: 0,
+			assetIds: ["dd_0"],
 		});
-		// A message waiting in its box is logged once, not every run.
-		const before = logged.length;
-		await noOverlay();
-		assert.equal(logged.length, before);
 	});
 
 	it("does not overlap runs: a call during a run gets that run", async () => {
@@ -351,5 +373,35 @@ describe("1Color receive view", () => {
 			"utf8",
 		);
 		assert.match(grid, /<OneColorReceiveDialog \/>/);
+	});
+});
+
+describe("handle surfaces stay calm", () => {
+	it("shows the Handle inbox row only to a wallet holding a handle", () => {
+		const status = readFileSync(
+			join(process.cwd(), "components/wallet/wallet-home-status.tsx"),
+			"utf8",
+		);
+		assert.match(
+			status,
+			/const holdsHandle = \(handles\.data\?\.length \?\? 0\) > 0;/,
+		);
+		assert.match(status, /\.\.\.\(holdsHandle/);
+	});
+
+	it("reads handles again on focus and whenever the receive view opens", () => {
+		const hook = readFileSync(
+			join(process.cwd(), "hooks/use-wallet-handles.ts"),
+			"utf8",
+		);
+		assert.match(hook, /refetchOnWindowFocus: "always"/);
+		const view = readFileSync(
+			join(process.cwd(), "components/wallet/one-color-receive.tsx"),
+			"utf8",
+		);
+		assert.match(view, /useWalletHandles\(\{ refetchOnMount: "always" \}\)/);
+		// One QR, for the selected handle.
+		assert.equal(view.match(/<QRCodeSVG/g)?.length, 1);
+		assert.match(view, /<HandleQr handle=\{selected\} \/>/);
 	});
 });

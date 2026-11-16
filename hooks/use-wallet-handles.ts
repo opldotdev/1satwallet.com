@@ -11,11 +11,19 @@ export const walletHandlesQueryKey = (
 	identityKey: string | null,
 ) => ["wallet-handles", chain, identityKey] as const;
 
-/** The BRC-169 handles the website's own wallet holds. */
-export function useWalletHandles() {
+/**
+ * The BRC-169 handles the website's own wallet holds. Read again when the
+ * window regains focus, and on every mount with `refetchOnMount: "always"`
+ * (the receive view), so a handle registered in another tab shows promptly.
+ */
+export function useWalletHandles(
+	options: { refetchOnMount?: boolean | "always" } = {},
+) {
 	const { wallet, chain, connectionMode, identityKey } = useWalletToolbox();
 	return useQuery({
 		queryKey: walletHandlesQueryKey(chain, identityKey),
+		refetchOnWindowFocus: "always",
+		refetchOnMount: options.refetchOnMount ?? true,
 		enabled:
 			connectionMode === "built-in" && wallet !== null && identityKey !== null,
 		queryFn: async () => {
