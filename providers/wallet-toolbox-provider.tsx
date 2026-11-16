@@ -1055,13 +1055,16 @@ export function WalletToolboxProvider({
 					adminOriginator: ADMIN_ORIGINATOR,
 					services: result.services,
 				});
+				// Testnet only: apps reach 1Color through the color consent,
+				// prompted in the CWI relay like the 1Sat asset modules.
 				const color = createWalletColorModule({
 					wallet: result.wallet,
 					chain,
 					adminOriginator: ADMIN_ORIGINATOR,
+					promptHandler: requestAssetPermission,
 				});
 				const permissionModules = color
-					? { ...assetPermissionModules, color: color.permissionModule }
+					? { ...assetPermissionModules, color: color.module }
 					: assetPermissionModules;
 				pendingPermissionModules = Object.values(permissionModules);
 				// Apps reach the wallet only through this manager (CWI relay and

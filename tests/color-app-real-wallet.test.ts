@@ -3,7 +3,12 @@
 import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { assetBasket, colorProtocolID } from "@bsv/color-permission-module";
+import { InMemoryPermissionStore } from "@1sat/wallet-browser";
+import {
+	assetBasket,
+	ColorConsentDeclinedError,
+	colorProtocolID,
+} from "@bsv/color-permission-module";
 import { KeyDeriver, PrivateKey } from "@bsv/sdk";
 import {
 	type PermissionsManagerConfig,
@@ -16,7 +21,6 @@ import {
 import { parseBrowserOrigin, redirectOriginator } from "@/lib/cwi/types";
 import { clearDiagnostics } from "@/lib/runtime-diagnostics";
 import {
-	ColorUnavailableToAppsError,
 	createColorContext,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
@@ -165,20 +169,25 @@ const seedActions = async (
 /** The provider's wiring: color module, manager, guard, all on `admin`. */
 const setup = async (admin = ADMIN) => {
 	const { wallet, local, identityKey } = await realWalletWithStorage();
+	const prompts: string[] = [];
 	const color = createWalletColorModule({
 		wallet,
 		chain: "test",
 		adminOriginator: admin,
+		promptHandler: async (request) => {
+			prompts.push(`color ${request.kind}`);
+			return false;
+		},
+		permissionStore: new InMemoryPermissionStore(),
 	});
 	assert.ok(color);
 	const manager = guardModuleIdentifiers(
 		new WalletPermissionsManager(wallet, admin, {
 			...CONFIG,
-			permissionModules: { color: color.permissionModule },
+			permissionModules: { color: color.module },
 		}),
 		admin,
 	);
-	const prompts: string[] = [];
 	for (const event of [
 		"onProtocolPermissionRequested",
 		"onBasketAccessRequested",
@@ -221,18 +230,16 @@ describe("the admin originator against a real wallet", () => {
 	it("an app on another localhost port is not the admin to 1Color", async () => {
 		const relayed = parseBrowserOrigin("http://localhost:3001");
 		assert.equal(relayed?.originator, "localhost");
-		const { manager } = await setup();
+		const { manager, prompts } = await setup();
+		// Asked like any app (and declined here), never approved as the wallet.
 		await assert.rejects(
 			manager.listOutputs({ basket: BASKET }, "localhost"),
-			ColorUnavailableToAppsError,
+			ColorConsentDeclinedError,
 		);
-		await assert.rejects(
-			manager.getPublicKey(
-				{ protocolID: PROTOCOL, keyID: "color", counterparty: "self" },
-				"localhost",
-			),
-			ColorUnavailableToAppsError,
-		);
+		assert.deepEqual(prompts, ["color basketAccess"]);
+		const own = await manager.listOutputs({ basket: BASKET }, ADMIN);
+		assert.equal(own.totalOutputs, 0);
+		assert.deepEqual(prompts, ["color basketAccess"]);
 	});
 });
 

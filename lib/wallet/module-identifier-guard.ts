@@ -254,16 +254,18 @@ export function findRefusedAppName(
 }
 
 /**
- * 1Sat module schemes that are the wallet's own (admin only). Their labels,
- * baskets and outputs never show in an app's listing. Other `p ` schemes
- * (`p nosend`, `p 1sat …`) are open to apps and stay visible.
+ * Module schemes an app reaches only through the module's own consent. An
+ * app's general listing never shows their actions or outputs: a `p color`
+ * action shows only to a listActions that names one of its `p color` labels,
+ * which the color module asks the user about first. Other `p ` schemes
+ * (`p nosend`, `p 1sat …`) stay visible.
  */
-export const ADMIN_ONLY_SCHEMES = ["color"] as const;
+export const CONSENT_ONLY_SCHEMES = ["color"] as const;
 
-const isAdminOnlyName = (value: unknown): boolean => {
+const isConsentOnlyName = (value: unknown): boolean => {
 	if (typeof value !== "string") return false;
 	const name = normalize(value);
-	return ADMIN_ONLY_SCHEMES.some(
+	return CONSENT_ONLY_SCHEMES.some(
 		(scheme) => name === `p ${scheme}` || name.startsWith(`p ${scheme} `),
 	);
 };
@@ -275,10 +277,22 @@ type ListActions = (
 	originator: unknown,
 ) => Promise<ListedActions>;
 
-const isHiddenAction = (action: ListedAction): boolean =>
-	(Array.isArray(action.labels) ? action.labels : []).some(isAdminOnlyName);
+/**
+ * Hidden from an app: an action with a consent-only label, unless it carries
+ * one the app named (and the module asked the user about).
+ */
+const isHiddenAction = (
+	action: ListedAction,
+	named: ReadonlySet<string>,
+): boolean => {
+	const labels = Array.isArray(action.labels) ? action.labels : [];
+	return (
+		labels.some(isConsentOnlyName) &&
+		!labels.some((label) => typeof label === "string" && named.has(label))
+	);
+};
 
-/** An action as the app sees it: admin-only outputs and unasked labels gone. */
+/** An action as the app sees it: consent-only outputs and unasked labels gone. */
 const forApp = (
 	action: ListedAction,
 	args: Record<string, unknown>,
@@ -286,7 +300,7 @@ const forApp = (
 	const next = { ...action };
 	if (Array.isArray(action.outputs))
 		next.outputs = action.outputs.filter(
-			(output) => !isAdminOnlyName(record(output)?.basket),
+			(output) => !isConsentOnlyName(record(output)?.basket),
 		);
 	if (args.includeLabels !== true) delete next.labels;
 	return next;
@@ -320,9 +334,10 @@ const SCAN_CACHE_SIZE = 8;
 export const createListScanCache = (): ListScanCache => new Map();
 
 /**
- * An app's `listActions` result without admin-only module data: actions with
- * an admin-only label (e.g. `p color …`) are left out, and outputs in an
- * admin-only basket are stripped from the rest.
+ * An app's `listActions` result without consent-only module data: actions
+ * with a consent-only label (e.g. `p color …`) are left out unless the app
+ * named one of their labels, and outputs in a consent-only basket (read only
+ * through the module's own basket consent) are stripped from the rest.
  *
  * `offset` and `limit` count visible actions. A label-only scan reads forward
  * only until `offset + limit` visible actions are found or the wallet's list
@@ -337,9 +352,11 @@ export const createListScanCache = (): ListScanCache => new Map();
  * scan reaches the 10,000-action cap it is the visible actions found, since
  * nothing past the cap can be read.
  *
- * A request carrying a spec-op label goes to the wallet once, as asked, and
- * only its result is filtered; its `totalActions` is the wallet's total less
- * the actions dropped from that page (an upper bound).
+ * A request carrying a spec-op label, or naming a consent-only label, goes
+ * to the wallet once, as asked, and only its result is filtered; its
+ * `totalActions` is the wallet's total less the actions dropped from that page
+ * (an upper bound). A consent-only label read is passed once because the
+ * module asks the user on every call.
  */
 export async function listActionsForApp(
 	listActions: ListActions,
@@ -353,13 +370,21 @@ export async function listActionsForApp(
 		args as unknown as ListActionsArgs,
 	);
 	const labels = Array.isArray(args.labels) ? args.labels : [];
+	const named = new Set(
+		labels.filter(
+			(label): label is string =>
+				typeof label === "string" && isConsentOnlyName(label),
+		),
+	);
 
-	if (labels.some(isSpecOpLabel)) {
+	if (labels.some(isSpecOpLabel) || named.size > 0) {
 		const result = await listActions(
 			{ ...args, includeLabels: true },
 			originator,
 		);
-		const kept = result.actions.filter((action) => !isHiddenAction(action));
+		const kept = result.actions.filter(
+			(action) => !isHiddenAction(action, named),
+		);
 		return {
 			totalActions: Math.max(
 				0,
@@ -410,7 +435,8 @@ export async function listActionsForApp(
 				return await scanTo(undefined);
 			scan.sourceTotal = page.totalActions;
 			for (const [index, action] of page.actions.entries())
-				if (!isHiddenAction(action)) scan.visible.push(scan.scanned + index);
+				if (!isHiddenAction(action, named))
+					scan.visible.push(scan.scanned + index);
 			scan.scanned += page.actions.length;
 			if (page.actions.length < pageSize) {
 				scan.sourceTotal = scan.scanned;
@@ -454,7 +480,9 @@ export async function listActionsForApp(
 		}
 		const kept = window
 			.map((position) => full.actions[position - first])
-			.filter((action) => action !== undefined && !isHiddenAction(action));
+			.filter(
+				(action) => action !== undefined && !isHiddenAction(action, named),
+			);
 		// An action in the window was relabelled or removed with the total
 		// unchanged: the scan is stale, so scan again from 0, once.
 		if (kept.length < window.length && retry) {
@@ -474,7 +502,7 @@ export async function listActionsForApp(
  * Wrap the permissions manager so no BRC-100 call can carry a misrouted
  * reserved name. Every BRC-100 call is checked before it reaches the manager;
  * calls from any originator but `adminOriginator` (exact match, the same test
- * the 1Color gate uses) are held to the app rules too, and an app's
+ * the 1Color consent uses) are held to the app rules too, and an app's
  * `listActions` result is filtered. A refusal is reported in full and the
  * caller gets `MisroutedModuleIdentifierError`. The manager's own methods
  * (callbacks, grants, token listings) pass through, bound to the manager.

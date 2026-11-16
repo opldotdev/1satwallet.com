@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import type { PromptRequest } from "@1sat/permission-module";
+import { InMemoryPermissionStore } from "@1sat/wallet-browser";
 import {
 	assetBasket,
+	ColorConsentDeclinedError,
 	ColorPermissionModule,
 } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
 import { WalletPermissionsManager } from "@bsv/wallet-toolbox-client";
 import type { Chain } from "@/lib/chain-endpoints";
 import {
-	adminOnlyTokenAccess,
-	ColorUnavailableToAppsError,
 	createColorContext,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
@@ -37,15 +38,21 @@ const fakeWallet = () => {
 
 const managerFor = (chain: Chain) => {
 	const raw = fakeWallet();
+	const prompts: PromptRequest[] = [];
 	const color = createWalletColorModule({
 		wallet: raw.wallet,
 		chain,
 		adminOriginator: ADMIN,
+		promptHandler: async (request) => {
+			prompts.push(request);
+			return false;
+		},
+		permissionStore: new InMemoryPermissionStore(),
 	});
 	const manager = new WalletPermissionsManager(raw.wallet, ADMIN, {
-		permissionModules: color ? { color: color.permissionModule } : {},
+		permissionModules: color ? { color: color.module } : {},
 	});
-	return { raw, color, manager };
+	return { raw, color, manager, prompts };
 };
 
 const listAssetBasket = (manager: WalletInterface, originator: string) =>
@@ -73,15 +80,7 @@ describe("1Color module registration", () => {
 	});
 });
 
-describe("1Color consent (admin only)", () => {
-	it("approves the wallet itself and declines every other originator", async () => {
-		const access = adminOnlyTokenAccess(ADMIN);
-		const message = JSON.stringify({ type: "color_send" });
-		assert.equal(await access(ADMIN, message), true);
-		assert.equal(await access(APP, message), false);
-		assert.equal(await access("", message), false);
-	});
-
+describe("1Color consent", () => {
 	it("lets the admin read a p color basket through the manager", async () => {
 		const { manager, raw } = managerFor("test");
 		const result = await listAssetBasket(manager, ADMIN);
@@ -90,11 +89,15 @@ describe("1Color consent (admin only)", () => {
 		assert.equal(raw.calls[0].originator, ADMIN);
 	});
 
-	it("declines an app before the raw wallet is reached", async () => {
-		const { manager, raw } = managerFor("test");
+	it("asks the user for an app, and a decline stops it before the raw wallet", async () => {
+		const { manager, raw, prompts } = managerFor("test");
 		await assert.rejects(
 			listAssetBasket(manager, APP),
-			ColorUnavailableToAppsError,
+			ColorConsentDeclinedError,
+		);
+		assert.deepEqual(
+			prompts.map((prompt) => [prompt.kind, prompt.originator]),
+			[["basketAccess", APP]],
 		);
 		assert.equal(raw.calls.length, 0);
 	});
@@ -139,11 +142,11 @@ describe("wallet provider color wiring", () => {
 	it("registers color with the asset modules and tracks it for dispose", () => {
 		assert.match(
 			init,
-			/createWalletColorModule\(\{[\s\S]*chain,[\s\S]*adminOriginator: ADMIN_ORIGINATOR/,
+			/createWalletColorModule\(\{[\s\S]*chain,[\s\S]*adminOriginator: ADMIN_ORIGINATOR,\s*promptHandler: requestAssetPermission,/,
 		);
 		assert.match(
 			init,
-			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.permissionModule \}\s*:\s*assetPermissionModules/,
+			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.module \}\s*:\s*assetPermissionModules/,
 		);
 		assert.match(
 			init,
