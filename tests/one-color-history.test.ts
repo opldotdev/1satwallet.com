@@ -8,9 +8,13 @@ import {
 	type WalletActionInput,
 	type WalletActionOutput,
 } from "@bsv/sdk";
+import { flattenOneColorHistory } from "@/hooks/use-one-color-history";
+import { oneColorTokenState } from "@/hooks/use-one-color-token";
 import {
 	fetchOneColorHistory,
+	NotOneColorDeployError,
 	ONE_COLOR_HISTORY_PAGE,
+	type OneColorBalance,
 	oneColorActionAmount,
 } from "@/lib/wallet/one-color";
 
@@ -245,7 +249,7 @@ describe("fetchOneColorHistory", () => {
 			limit: 3,
 		});
 		assert.deepEqual(
-			first.map((e) => [e.direction, e.amount]),
+			first.entries.map((e) => [e.direction, e.amount]),
 			[
 				["received", 19n],
 				["received", 17n],
@@ -257,7 +261,7 @@ describe("fetchOneColorHistory", () => {
 			limit: 3,
 		});
 		assert.deepEqual(
-			second.map((e) => e.action.description),
+			second.entries.map((e) => e.action.description),
 			["action 13", "action 11", "action 9"],
 		);
 	});
@@ -266,18 +270,146 @@ describe("fetchOneColorHistory", () => {
 		const all = await fetchOneColorHistory(walletOf(250), ASSET, {
 			limit: 1000,
 		});
-		assert.equal(all.length, 125);
-		assert.equal(all.at(-1)?.amount, 1n);
+		assert.equal(all.entries.length, 125);
+		assert.equal(all.entries.at(-1)?.amount, 1n);
+		assert.equal(all.truncated, false);
 	});
 
 	it("defaults to one page of the history size", async () => {
 		const page = await fetchOneColorHistory(walletOf(200), ASSET);
-		assert.equal(page.length, ONE_COLOR_HISTORY_PAGE);
+		assert.equal(page.entries.length, ONE_COLOR_HISTORY_PAGE);
+		assert.equal(page.truncated, false);
 	});
 
 	it("an empty wallet reads nothing past the probe", async () => {
 		const calls: Partial<ListActionsArgs>[] = [];
-		assert.deepEqual(await fetchOneColorHistory(walletOf(0, calls), ASSET), []);
+		assert.deepEqual(await fetchOneColorHistory(walletOf(0, calls), ASSET), {
+			entries: [],
+			truncated: false,
+		});
 		assert.equal(calls.length, 1);
+	});
+
+	it("says when the 2000-action cap cut the scan short", async () => {
+		const calls: Partial<ListActionsArgs>[] = [];
+		const page = await fetchOneColorHistory(walletOf(2500, calls), ASSET, {
+			limit: 2000,
+		});
+		assert.equal(page.entries.length, 1000);
+		assert.equal(page.truncated, true);
+		assert.equal(calls.length, 21);
+	});
+
+	it("a scan that reads the whole history is not truncated", async () => {
+		const page = await fetchOneColorHistory(walletOf(2000), ASSET, {
+			limit: 2000,
+		});
+		assert.equal(page.entries.length, 1000);
+		assert.equal(page.truncated, false);
+	});
+});
+
+describe("flattenOneColorHistory", () => {
+	const entry = (txid: string) => ({
+		direction: "received" as const,
+		amount: 1n,
+		action: { txid } as WalletAction,
+	});
+
+	it("lists each transaction once across pages, and keeps the last page's truncation", () => {
+		const flat = flattenOneColorHistory([
+			{ entries: [entry("a"), entry("b")], truncated: false },
+			{ entries: [entry("b"), entry("c")], truncated: true },
+		]);
+		assert.deepEqual(
+			flat.entries.map((e) => e.action.txid),
+			["a", "b", "c"],
+		);
+		assert.equal(flat.truncated, true);
+		assert.deepEqual(flattenOneColorHistory([]), {
+			entries: [],
+			truncated: false,
+		});
+	});
+});
+
+describe("oneColorTokenState", () => {
+	const held: OneColorBalance = {
+		assetId: ASSET,
+		available: 5n,
+		pending: 0n,
+		authorities: 1,
+		dec: 2,
+	};
+	const idle = { status: "pending" as const, data: undefined, error: null };
+
+	it("a failed holdings read is an error, not loading, though the deploy read never ran", () => {
+		assert.deepEqual(
+			oneColorTokenState(
+				ASSET,
+				{ status: "error", data: undefined, error: new Error("down") },
+				idle,
+			),
+			{ kind: "error" },
+		);
+	});
+
+	it("loads while the holdings load, then shows the holding", () => {
+		assert.deepEqual(oneColorTokenState(ASSET, idle, idle), {
+			kind: "loading",
+		});
+		assert.deepEqual(
+			oneColorTokenState(
+				ASSET,
+				{ status: "success", data: [held], error: null },
+				idle,
+			),
+			{ kind: "ready", token: held },
+		);
+	});
+
+	it("a token not held reads its deploy and shows zero balances", () => {
+		const balances = { status: "success" as const, data: [], error: null };
+		assert.deepEqual(oneColorTokenState(ASSET, balances, idle), {
+			kind: "loading",
+		});
+		assert.deepEqual(
+			oneColorTokenState(ASSET, balances, {
+				status: "success",
+				data: { dec: 3, sym: "ZZ" },
+				error: null,
+			}),
+			{
+				kind: "ready",
+				token: {
+					assetId: ASSET,
+					available: 0n,
+					pending: 0n,
+					authorities: 0,
+					dec: 3,
+					sym: "ZZ",
+				},
+			},
+		);
+	});
+
+	it("an output that is not a deploy is not a token; any other deploy failure is an error", () => {
+		const balances = { status: "success" as const, data: [], error: null };
+		assert.deepEqual(
+			oneColorTokenState(ASSET, balances, {
+				status: "error",
+				data: undefined,
+				error: new NotOneColorDeployError(ASSET),
+			}),
+			{ kind: "not-a-token" },
+		);
+		assert.deepEqual(
+			oneColorTokenState(ASSET, balances, {
+				status: "error",
+				data: undefined,
+				error: new Error("404"),
+			}),
+			{ kind: "error" },
+		);
 	});
 });

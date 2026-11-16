@@ -22,17 +22,18 @@ import {
 	OneColorNotice,
 } from "@/components/wallet/one-color-grid";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
+import { oneColorBalancesQueryKey } from "@/hooks/use-one-color-balances";
 import {
-	oneColorBalancesQueryKey,
-	useOneColorBalances,
-} from "@/hooks/use-one-color-balances";
-import { useOneColorHistory } from "@/hooks/use-one-color-history";
+	flattenOneColorHistory,
+	useOneColorHistory,
+} from "@/hooks/use-one-color-history";
+import { useOneColorToken } from "@/hooks/use-one-color-token";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { actionExplorerUrl } from "@/lib/wallet/action-history";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
 import { NoColorOverlayError } from "@/lib/wallet/color-overlay";
 import {
-	getOneColorAssetInfo,
+	ONE_COLOR_SCAN_MAX,
 	type OneColorBalance,
 	type OneColorDirection,
 	type OneColorHistoryEntry,
@@ -45,57 +46,6 @@ const DIRECTION_LABEL: Record<OneColorDirection, string> = {
 	sent: "Sent",
 	transfer: "Transfer",
 };
-
-const logFailure = (operation: string, assetId: string, error: unknown) => {
-	console.error(`[1color] ${operation} of ${assetId} failed:`, error);
-	reportDiagnostic({
-		category: "provider",
-		code: "provider.failed",
-		operation: `wallet.1color.${operation}`,
-		recoverable: true,
-		context: { retryable: true },
-	});
-};
-
-/**
- * The asset as the page shows it: the holding when the wallet has one, else
- * zero balances with the deploy's display fields (a token sent away in full
- * still has a history).
- */
-function useOneColorToken(assetId: string) {
-	const { chain, identityKey, services } = useWalletToolbox();
-	const balances = useOneColorBalances();
-	const held = balances.data?.find((t) => t.assetId === assetId);
-	const info = useQuery({
-		queryKey: [
-			...oneColorBalancesQueryKey(chain, identityKey),
-			"asset",
-			assetId,
-		],
-		enabled: balances.isSuccess && !held,
-		queryFn: async () => {
-			try {
-				return await getOneColorAssetInfo(
-					{ chain, services: services ?? undefined },
-					assetId,
-				);
-			} catch (error) {
-				logFailure("asset-info", assetId, error);
-				throw error;
-			}
-		},
-	});
-	const token: OneColorBalance | undefined =
-		held ??
-		(info.isSuccess
-			? { assetId, available: 0n, pending: 0n, authorities: 0, ...info.data }
-			: undefined);
-	return {
-		token,
-		isPending: balances.isPending || (!held && info.isPending),
-		isError: balances.isError || (!held && info.isError),
-	};
-}
 
 function useOverlayOrigin(assetId: string) {
 	const { chain, identityKey, colorOverlay } = useWalletToolbox();
@@ -112,7 +62,16 @@ function useOverlayOrigin(assetId: string) {
 			try {
 				return await colorOverlay.resolveOrigin(assetId);
 			} catch (error) {
-				logFailure("overlay-origin", assetId, error);
+				// No overlay for the token is a normal state ("None configured").
+				if (error instanceof NoColorOverlayError) throw error;
+				console.error(`[1color] overlay of ${assetId} not resolved:`, error);
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.1color.overlay-origin",
+					recoverable: true,
+					context: { retryable: true },
+				});
 				throw error;
 			}
 		},
@@ -124,20 +83,22 @@ function useOverlayOrigin(assetId: string) {
  * dialog trigger then. Mint is offered only to an authority holder.
  */
 function OneColorActions({ token }: { token: OneColorBalance }) {
-	const soon = "Not available yet";
 	return (
-		<div className="flex flex-wrap gap-2">
-			<Button size="sm" variant="outline" disabled title={soon}>
-				<ArrowDownLeft className="size-4" data-icon="inline-start" /> Receive
-			</Button>
-			<Button size="sm" variant="outline" disabled title={soon}>
-				<Send className="size-4" data-icon="inline-start" /> Send
-			</Button>
-			{token.authorities > 0 ? (
-				<Button size="sm" variant="outline" disabled title={soon}>
-					<Sparkles className="size-4" data-icon="inline-start" /> Mint
+		<div className="space-y-1">
+			<div className="flex flex-wrap gap-2">
+				<Button size="sm" variant="outline" disabled>
+					<ArrowDownLeft className="size-4" data-icon="inline-start" /> Receive
 				</Button>
-			) : null}
+				<Button size="sm" variant="outline" disabled>
+					<Send className="size-4" data-icon="inline-start" /> Send
+				</Button>
+				{token.authorities > 0 ? (
+					<Button size="sm" variant="outline" disabled>
+						<Sparkles className="size-4" data-icon="inline-start" /> Mint
+					</Button>
+				) : null}
+			</div>
+			<p className="text-xs text-muted-foreground">Not available yet.</p>
 		</div>
 	);
 }
@@ -234,12 +195,21 @@ function OneColorHistory({ assetId, dec }: { assetId: string; dec: number }) {
 		);
 	}
 
-	const entries = history.data.pages.flat();
+	const { entries, truncated } = flattenOneColorHistory(history.data.pages);
+	const olderNote = truncated ? (
+		<p className="text-xs text-muted-foreground">
+			Older history isn't shown: only the newest{" "}
+			{ONE_COLOR_SCAN_MAX.toLocaleString()} transactions are searched.
+		</p>
+	) : null;
 	if (entries.length === 0) {
 		return (
-			<p className="text-sm text-muted-foreground">
-				No transactions found for this token.
-			</p>
+			<div className="space-y-2">
+				<p className="text-sm text-muted-foreground">
+					No transactions found for this token.
+				</p>
+				{olderNote}
+			</div>
 		);
 	}
 
@@ -264,6 +234,7 @@ function OneColorHistory({ assetId, dec }: { assetId: string; dec: number }) {
 					Load more
 				</Button>
 			) : null}
+			{olderNote}
 		</div>
 	);
 }
@@ -272,18 +243,36 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const { chain, identityKey, colorOverlay } = useWalletToolbox();
 	const queryClient = useQueryClient();
 	const [, copy] = useCopyWithSound();
-	const { token, isPending, isError } = useOneColorToken(assetId);
+	const { state, retry } = useOneColorToken(assetId);
 	const overlay = useOverlayOrigin(assetId);
 
-	if (isPending) return <OneColorLoading label="Loading 1Color token…" />;
-	if (isError || !token) {
+	if (state.kind === "loading")
+		return <OneColorLoading label="Loading 1Color token…" />;
+	if (state.kind === "not-a-token") {
 		return (
 			<OneColorNotice>
-				<p>Couldn't load this 1Color token. Try again.</p>
+				<p>This isn't a 1Color token.</p>
+			</OneColorNotice>
+		);
+	}
+	if (state.kind === "error") {
+		return (
+			<OneColorNotice>
+				<p>Couldn't load this 1Color token.</p>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="mt-3"
+					onClick={retry}
+				>
+					<RefreshCw data-icon="inline-start" /> Retry
+				</Button>
 			</OneColorNotice>
 		);
 	}
 
+	const { token } = state;
 	const ticker = oneColorTicker(token);
 	const overlayText = !colorOverlay
 		? "Unavailable"
@@ -301,7 +290,9 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 				<OneColorIcon icon={token.icon} size={80} />
 				<div className="min-w-0 flex-1 space-y-2">
 					<div className="flex flex-wrap items-center gap-2">
-						<h1 className="text-3xl font-bold">{ticker}</h1>
+						<h1 className="min-w-0 text-3xl font-bold wrap-anywhere">
+							{ticker}
+						</h1>
 						<OneColorChips authorities={token.authorities} />
 					</div>
 					<div className="flex items-center gap-1">
@@ -330,11 +321,11 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 				</div>
 				<div>
 					<dt className="text-xs text-muted-foreground">Pending</dt>
-					<dd
-						className="mt-1 break-all font-mono"
-						title="Held by a send the recipient has not claimed yet"
-					>
+					<dd className="mt-1 break-all font-mono">
 						{formatBsv21Amount(token.pending, token.dec)}
+					</dd>
+					<dd className="mt-1 text-xs text-muted-foreground">
+						In sends not yet claimed by the recipient.
 					</dd>
 				</div>
 				<div>

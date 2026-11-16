@@ -1,7 +1,8 @@
 /**
  * 1Color (BRC-162) tokens the wallet holds and their history. Port of Yours
- * (1color branch) `src/services/oneColor.ts` (holdings, per-action amounts)
- * and `fetchOneColorHistory` from `src/utils/coinHistory.ts`; names kept.
+ * (yours-org/yours-wallet, branch 1color at 15d1efb): `src/services/oneColor.ts`
+ * (holdings, `oneColorActionAmount`) and `fetchOneColorHistory` from
+ * `src/utils/coinHistory.ts`; names kept.
  *
  * Holdings come from one read of the toolbox's basket-prefix listing: every
  * output in the color module's per-asset baskets, with its locking script and
@@ -151,17 +152,20 @@ export const aggregateOneColorHoldings = (
 /** Actions read per page while scanning the history newest first. */
 const SCAN_PAGE = 100;
 /** A scan stops after this many actions; older history of a busy wallet is not read. */
-const SCAN_MAX = 2000;
+export const ONE_COLOR_SCAN_MAX = 2000;
+const SCAN_MAX = ONE_COLOR_SCAN_MAX;
 
 /**
  * The wallet's actions newest first, at most `SCAN_MAX` of them.
  * `listActions` answers in storage (insertion) order, oldest first, so the
  * total is probed and pages are read backwards from the end. Stop early by
- * leaving the loop.
+ * leaving the loop. `scan.cut` is set when the cap ends the scan with older
+ * actions left unread.
  */
 async function* actionsNewestFirst(
 	wallet: Pick<WalletInterface, "listActions">,
 	include: Omit<ListActionsArgs, "labels" | "limit" | "offset">,
+	scan: { cut: boolean } = { cut: false },
 ): AsyncGenerator<WalletAction> {
 	const probe = await wallet.listActions({ labels: [], limit: 1, offset: 0 });
 	let end = probe.totalActions;
@@ -178,6 +182,7 @@ async function* actionsNewestFirst(
 		scanned += end - start;
 		end = start;
 	}
+	scan.cut = end > 0;
 }
 
 /**
@@ -254,6 +259,14 @@ export const assetInfoFromMetadata = (
 	return info;
 };
 
+/** A well-formed asset id whose output is not a 1Color deploy: not a token, so not worth retrying. */
+export class NotOneColorDeployError extends Error {
+	constructor(readonly assetId: string) {
+		super(`${assetId}: output is not a 1Color deploy`);
+		this.name = "NotOneColorDeployError";
+	}
+}
+
 const assetInfoCache = new Map<string, Promise<OneColorAssetInfo>>();
 
 /**
@@ -278,8 +291,7 @@ export const getOneColorAssetInfo = (
 			const tx = Transaction.fromBinary(Array.from(raw));
 			const script = tx.outputs[vout]?.lockingScript;
 			const token = script ? OneColor.decode(script) : null;
-			if (token?.role !== "deploy")
-				throw new Error(`${assetId}: output is not a 1Color deploy`);
+			if (token?.role !== "deploy") throw new NotOneColorDeployError(assetId);
 			return assetInfoFromMetadata(token.metadata);
 		})();
 		p.catch(() => assetInfoCache.delete(key));
@@ -396,6 +408,12 @@ export type OneColorHistoryEntry = OneColorActionAmount & {
 
 export const ONE_COLOR_HISTORY_PAGE = 25;
 
+export type OneColorHistoryPage = {
+	entries: OneColorHistoryEntry[];
+	/** The scan hit `ONE_COLOR_SCAN_MAX` with older actions left unread. */
+	truncated: boolean;
+};
+
 /**
  * One page of an asset's history, newest first: `limit` matching actions
  * after skipping `offset` of them. 1Color actions carry their BRC-207 plan as
@@ -408,18 +426,26 @@ export const fetchOneColorHistory = async (
 	wallet: Pick<WalletInterface, "listActions">,
 	assetId: string,
 	{ offset = 0, limit = ONE_COLOR_HISTORY_PAGE } = {},
-): Promise<OneColorHistoryEntry[]> => {
+): Promise<OneColorHistoryPage> => {
 	const matches: OneColorHistoryEntry[] = [];
-	if (limit <= 0) return matches;
-	for await (const action of actionsNewestFirst(wallet, {
-		includeOutputs: true,
-		includeOutputLockingScripts: true,
-		includeInputs: true,
-		includeInputSourceLockingScripts: true,
-	})) {
+	const scan = { cut: false };
+	if (limit <= 0) return { entries: matches, truncated: false };
+	for await (const action of actionsNewestFirst(
+		wallet,
+		{
+			includeOutputs: true,
+			includeOutputLockingScripts: true,
+			includeInputs: true,
+			includeInputSourceLockingScripts: true,
+		},
+		scan,
+	)) {
 		const moved = oneColorActionAmount(action, assetId);
 		if (moved) matches.push({ ...moved, action });
 		if (matches.length >= offset + limit) break;
 	}
-	return matches.slice(offset, offset + limit);
+	return {
+		entries: matches.slice(offset, offset + limit),
+		truncated: scan.cut,
+	};
 };
