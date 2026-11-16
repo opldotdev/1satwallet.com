@@ -32,6 +32,7 @@ import {
 	type OneColorPendingSend,
 	type OneColorSendInput,
 	type OneColorSendOutcome,
+	oneColorDecimalsError,
 	oneColorMemoError,
 	oneColorSendAmountError,
 	parseOneColorAmount,
@@ -127,6 +128,12 @@ export function OneColorSendDialog({
 
 	const prepareReview = useCallback(() => {
 		setError(null);
+		// Before parsing: an unread deploy's `dec` is a placeholder 0.
+		const decimalsError = oneColorDecimalsError(token);
+		if (decimalsError) {
+			setError(decimalsError);
+			return;
+		}
 		const normalized = normalizeHandle(handle);
 		if (!normalized) {
 			setError(ONE_COLOR_HANDLE_PROMPT);
@@ -154,7 +161,7 @@ export function OneColorSendDialog({
 			handle: normalized,
 			...(trimmedMemo ? { memo: trimmedMemo } : {}),
 		});
-	}, [amount, handle, memo, token.assetId, token.available, token.dec]);
+	}, [amount, handle, memo, token]);
 
 	const send = useCallback(async () => {
 		if (!(colorContext && review) || inFlight.current) return;

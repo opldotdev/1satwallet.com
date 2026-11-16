@@ -13,8 +13,9 @@
  * then it waits in the wallet as a `nosend` action labelled `1color send …`,
  * which Cancel aborts by txid (iOS `OneColorSendService.cancel`).
  *
- * Mint runs `mintOneColor` (`one-color-mint.ts`): one createAction the
- * module funds with an authority, signs, broadcasts and submits.
+ * Mint runs `mintOneColorOrThrow` (`one-color-mint.ts`): one createAction
+ * the module funds with an authority, signs, broadcasts and submits. It
+ * throws the original error, so the log keeps all of it.
  */
 import {
 	COLOR_SEND_LABEL_PREFIX,
@@ -34,8 +35,15 @@ import {
 	formatBsv21Amount,
 	parseBsv21Amount,
 } from "@/lib/wallet/bsv21-actions";
-import { actionsNewestFirst } from "@/lib/wallet/one-color";
-import { mintOneColor } from "@/lib/wallet/one-color-mint";
+import {
+	confirmsPermanentMintTermination,
+	permanentMintTerminationConfirmation,
+} from "@/lib/wallet/bsv21-authority";
+import {
+	actionsNewestFirst,
+	type OneColorBalance,
+} from "@/lib/wallet/one-color";
+import { mintOneColorOrThrow } from "@/lib/wallet/one-color-mint";
 
 export { ONE_COLOR_MAX_AMOUNT };
 
@@ -49,7 +57,7 @@ export const ONE_COLOR_MAX_ICON_BYTES = 100_000;
 export interface OneColorActionSet {
 	deploy: typeof deploy1Color.execute;
 	send: typeof send1Color.execute;
-	mint: typeof mintOneColor;
+	mint: typeof mintOneColorOrThrow;
 	/** BRC-169 handle lookup, run before the send so its failures read as not built. */
 	resolveHandle: (handle: string) => Promise<unknown>;
 }
@@ -57,7 +65,7 @@ export interface OneColorActionSet {
 export const canonicalOneColorActions: OneColorActionSet = {
 	deploy: deploy1Color.execute,
 	send: send1Color.execute,
-	mint: mintOneColor,
+	mint: mintOneColorOrThrow,
 	resolveHandle: (handle) => resolveHandle(handle),
 };
 
@@ -238,8 +246,19 @@ function isConsentDeclined(error: unknown): boolean {
 	);
 }
 
-/** The toolbox refuses to fund the action before anything is signed. */
-const INSUFFICIENT_FUNDS = /WERR_INSUFFICIENT_FUNDS|insufficient funds/i;
+/**
+ * The toolbox refuses to fund the action before anything is signed. Anchored:
+ * a later failure that only mentions funds (an overlay's or broadcaster's
+ * text) is not this refusal.
+ */
+const INSUFFICIENT_FUNDS = /^(WERR_INSUFFICIENT_FUNDS\b|Insufficient funds\b)/i;
+
+function isInsufficientFunds(error: unknown): boolean {
+	return (
+		(error instanceof Error && error.name === "WERR_INSUFFICIENT_FUNDS") ||
+		INSUFFICIENT_FUNDS.test(errorText(error))
+	);
+}
 
 /** Classifies a failed deploy for the user. */
 export function describeOneColorDeployFailure(
@@ -267,7 +286,7 @@ export function describeOneColorDeployFailure(
 			mayHaveBeenSent: false,
 		};
 	}
-	if (INSUFFICIENT_FUNDS.test(message)) {
+	if (isInsufficientFunds(error)) {
 		return {
 			message: "Not enough BSV to pay for the deploy. Add funds and try again.",
 			mayHaveBeenSent: false,
@@ -520,7 +539,7 @@ export function describeOneColorSendFailure(
 	if (message.startsWith("No 1Color overlay is configured")) {
 		return notBuilt("No 1Color overlay is configured for this token.");
 	}
-	if (INSUFFICIENT_FUNDS.test(message)) {
+	if (isInsufficientFunds(error)) {
 		return notBuilt(
 			"Not enough BSV to pay for the send. Add funds and try again.",
 		);
@@ -733,6 +752,78 @@ export interface OneColorMintInput {
 	endMinting: boolean;
 }
 
+/** Shown instead of parsing an amount against a placeholder `dec`. */
+export const ONE_COLOR_DECIMALS_UNREADABLE =
+	"Couldn't read this token's decimals. Refresh and try again.";
+
+/**
+ * Why an amount can't be read for this token yet, or null. A token whose
+ * deploy couldn't be read carries a placeholder `dec` of 0, so "100" would
+ * be 100 atomic units of what may be an 8-decimal token.
+ */
+export function oneColorDecimalsError(
+	token: Pick<OneColorBalance, "infoUnreadable">,
+): string | null {
+	return token.infoUnreadable ? ONE_COLOR_DECIMALS_UNREADABLE : null;
+}
+
+export interface OneColorMintForm {
+	amount: string;
+	endMinting: boolean;
+	/** The typed `END <assetId>` phrase; checked only when `endMinting`. */
+	confirmation: string;
+}
+
+/** "0", "0.0", …: no mint, which only End minting allows. */
+const ZERO_AMOUNT = /^0(?:\.0+)?$/;
+
+/**
+ * The mint form as a reviewed input, or the message that says what to fix.
+ * With End minting on, an empty or zero amount ends minting without minting.
+ */
+export function prepareOneColorMint(
+	form: OneColorMintForm,
+	token: Pick<OneColorBalance, "assetId" | "dec" | "infoUnreadable">,
+): { ok: true; input: OneColorMintInput } | { ok: false; error: string } {
+	const decimalsError = oneColorDecimalsError(token);
+	if (decimalsError) return { ok: false, error: decimalsError };
+	const text = form.amount.trim();
+	let amount = 0n;
+	if (text && !ZERO_AMOUNT.test(text)) {
+		const parsed = parseBsv21Amount(text, token.dec);
+		if (parsed === null) {
+			const optional = form.endMinting ? ", or leave it empty" : "";
+			return {
+				ok: false,
+				error:
+					token.dec === 0
+						? `Enter a whole amount${optional}.`
+						: `Enter an amount with at most ${token.dec} decimals${optional}.`,
+			};
+		}
+		if (parsed > ONE_COLOR_MAX_AMOUNT) {
+			return { ok: false, error: "That amount is too large." };
+		}
+		amount = parsed;
+	}
+	if (amount === 0n && !form.endMinting) {
+		return { ok: false, error: "Enter an amount greater than zero." };
+	}
+	if (
+		form.endMinting &&
+		!confirmsPermanentMintTermination(form.confirmation, token.assetId)
+	) {
+		return {
+			ok: false,
+			error: `Type ${permanentMintTerminationConfirmation(token.assetId)} exactly to end minting.`,
+		};
+	}
+	return {
+		ok: true,
+		input: { assetId: token.assetId, amount, endMinting: form.endMinting },
+	};
+}
+
 export interface OneColorMintFailure {
 	/** Short and specific; the full error goes to the log. */
 	message: string;
@@ -756,6 +847,9 @@ export function describeOneColorMintFailure(
 	const message = errorText(error);
 	if (isConsentDeclined(error)) {
 		return mintNotSent("The wallet declined the mint. Nothing was sent.");
+	}
+	if (message === "invalid-amount") {
+		return mintNotSent("Enter a valid amount.");
 	}
 	if (message === "amount-must-be-positive") {
 		return mintNotSent("Enter an amount greater than zero.");
@@ -788,7 +882,7 @@ export function describeOneColorMintFailure(
 			"The mint authority was spent elsewhere. Refresh this token before minting.",
 		);
 	}
-	if (INSUFFICIENT_FUNDS.test(message)) {
+	if (isInsufficientFunds(error)) {
 		return mintNotSent(
 			"Not enough BSV to pay for the mint. Add funds and try again.",
 		);
@@ -826,9 +920,6 @@ export async function runOneColorMint(
 			amount: input.amount.toString(),
 			endMinting: input.endMinting,
 		});
-		if (result.error || !result.txid) {
-			throw new Error(result.error ?? "no-transaction");
-		}
 		outcome = { ok: true, txid: result.txid, endedMinting: input.endMinting };
 	} catch (error) {
 		options.log(input.endMinting ? "mint-end" : "mint", error);

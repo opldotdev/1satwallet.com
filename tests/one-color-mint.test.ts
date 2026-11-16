@@ -39,13 +39,17 @@ import { clearDiagnostics } from "@/lib/runtime-diagnostics";
 import { adminOnlyColorModule } from "@/lib/wallet/color-module";
 import {
 	describeOneColorMintFailure,
+	ONE_COLOR_DECIMALS_UNREADABLE,
 	type OneColorActionSet,
+	oneColorDecimalsError,
+	prepareOneColorMint,
 	runOneColorMint,
 } from "@/lib/wallet/one-color-actions";
 import {
 	type Mint1ColorInput,
-	type Mint1ColorResponse,
+	type Mint1ColorResult,
 	mintOneColor,
+	mintOneColorOrThrow,
 } from "@/lib/wallet/one-color-mint";
 
 const ASSET_TXID = "ab".repeat(32);
@@ -255,7 +259,65 @@ describe("mintOneColor", () => {
 			await mintOneColor(ctx, { assetId: ASSET_ID, amount: -1n }),
 			{ error: "amount-out-of-range" },
 		);
+		for (const amount of ["abc", "1.5", "", "0x10", "1e3"]) {
+			assert.deepEqual(await mintOneColor(ctx, { assetId: ASSET_ID, amount }), {
+				error: "invalid-amount",
+			});
+		}
 		assert.equal(created.length, 0);
+	});
+
+	it("mintOneColorOrThrow throws input errors and the wallet's own error object", async () => {
+		const { ctx, created } = recordingWallet();
+		await assert.rejects(
+			mintOneColorOrThrow(ctx, { assetId: ASSET_ID, amount: 0n }),
+			{ message: "amount-must-be-positive" },
+		);
+		await assert.rejects(
+			mintOneColorOrThrow(ctx, { assetId: ASSET_ID, amount: "1.5" }),
+			{ message: "invalid-amount" },
+		);
+		await assert.rejects(
+			mintOneColorOrThrow(ctx, { assetId: "x_0", amount: 1n }),
+			{ message: "invalid-asset-id: expected <txid>_<vout>" },
+		);
+		assert.equal(created.length, 0);
+
+		const review = Object.assign(new Error("WERR_REVIEW_ACTIONS"), {
+			name: "WERR_REVIEW_ACTIONS",
+			sendWithResults: [{ txid: ASSET_TXID, status: "failed" }],
+			cause: new Error("broadcast rejected"),
+		});
+		const failing = {
+			wallet: {
+				getPublicKey: proto.getPublicKey.bind(proto),
+				createAction: async () => {
+					throw review;
+				},
+			},
+		} as unknown as OneSatContext;
+		const thrown = await mintOneColorOrThrow(failing, {
+			assetId: ASSET_ID,
+			amount: 1n,
+		}).catch((error: unknown) => error);
+		assert.equal(thrown, review);
+	});
+
+	it("a txid without the transaction is a mint that went out", async () => {
+		const txidOnly = {
+			wallet: {
+				getPublicKey: proto.getPublicKey.bind(proto),
+				createAction: async () => ({ txid: ASSET_TXID }),
+			},
+		} as unknown as OneSatContext;
+		assert.deepEqual(
+			await mintOneColor(txidOnly, { assetId: ASSET_ID, amount: 1n }),
+			{
+				txid: ASSET_TXID,
+				assetId: ASSET_ID,
+				authorityOutpoint: `${ASSET_TXID}.1`,
+			},
+		);
 	});
 
 	it("reports a createAction failure as its error and an empty result as no-transaction", async () => {
@@ -330,6 +392,23 @@ describe("describeOneColorMintFailure", () => {
 			/spent elsewhere/,
 		);
 		assert.match(notSent(new Error("insufficient funds")), /Not enough BSV/);
+		const toolbox = Object.assign(
+			new Error("Insufficient funds in the available inputs"),
+			{ name: "WERR_INSUFFICIENT_FUNDS" },
+		);
+		assert.match(notSent(toolbox), /Not enough BSV/);
+		assert.equal(notSent(new Error("invalid-amount")), "Enter a valid amount.");
+	});
+
+	it("a later failure that only mentions funds is not the toolbox's refusal", () => {
+		for (const message of [
+			"overlay submit failed: insufficient funds",
+			"broadcast: WERR_INSUFFICIENT_FUNDS from a peer",
+		]) {
+			const failure = describeOneColorMintFailure(new Error(message));
+			assert.equal(failure.mayHaveBeenSent, true, message);
+			assert.match(failure.message, /may have gone out/);
+		}
 	});
 
 	it("treats anything after signing as possibly sent, without inviting a repeat", () => {
@@ -350,8 +429,8 @@ describe("describeOneColorMintFailure", () => {
 
 describe("runOneColorMint", () => {
 	const harness = (
-		result: Mint1ColorResponse,
-		options: { throws?: boolean; refreshFails?: boolean } = {},
+		result: Mint1ColorResult | { throws: unknown },
+		options: { refreshFails?: boolean } = {},
 	) => {
 		const calls: Mint1ColorInput[] = [];
 		const logged: Array<{ operation: string; error: unknown }> = [];
@@ -359,7 +438,7 @@ describe("runOneColorMint", () => {
 		const actions: Pick<OneColorActionSet, "mint"> = {
 			mint: async (_ctx, input) => {
 				calls.push(input);
-				if (options.throws) throw new Error("boom");
+				if ("throws" in result) throw result.throws;
 				return result;
 			},
 		};
@@ -396,11 +475,9 @@ describe("runOneColorMint", () => {
 		assert.deepEqual(logged, []);
 	});
 
-	it("logs the full error, refreshes and classifies a failure", async () => {
-		const declined = harness({
-			error:
-				"[ColorConsentDeclinedError] BRC-207: the user declined the color_send request",
-		});
+	it("logs the very error thrown, refreshes and classifies a failure", async () => {
+		const consent = new ColorConsentDeclinedError("color_send");
+		const declined = harness({ throws: consent });
 		const outcome = await declined.run(true, 0n);
 		assert.deepEqual(outcome, {
 			ok: false,
@@ -408,13 +485,15 @@ describe("runOneColorMint", () => {
 			mayHaveBeenSent: false,
 		});
 		assert.equal(declined.logged[0].operation, "mint-end");
-		assert.match(
-			(declined.logged[0].error as Error).message,
-			/user declined the color_send/,
-		);
+		// The same instance, so the log keeps its name, stack and fields.
+		assert.equal(declined.logged[0].error, consent);
 		assert.equal(declined.refreshed(), 1);
 
-		const thrown = harness({}, { throws: true, refreshFails: true });
+		const review = Object.assign(new Error("WERR_REVIEW_ACTIONS"), {
+			name: "WERR_REVIEW_ACTIONS",
+			sendWithResults: [{ txid: ASSET_TXID, status: "failed" }],
+		});
+		const thrown = harness({ throws: review }, { refreshFails: true });
 		const failed = await thrown.run(false);
 		assert.equal(failed.ok, false);
 		assert.equal(!failed.ok && failed.mayHaveBeenSent, true);
@@ -422,6 +501,25 @@ describe("runOneColorMint", () => {
 			thrown.logged.map((entry) => entry.operation),
 			["mint", "holdings-refresh"],
 		);
+		assert.equal(thrown.logged[0].error, review);
+	});
+
+	it("runs the throwing mint by default", async () => {
+		const logged: unknown[] = [];
+		const outcome = await runOneColorMint(
+			{} as OneSatContext,
+			{ assetId: "x_0", amount: 1n, endMinting: false },
+			{
+				log: (_operation, error) => logged.push(error),
+				refresh: async () => {},
+			},
+		);
+		assert.deepEqual(outcome, {
+			ok: false,
+			message: "This token's id isn't valid, so it can't be minted.",
+			mayHaveBeenSent: false,
+		});
+		assert.ok(logged[0] instanceof Error);
 	});
 });
 
@@ -860,5 +958,148 @@ describe("mintOneColor through the color module", () => {
 				!output.spent && output.basket === assetBasket(assetId, "authority"),
 		);
 		assert.deepEqual(authorities, []);
+	});
+
+	it("ending minting alone spends the authority with no outputs: [authority-end]", async () => {
+		const wallet = new FakeWallet();
+		const provider = new FakeProvider();
+		const assetId = await deployAuthority(wallet, provider);
+		const { ctx, prompts } = moduleContext(wallet, provider);
+
+		const result = await mintOneColorOrThrow(ctx, {
+			assetId,
+			amount: "0",
+			endMinting: true,
+		});
+		const tx = Transaction.fromAtomicBEEF(result.tx ?? []);
+		assert.equal(result.txid, tx.id("hex"));
+		assert.equal(result.authorityOutpoint, undefined);
+		assert.deepEqual(
+			tx.inputs.map(
+				(input) =>
+					`${input.sourceTransaction?.id("hex")}.${input.sourceOutputIndex}`,
+			),
+			[`${assetId.slice(0, 64)}.0`],
+		);
+		assert.equal(validInput(tx, 0), true);
+		assert.deepEqual(
+			tx.outputs.filter((output) => OneColor.decode(output.lockingScript)),
+			[],
+		);
+		assert.equal(prompts.length, 1);
+		const assets = prompts[0]?.assets as
+			| Array<Record<string, unknown>>
+			| undefined;
+		assert.deepEqual(assets?.[0]?.operations, ["authority-end"]);
+		assert.deepEqual(provider.submissions, [
+			{ topics: [colorTopic(assetId)], txid: tx.id("hex") },
+		]);
+		const kept = [...wallet.outputs.values()].filter(
+			(output) =>
+				!output.spent &&
+				(output.basket === assetBasket(assetId, "authority") ||
+					output.basket === assetBasket(assetId, "value")),
+		);
+		assert.deepEqual(kept, []);
+
+		// Nothing is left to mint with.
+		await assert.rejects(
+			mintOneColorOrThrow(ctx, { assetId, amount: 1n }),
+			new RegExp(`insufficient spendable authority of ${assetId}`),
+		);
+	});
+});
+
+describe("prepareOneColorMint", () => {
+	const token = { assetId: ASSET_ID, dec: 8 };
+	const phrase = `END ${ASSET_ID}`;
+	const prepare = (
+		form: Partial<Parameters<typeof prepareOneColorMint>[0]>,
+		over: Partial<Parameters<typeof prepareOneColorMint>[1]> = {},
+	) =>
+		prepareOneColorMint(
+			{ amount: "", endMinting: false, confirmation: "", ...form },
+			{ ...token, ...over },
+		);
+
+	it("parses display units against the token's decimals", () => {
+		assert.deepEqual(prepare({ amount: "1.5" }), {
+			ok: true,
+			input: { assetId: ASSET_ID, amount: 150_000_000n, endMinting: false },
+		});
+		assert.deepEqual(prepare({ amount: "100" }, { dec: 0 }), {
+			ok: true,
+			input: { assetId: ASSET_ID, amount: 100n, endMinting: false },
+		});
+	});
+
+	it("refuses before parsing when the token's decimals couldn't be read", () => {
+		for (const form of [
+			{ amount: "100" },
+			{ amount: "", endMinting: true, confirmation: phrase },
+		]) {
+			assert.deepEqual(prepare(form, { dec: 0, infoUnreadable: true }), {
+				ok: false,
+				error: "Couldn't read this token's decimals. Refresh and try again.",
+			});
+		}
+	});
+
+	it("empty or zero ends minting without minting when End minting is on", () => {
+		for (const amount of ["", " ", "0", "0.00"]) {
+			assert.deepEqual(
+				prepare({ amount, endMinting: true, confirmation: phrase }),
+				{
+					ok: true,
+					input: { assetId: ASSET_ID, amount: 0n, endMinting: true },
+				},
+				amount,
+			);
+		}
+		assert.deepEqual(prepare({ amount: "0" }), {
+			ok: false,
+			error: "Enter an amount greater than zero.",
+		});
+	});
+
+	it("says what to fix without asking for more than zero when ending", () => {
+		assert.deepEqual(prepare({ amount: "1.123456789" }), {
+			ok: false,
+			error: "Enter an amount with at most 8 decimals.",
+		});
+		assert.deepEqual(prepare({ amount: "abc" }, { dec: 0 }), {
+			ok: false,
+			error: "Enter a whole amount.",
+		});
+		const ending = prepare({ amount: "abc", endMinting: true });
+		assert.equal(ending.ok, false);
+		assert.doesNotMatch(!ending.ok ? ending.error : "", /greater than zero/);
+		assert.deepEqual(prepare({ amount: `${2n ** 64n}` }, { dec: 0 }), {
+			ok: false,
+			error: "That amount is too large.",
+		});
+		assert.equal(prepare({ amount: `${2n ** 64n - 1n}` }, { dec: 0 }).ok, true);
+	});
+
+	it("ending needs the exact END phrase", () => {
+		assert.deepEqual(prepare({ amount: "1", endMinting: true }), {
+			ok: false,
+			error: `Type ${phrase} exactly to end minting.`,
+		});
+		assert.deepEqual(
+			prepare({ amount: "1", endMinting: true, confirmation: phrase }),
+			{
+				ok: true,
+				input: { assetId: ASSET_ID, amount: 100_000_000n, endMinting: true },
+			},
+		);
+	});
+
+	it("oneColorDecimalsError flags only an unread deploy", () => {
+		assert.equal(oneColorDecimalsError({}), null);
+		assert.equal(
+			oneColorDecimalsError({ infoUnreadable: true }),
+			ONE_COLOR_DECIMALS_UNREADABLE,
+		);
 	});
 });

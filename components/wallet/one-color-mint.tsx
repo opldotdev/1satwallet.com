@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Loader2, Sparkles } from "lucide-react";
+import { AlertTriangle, Copy, Loader2, Sparkles } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,17 +15,15 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { useSound } from "@/hooks/use-sound";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
-import {
-	confirmsPermanentMintTermination,
-	permanentMintTerminationConfirmation,
-} from "@/lib/wallet/bsv21-authority";
+import { permanentMintTerminationConfirmation } from "@/lib/wallet/bsv21-authority";
 import { type OneColorBalance, oneColorTicker } from "@/lib/wallet/one-color";
 import {
 	formatOneColorAmount,
 	type OneColorMintInput,
-	parseOneColorAmount,
+	prepareOneColorMint,
 	runOneColorMint,
 } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
@@ -52,21 +50,28 @@ function mintedMessage(
 /**
  * Mint 1Color tokens to this wallet from a mint authority it holds, keeping
  * the authority or ending minting. Testnet only; writes through
- * `colorContext`. Shown while the wallet holds an authority, and kept open
- * after a mint that ended it, so its result stays readable.
+ * `colorContext`. The trigger shows while the wallet holds an authority; an
+ * open dialog stays mounted after its authority is spent. Every outcome also
+ * goes to the page (`onMinted`, `onFailed`): the re-read after a mint that
+ * ended minting can drop a zero-balance token from the holdings, and the
+ * page unmounts this dialog while it reloads the token.
  */
 export function OneColorMintDialog({
 	token,
 	onStart,
 	onMinted,
+	onFailed,
 }: {
 	token: OneColorBalance;
 	/** A mint is starting: earlier results on the page no longer apply. */
 	onStart: () => void;
 	/** The mint went through; the message says what it did. */
 	onMinted: (message: string) => void;
+	/** The mint failed; the message is the one the dialog shows. */
+	onFailed: (message: string) => void;
 }) {
 	const { play } = useSound();
+	const [, copy] = useCopyWithSound();
 	const { chain, colorContext } = useWalletToolbox();
 	const refreshAfterWrite = useRefreshAfterWrite();
 	const ticker = oneColorTicker(token);
@@ -106,28 +111,13 @@ export function OneColorMintDialog({
 
 	const prepareReview = useCallback(() => {
 		setError(null);
-		let atomic = 0n;
-		if (amount.trim() || !endMinting) {
-			const parsed = parseOneColorAmount(amount, token.dec);
-			if (parsed === null) {
-				setError(
-					token.dec === 0
-						? "Enter a whole amount greater than zero."
-						: `Enter an amount greater than zero, with at most ${token.dec} decimals.`,
-				);
-				return;
-			}
-			atomic = parsed;
-		}
-		if (
-			endMinting &&
-			!confirmsPermanentMintTermination(confirmation, token.assetId)
-		) {
-			setError(`Type ${phrase} exactly to end minting.`);
-			return;
-		}
-		setReview({ assetId: token.assetId, amount: atomic, endMinting });
-	}, [amount, confirmation, endMinting, phrase, token.assetId, token.dec]);
+		const prepared = prepareOneColorMint(
+			{ amount, endMinting, confirmation },
+			token,
+		);
+		if (prepared.ok) setReview(prepared.input);
+		else setError(prepared.error);
+	}, [amount, confirmation, endMinting, token]);
 
 	const mint = useCallback(async () => {
 		if (!(colorContext && review) || inFlight.current) return;
@@ -151,12 +141,14 @@ export function OneColorMintDialog({
 			// second one: the review is cleared and the form starts over.
 			if (outcome.mayHaveBeenSent) resetForm();
 			setError(outcome.message);
+			onFailed(outcome.message);
 			play("error");
 		}
 		setBusy(false);
 		inFlight.current = false;
 	}, [
 		colorContext,
+		onFailed,
 		onMinted,
 		onStart,
 		play,
@@ -265,14 +257,27 @@ export function OneColorMintDialog({
 								<p className="text-sm text-destructive">
 									{END_MINTING_WARNING}
 								</p>
-								<Label
-									className="text-destructive"
-									htmlFor="one-color-mint-confirm"
-								>
-									<span className="min-w-0 break-all">
-										Type {phrase} to confirm
-									</span>
-								</Label>
+								<div className="flex items-start gap-1">
+									<Label
+										className="min-w-0 flex-1 text-destructive"
+										htmlFor="one-color-mint-confirm"
+									>
+										<span className="min-w-0 break-all">
+											Type {phrase} to confirm
+										</span>
+									</Label>
+									<Button
+										type="button"
+										aria-label="Copy confirmation phrase"
+										title="Copy confirmation phrase"
+										onClick={() => void copy(phrase)}
+										size="icon"
+										variant="ghost"
+										className="shrink-0 text-destructive"
+									>
+										<Copy />
+									</Button>
+								</div>
 								<Input
 									id="one-color-mint-confirm"
 									autoCapitalize="none"
@@ -307,8 +312,8 @@ export function OneColorMintDialog({
 						className={FOOTER_BUTTON_CLASS}
 						disabled={
 							busy ||
-							(!review &&
-								(token.authorities <= 0 || !(amount.trim() || endMinting)))
+							token.authorities <= 0 ||
+							(!review && !(amount.trim() || endMinting))
 						}
 						onClick={() => void (review ? mint() : prepareReview())}
 					>

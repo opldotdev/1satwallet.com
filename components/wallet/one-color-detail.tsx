@@ -88,12 +88,14 @@ function OneColorActions({
 	onWriteStart,
 	onSendOutcome,
 	onMinted,
+	onMintFailed,
 }: {
 	token: OneColorBalance;
 	/** A send or mint is starting: the last one's result no longer applies. */
 	onWriteStart: () => void;
 	onSendOutcome: (outcome: DeliveredSend) => void;
 	onMinted: (message: string) => void;
+	onMintFailed: (message: string) => void;
 }) {
 	return (
 		<div className="flex flex-wrap gap-2">
@@ -107,6 +109,7 @@ function OneColorActions({
 				token={token}
 				onStart={onWriteStart}
 				onMinted={onMinted}
+				onFailed={onMintFailed}
 			/>
 		</div>
 	);
@@ -258,11 +261,23 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const [undelivered, setUndelivered] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
-	const [lastMint, setLastMint] = useState<string | null>(null);
+	const [lastMint, setLastMint] = useState<{
+		ok: boolean;
+		message: string;
+	} | null>(null);
 	const onWriteStart = useCallback(() => {
 		setLastSend(null);
 		setLastMint(null);
 	}, []);
+	// Kept here, not only in the dialog: the re-read after a mint can unmount it.
+	const onMinted = useCallback(
+		(message: string) => setLastMint({ ok: true, message }),
+		[],
+	);
+	const onMintFailed = useCallback(
+		(message: string) => setLastMint({ ok: false, message }),
+		[],
+	);
 	const onSendOutcome = useCallback((outcome: DeliveredSend) => {
 		setLastSend(outcome);
 		if (outcome.kind === "undelivered") {
@@ -343,11 +358,15 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 						token={token}
 						onWriteStart={onWriteStart}
 						onSendOutcome={onSendOutcome}
-						onMinted={setLastMint}
+						onMinted={onMinted}
+						onMintFailed={onMintFailed}
 					/>
 					{lastMint ? (
-						<p className="text-sm text-primary" role="status">
-							{lastMint}
+						<p
+							className={`text-sm ${lastMint.ok ? "text-primary" : "text-destructive"}`}
+							role={lastMint.ok ? "status" : "alert"}
+						>
+							{lastMint.message}
 						</p>
 					) : null}
 					{lastSend ? (

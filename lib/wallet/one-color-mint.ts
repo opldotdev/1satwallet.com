@@ -79,95 +79,125 @@ async function keptOutput(
 	};
 }
 
-/** Mints to this wallet from an authority it holds; see the module comment. */
+/** A mint that went out: `txid` always, the rest when the wallet returns them. */
+export type Mint1ColorResult = Omit<Mint1ColorResponse, "error" | "txid"> & {
+	txid: string;
+};
+
+/** `amount` as atomic units; a malformed string is an input error, never a send failure. */
+function atomicAmount(amount: string | bigint): bigint {
+	if (typeof amount === "bigint") return amount;
+	if (!/^-?\d+$/.test(amount.trim())) throw new Error("invalid-amount");
+	return BigInt(amount.trim());
+}
+
+/**
+ * Mints to this wallet from an authority it holds; see the module comment.
+ * Throws the original error, so a caller logs its stack, name, cause and any
+ * structured fields (a `WERR_REVIEW_ACTIONS` carries its send results).
+ * Input checks throw before the wallet is asked: `invalid-asset-id: …`,
+ * `invalid-amount`, `amount-out-of-range` and `amount-must-be-positive`.
+ */
+export async function mintOneColorOrThrow(
+	ctx: OneSatContext,
+	input: Mint1ColorInput,
+): Promise<Mint1ColorResult> {
+	if (!ASSET_ID.test(input.assetId)) {
+		throw new Error("invalid-asset-id: expected <txid>_<vout>");
+	}
+	const amount = atomicAmount(input.amount);
+	const endMinting = input.endMinting === true;
+	if (amount < 0n || amount > ONE_COLOR_MAX_AMOUNT) {
+		throw new Error("amount-out-of-range");
+	}
+	if (amount === 0n && !endMinting) {
+		throw new Error("amount-must-be-positive");
+	}
+	const { assetId } = input;
+
+	const { publicKey: identityKey } = await ctx.wallet.getPublicKey({
+		identityKey: true,
+	});
+	const outputs: CreateActionOutput[] = [];
+	const ownedOutputs: ColorRemittance[] = [];
+	const operations: ColorOperation[] = [];
+	if (amount > 0n) {
+		const value = await keptOutput(ctx, assetId, identityKey, outputs.length);
+		outputs.push({
+			lockingScript: OneColor.value(assetId, amount, { lock: value.lock })
+				.lock()
+				.toHex(),
+			satoshis: 1,
+			outputDescription: "Minted 1Color tokens",
+		});
+		ownedOutputs.push(value.remittance);
+		operations.push({ assetId, operation: "mint" });
+	}
+	let authorityIndex: number | undefined;
+	if (!endMinting) {
+		authorityIndex = outputs.length;
+		const authority = await keptOutput(
+			ctx,
+			assetId,
+			identityKey,
+			authorityIndex,
+		);
+		outputs.push({
+			lockingScript: OneColor.authority(assetId, { lock: authority.lock })
+				.lock()
+				.toHex(),
+			satoshis: 1,
+			outputDescription: "1Color mint authority",
+		});
+		ownedOutputs.push(authority.remittance);
+	}
+	operations.push({
+		assetId,
+		operation: endMinting ? "authority-end" : "authority-transfer",
+	});
+
+	const created = await ctx.wallet.createAction({
+		description:
+			amount === 0n
+				? "End 1Color minting"
+				: endMinting
+					? `Mint ${amount} 1Color tokens and end minting`
+					: `Mint ${amount} 1Color tokens`,
+		outputs,
+		labels: ColorPlan.toLabels({
+			version: 1,
+			assets: [assetId],
+			ownedOutputs,
+			operations,
+			inputPositions: [],
+			changePositions: [],
+			sighashTypes: [],
+		}),
+		options: { randomizeOutputs: false },
+	});
+	// A txid means the mint was signed and sent; the BEEF is optional.
+	if (!created.txid) throw new Error("no-transaction");
+	return {
+		txid: created.txid,
+		...(created.tx ? { tx: Array.from(created.tx) } : {}),
+		assetId,
+		...(authorityIndex === undefined
+			? {}
+			: { authorityOutpoint: `${created.txid}.${authorityIndex}` }),
+	};
+}
+
+/**
+ * `mintOneColorOrThrow` in the `@1sat/actions` shape: a failure comes back
+ * as `{ error }` with the message only. The wallet's own mint path calls
+ * `mintOneColorOrThrow`, which keeps the whole error for the log.
+ */
 export async function mintOneColor(
 	ctx: OneSatContext,
 	input: Mint1ColorInput,
 ): Promise<Mint1ColorResponse> {
 	try {
-		if (!ASSET_ID.test(input.assetId)) {
-			return { error: "invalid-asset-id: expected <txid>_<vout>" };
-		}
-		const amount =
-			typeof input.amount === "string" ? BigInt(input.amount) : input.amount;
-		const endMinting = input.endMinting === true;
-		if (amount < 0n || amount > ONE_COLOR_MAX_AMOUNT) {
-			return { error: "amount-out-of-range" };
-		}
-		if (amount === 0n && !endMinting) {
-			return { error: "amount-must-be-positive" };
-		}
-		const { assetId } = input;
-
-		const { publicKey: identityKey } = await ctx.wallet.getPublicKey({
-			identityKey: true,
-		});
-		const outputs: CreateActionOutput[] = [];
-		const ownedOutputs: ColorRemittance[] = [];
-		const operations: ColorOperation[] = [];
-		if (amount > 0n) {
-			const value = await keptOutput(ctx, assetId, identityKey, outputs.length);
-			outputs.push({
-				lockingScript: OneColor.value(assetId, amount, { lock: value.lock })
-					.lock()
-					.toHex(),
-				satoshis: 1,
-				outputDescription: "Minted 1Color tokens",
-			});
-			ownedOutputs.push(value.remittance);
-			operations.push({ assetId, operation: "mint" });
-		}
-		let authorityIndex: number | undefined;
-		if (!endMinting) {
-			authorityIndex = outputs.length;
-			const authority = await keptOutput(
-				ctx,
-				assetId,
-				identityKey,
-				authorityIndex,
-			);
-			outputs.push({
-				lockingScript: OneColor.authority(assetId, { lock: authority.lock })
-					.lock()
-					.toHex(),
-				satoshis: 1,
-				outputDescription: "1Color mint authority",
-			});
-			ownedOutputs.push(authority.remittance);
-		}
-		operations.push({
-			assetId,
-			operation: endMinting ? "authority-end" : "authority-transfer",
-		});
-
-		const created = await ctx.wallet.createAction({
-			description:
-				amount === 0n
-					? "End 1Color minting"
-					: endMinting
-						? `Mint ${amount} 1Color tokens and end minting`
-						: `Mint ${amount} 1Color tokens`,
-			outputs,
-			labels: ColorPlan.toLabels({
-				version: 1,
-				assets: [assetId],
-				ownedOutputs,
-				operations,
-				inputPositions: [],
-				changePositions: [],
-				sighashTypes: [],
-			}),
-			options: { randomizeOutputs: false },
-		});
-		if (!created.txid || !created.tx) return { error: "no-transaction" };
-		return {
-			txid: created.txid,
-			tx: Array.from(created.tx),
-			assetId,
-			...(authorityIndex === undefined
-				? {}
-				: { authorityOutpoint: `${created.txid}.${authorityIndex}` }),
-		};
+		return await mintOneColorOrThrow(ctx, input);
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
