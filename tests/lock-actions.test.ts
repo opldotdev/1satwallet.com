@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { OneSatContext } from "@1sat/actions";
 import {
@@ -297,5 +299,36 @@ describe("lock failure messages", () => {
 			lockActionFailureMessage(new Error("socket hang up")),
 			/lock action failed/,
 		);
+	});
+});
+
+describe("lock dialog lifecycle", () => {
+	const source = readFileSync(
+		join(process.cwd(), "components/wallet/wallet-locks.tsx"),
+		"utf8",
+	);
+
+	it("closes through one reset path for Done, X and the overlay", () => {
+		const close = source.slice(
+			source.indexOf("const close = () => {"),
+			source.indexOf("return (", source.indexOf("const close = () => {")),
+		);
+		assert.match(close, /if \(inFlightRef\.current\) return;/);
+		assert.match(close, /setOpen\(false\)/);
+		assert.match(close, /setState\(\{ status: "idle" \}\)/);
+		assert.match(
+			source,
+			/onOpenChange=\{\(next\) => \(next \? setOpen\(true\) : close\(\)\)\}/,
+		);
+		assert.match(source, /onClick=\{close\}/);
+		assert.doesNotMatch(source, /setOpen\(false\)\}/);
+	});
+
+	it("releases the in-flight guard before the post-lock refresh", () => {
+		const success = source.slice(
+			source.indexOf('play("success");'),
+			source.indexOf("} catch (cause) {", source.indexOf('play("success");')),
+		);
+		assert.match(success, /inFlightRef\.current = false;\s*void onLocked\(\);/);
 	});
 });

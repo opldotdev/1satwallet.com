@@ -51,6 +51,8 @@ function errorCode(cause: unknown): string {
 }
 
 function reportLockFailure(operation: string, cause: unknown) {
+	// reportDiagnostic keeps only a sanitised code; keep the full error in the log.
+	console.error(`[${operation}]`, cause);
 	reportDiagnostic({
 		category: "action",
 		code: "action.failed",
@@ -136,7 +138,8 @@ function LockDialog({
 				until: reviewed.until,
 			});
 			play("success");
-			await onLocked();
+			inFlightRef.current = false;
+			void onLocked();
 		} catch (cause) {
 			reportLockFailure("wallet.locks.lock", cause);
 			setState({ status: "error", message: lockActionFailureMessage(cause) });
@@ -148,17 +151,17 @@ function LockDialog({
 
 	const reviewing = state.status === "review" || state.status === "locking";
 
+	const close = () => {
+		if (inFlightRef.current) return;
+		setOpen(false);
+		if (state.status === "success") setAmount("");
+		setState({ status: "idle" });
+	};
+
 	return (
 		<SoundDialog
 			open={open}
-			onOpenChange={(next) => {
-				if (!next && inFlightRef.current) return;
-				setOpen(next);
-				if (!next) {
-					if (state.status === "success") setAmount("");
-					setState({ status: "idle" });
-				}
-			}}
+			onOpenChange={(next) => (next ? setOpen(true) : close())}
 		>
 			<DialogTrigger asChild>
 				<Button disabled={!services} size="sm" variant="outline">
@@ -185,7 +188,7 @@ function LockDialog({
 							<summary className="cursor-pointer">Transaction details</summary>
 							<p className="mt-2 break-all font-mono text-xs">{state.txid}</p>
 						</details>
-						<Button className="w-full" onClick={() => setOpen(false)}>
+						<Button className="w-full" onClick={close}>
 							Done
 						</Button>
 					</div>
@@ -217,6 +220,9 @@ function LockDialog({
 								<dd>Calculated by wallet</dd>
 							</div>
 						</dl>
+						<p className="text-muted-foreground text-xs">
+							The network fee is paid on top of the locked amount.
+						</p>
 						<p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
 							You can't spend these coins or cancel the lock before block{" "}
 							{state.until.toLocaleString("en-US")}.
@@ -344,7 +350,14 @@ export function WalletLocks() {
 		},
 		enabled: Boolean(services && identityKey),
 		staleTime: 60_000,
+		// Re-reads the block height too, so "blocks left" and Spendable stay current.
+		refetchInterval: 60_000,
 	});
+
+	const clearUnlockResult = () => {
+		setUnlockError(null);
+		setUnlockTxid(null);
+	};
 
 	const refresh = async () => {
 		refreshBalance();
@@ -357,8 +370,7 @@ export function WalletLocks() {
 	const unlock = async (key: string, coins: LockedCoin[]) => {
 		if (!oneSatContext || unlocking) return;
 		setUnlocking(key);
-		setUnlockError(null);
-		setUnlockTxid(null);
+		clearUnlockResult();
 		try {
 			setUnlockTxid(await executeUnlock(oneSatContext, coins));
 			play("success");
@@ -399,7 +411,10 @@ export function WalletLocks() {
 					<Button
 						aria-label="Refresh locks"
 						disabled={!services || locksQuery.isFetching}
-						onClick={() => void locksQuery.refetch()}
+						onClick={() => {
+							clearUnlockResult();
+							void locksQuery.refetch();
+						}}
 						size="icon"
 						variant="ghost"
 					>
@@ -426,7 +441,10 @@ export function WalletLocks() {
 					)}
 					<LockDialog
 						currentHeight={locksQuery.data?.currentHeight ?? null}
-						onLocked={refresh}
+						onLocked={async () => {
+							clearUnlockResult();
+							await refresh();
+						}}
 					/>
 				</div>
 			</div>
@@ -444,7 +462,7 @@ export function WalletLocks() {
 				</p>
 			) : locksQuery.isError ? (
 				<p className="text-destructive text-sm" role="alert">
-					{lockActionFailureMessage(locksQuery.error)}
+					Locks could not be loaded. Try again.
 				</p>
 			) : coins.length === 0 ? (
 				<p className="text-muted-foreground text-sm">No locked coins.</p>
@@ -468,15 +486,15 @@ export function WalletLocks() {
 										<span className="font-medium text-success text-xs">
 											Spendable
 										</span>
+										{!coin.id && (
+											<span className="text-muted-foreground text-xs">
+												Can't unlock here: no wallet tracking record.
+											</span>
+										)}
 										<Button
 											disabled={unlocking !== null || !coin.id}
 											onClick={() => void unlock(coin.outpoint, [coin])}
 											size="sm"
-											title={
-												coin.id
-													? undefined
-													: "This coin has no wallet tracking record."
-											}
 										>
 											{unlocking === coin.outpoint ? (
 												<Loader2
