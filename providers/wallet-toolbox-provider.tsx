@@ -630,6 +630,9 @@ export function WalletToolboxProvider({
 	);
 
 	// -- Sync engine hook --
+	const onOneColorReceived = useCallback(() => {
+		void queryClient.invalidateQueries({ queryKey: ["one-color"] });
+	}, [queryClient]);
 	const syncEngine = useSyncEngine({
 		isInitialized,
 		ownedByWebsite: connectionMode === "built-in",
@@ -639,8 +642,11 @@ export function WalletToolboxProvider({
 		chain,
 		addressManagerReady,
 		addressManagerRef,
+		colorContext,
+		colorOverlay,
 		syncRevision,
 		refreshBalance,
+		onOneColorReceived,
 	});
 	const { stopSyncWorkers, syncWallet, syncEngineActive, syncTasks } =
 		syncEngine;
@@ -651,6 +657,7 @@ export function WalletToolboxProvider({
 		queryClient.removeQueries({ queryKey: ["bap-profile"] });
 		queryClient.removeQueries({ queryKey: ["opns-names"] });
 		queryClient.removeQueries({ queryKey: ["one-color"] });
+		queryClient.removeQueries({ queryKey: ["wallet-handles"] });
 	}, [queryClient]);
 
 	const resetWalletState = useCallback(

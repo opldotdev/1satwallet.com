@@ -337,7 +337,7 @@ const loggedOnce = new Set<string>();
 const LOGGED_ONCE_CAP = 500;
 
 /** Whether `key` is new; remembers it either way. */
-function firstTime(key: string): boolean {
+export function firstTime(key: string): boolean {
 	if (loggedOnce.has(key)) return false;
 	if (loggedOnce.size >= LOGGED_ONCE_CAP) {
 		const oldest = loggedOnce.values().next();

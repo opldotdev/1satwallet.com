@@ -9,6 +9,7 @@ import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
 import { type OneColorBalance, oneColorTicker } from "@/lib/wallet/one-color";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { OneColorReceiveDialog } from "./one-color-receive";
 
 function OneColorCard({ token }: { token: OneColorBalance }) {
 	const ticker = oneColorTicker(token);
@@ -134,10 +135,12 @@ export default function OneColorGrid() {
 		);
 	}
 
-	if (query.isPending) return <Loading label="Loading 1Color tokens…" />;
-
-	if (query.isError) {
-		return (
+	let content: ReactNode;
+	let heading = "1Color tokens";
+	if (query.isPending) {
+		content = <Loading label="Loading 1Color tokens…" />;
+	} else if (query.isError) {
+		content = (
 			<Notice>
 				<p>
 					{describeAssetSurface(
@@ -147,27 +150,31 @@ export default function OneColorGrid() {
 				</p>
 			</Notice>
 		);
-	}
-
-	const tokens = query.data;
-	if (tokens.length === 0) {
-		return (
+	} else if (query.data.length === 0) {
+		content = (
 			<Notice>
 				<p>No 1Color tokens found in your wallet.</p>
 			</Notice>
 		);
-	}
-
-	return (
-		<div className="space-y-4">
-			<h2 className="text-lg font-medium">
-				{tokens.length} 1Color token{tokens.length === 1 ? "" : "s"}
-			</h2>
+	} else {
+		const tokens = query.data;
+		heading = `${tokens.length} 1Color token${tokens.length === 1 ? "" : "s"}`;
+		content = (
 			<div className="space-y-2">
 				{tokens.map((token) => (
 					<OneColorCard key={token.assetId} token={token} />
 				))}
 			</div>
+		);
+	}
+
+	return (
+		<div className="space-y-4">
+			<div className="flex items-center justify-between gap-2">
+				<h2 className="text-lg font-medium">{heading}</h2>
+				<OneColorReceiveDialog />
+			</div>
+			{content}
 		</div>
 	);
 }

@@ -2,6 +2,7 @@
 
 import {
 	ArrowRight,
+	AtSign,
 	CircleDollarSign,
 	Copy,
 	Gem,
@@ -108,6 +109,11 @@ export function WalletHomeStatus() {
 								title: "Token inbox",
 								icon: Inbox,
 								task: syncTasks.cosignDeliveries,
+							},
+							{
+								title: "Handle inbox",
+								icon: AtSign,
+								task: syncTasks.handleInbox,
 							},
 						].map(({ title, icon: Icon, task }) => (
 							<div key={title} className={styles.serviceRow}>

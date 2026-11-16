@@ -1,5 +1,6 @@
 "use client";
 
+import type { OneSatContext } from "@1sat/actions";
 import {
 	createContext as createActionContext,
 	syncAddresses,
@@ -9,16 +10,22 @@ import {
 import type { AddressManager, OneSatServices } from "@1sat/wallet-browser";
 import type { WalletInterface } from "@bsv/sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { endpointsOf } from "@/lib/chain-endpoints";
+import { endpointsOf, isOneColorAvailable } from "@/lib/chain-endpoints";
 import { RECEIVE_ADDRESS_PREFIX } from "@/lib/receive-address-manager";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import type { ColorOverlayResolver } from "@/lib/wallet/color-overlay";
+import { createHandleInboxSync } from "@/lib/wallet/handles";
 import {
 	combineInboxResults,
 	paymailSyncFailed,
 	syncAccountPeerPayInbox,
 } from "@/lib/wallet/peerpay-inbox";
 
-export type SyncTaskName = "addresses" | "payments" | "cosignDeliveries";
+export type SyncTaskName =
+	| "addresses"
+	| "payments"
+	| "cosignDeliveries"
+	| "handleInbox";
 export type SyncTaskStatus =
 	| "idle"
 	| "running"
@@ -43,11 +50,18 @@ interface SyncTaskResult {
 
 type SyncJobs = Record<SyncTaskName, () => Promise<SyncTaskResult>>;
 
-const TASK_NAMES: SyncTaskName[] = [
+const TASK_NAMES: readonly SyncTaskName[] = [
 	"addresses",
 	"payments",
 	"cosignDeliveries",
+	"handleInbox",
 ];
+
+/** What the handle inbox timer runs between full syncs. */
+const HANDLE_INBOX_ONLY: readonly SyncTaskName[] = ["handleInbox"];
+
+/** How often the handle inboxes are collected while the page is visible (Yours `HANDLE_INBOX_SYNC_INTERVAL_MS`). */
+export const HANDLE_INBOX_SYNC_INTERVAL_MS = 60_000;
 
 export function createSyncTasksState(
 	status: SyncTaskStatus = "idle",
@@ -79,12 +93,20 @@ export function shouldRunOwnedSync(input: {
 }
 
 export interface SyncCoordinator {
-	run: (jobs: SyncJobs) => { promise: Promise<boolean>; started: boolean };
+	/**
+	 * Runs `names` (every task by default) in order. A run asked for while one
+	 * is in flight joins it when that run covers every name asked for;
+	 * otherwise it starts once that run ends.
+	 */
+	run: (
+		jobs: SyncJobs,
+		names?: readonly SyncTaskName[],
+	) => { promise: Promise<boolean>; started: boolean };
 	reset: (status?: SyncTaskStatus) => void;
 	stop: () => Promise<void>;
 }
 
-/** Coordinates the three upstream one-shot actions without overlapping runs. */
+/** Coordinates the upstream one-shot actions without overlapping runs. */
 export function createSyncCoordinator(
 	onChange: (state: SyncTasksState) => void,
 	now: () => number = Date.now,
@@ -92,6 +114,8 @@ export function createSyncCoordinator(
 	let state = createSyncTasksState();
 	let generation = 0;
 	let active: Promise<boolean> | null = null;
+	let activeNames: readonly SyncTaskName[] = [];
+	let queued: Promise<boolean> | null = null;
 
 	const emit = (next: SyncTasksState) => {
 		state = next;
@@ -102,54 +126,73 @@ export function createSyncCoordinator(
 		emit({ ...state, [name]: task });
 	};
 
-	return {
-		run(jobs) {
-			if (active) return { promise: active, started: false };
-
-			const runGeneration = generation;
-			active = (async () => {
-				for (const name of TASK_NAMES) {
-					if (runGeneration !== generation) return false;
-					update(name, { ...state[name], status: "running", error: null });
-					try {
-						const result = await jobs[name]();
-						if (runGeneration !== generation) return false;
-						update(name, {
-							status: result.failed > 0 ? "failed" : "succeeded",
-							lastRunAt: now(),
-							processed: result.processed,
-							failed: result.failed,
-							error:
-								result.failed > 0
-									? `${result.failed} item${result.failed === 1 ? "" : "s"} failed`
-									: null,
-						});
-					} catch (error) {
-						reportDiagnostic({
-							category: "provider",
-							code: "provider.failed",
-							operation: `wallet.sync.${name}`,
-							recoverable: true,
-						});
-						console.error(`[sync] ${name} task threw`, error);
-						if (runGeneration !== generation) return false;
-						update(name, {
-							status: "failed",
-							lastRunAt: now(),
-							processed: null,
-							failed: null,
-							error: "Sync task failed. Try again.",
-						});
-					}
-				}
-				return runGeneration === generation;
-			})();
-			const startedPromise = active;
-			void startedPromise.finally(() => {
-				if (active === startedPromise) active = null;
+	const run: SyncCoordinator["run"] = (jobs, names = TASK_NAMES) => {
+		if (active) {
+			if (names.every((name) => activeNames.includes(name))) {
+				return { promise: active, started: false };
+			}
+			if (queued) return { promise: queued, started: false };
+			// A wider run asked for during a narrower one (the inbox timer's)
+			// starts when that one ends, unless the identity changed meanwhile.
+			const requestedGeneration = generation;
+			const pending: Promise<boolean> = active.then(() => {
+				if (queued === pending) queued = null;
+				if (requestedGeneration !== generation) return false;
+				return run(jobs, names).promise;
 			});
-			return { promise: startedPromise, started: true };
-		},
+			queued = pending;
+			return { promise: pending, started: true };
+		}
+
+		const runGeneration = generation;
+		activeNames = names;
+		active = (async () => {
+			for (const name of TASK_NAMES) {
+				if (!names.includes(name)) continue;
+				if (runGeneration !== generation) return false;
+				update(name, { ...state[name], status: "running", error: null });
+				try {
+					const result = await jobs[name]();
+					if (runGeneration !== generation) return false;
+					update(name, {
+						status: result.failed > 0 ? "failed" : "succeeded",
+						lastRunAt: now(),
+						processed: result.processed,
+						failed: result.failed,
+						error:
+							result.failed > 0
+								? `${result.failed} item${result.failed === 1 ? "" : "s"} failed`
+								: null,
+					});
+				} catch (error) {
+					reportDiagnostic({
+						category: "provider",
+						code: "provider.failed",
+						operation: `wallet.sync.${name}`,
+						recoverable: true,
+					});
+					console.error(`[sync] ${name} task threw`, error);
+					if (runGeneration !== generation) return false;
+					update(name, {
+						status: "failed",
+						lastRunAt: now(),
+						processed: null,
+						failed: null,
+						error: "Sync task failed. Try again.",
+					});
+				}
+			}
+			return runGeneration === generation;
+		})();
+		const startedPromise = active;
+		void startedPromise.finally(() => {
+			if (active === startedPromise) active = null;
+		});
+		return { promise: startedPromise, started: true };
+	};
+
+	return {
+		run,
 		reset(status = "idle") {
 			generation += 1;
 			emit(createSyncTasksState(status));
@@ -159,6 +202,7 @@ export function createSyncCoordinator(
 			const pending = active;
 			if (pending) await pending;
 			if (active === pending) active = null;
+			if (queued) await queued;
 		},
 	};
 }
@@ -172,8 +216,14 @@ interface UseSyncEngineOptions {
 	chain: "main" | "test";
 	addressManagerReady: boolean;
 	addressManagerRef: React.RefObject<AddressManager | null>;
+	/** The 1Color context (manager as admin). Null off testnet. */
+	colorContext: OneSatContext | null;
+	/** The 1Color overlay, for `resolveOrigin`. Null off testnet. */
+	colorOverlay: ColorOverlayResolver | null;
 	syncRevision: number;
 	refreshBalance: () => void;
+	/** After the handle inbox took 1Color tokens. */
+	onOneColorReceived: () => void;
 }
 
 export interface SyncEngineResult {
@@ -192,8 +242,11 @@ export function useSyncEngine({
 	chain,
 	addressManagerReady,
 	addressManagerRef,
+	colorContext,
+	colorOverlay,
 	syncRevision,
 	refreshBalance,
+	onOneColorReceived,
 }: UseSyncEngineOptions): SyncEngineResult {
 	const [syncTasks, setSyncTasks] = useState(createSyncTasksState);
 	const [isVisible, setIsVisible] = useState(
@@ -215,55 +268,96 @@ export function useSyncEngine({
 		hasAddressManager: addressManagerReady && !!addressManagerRef.current,
 	});
 
-	const runSync = useCallback(() => {
-		const addressManager = addressManagerRef.current;
-		if (!canRun || !wallet || !services || !identityKey || !addressManager) {
-			return;
-		}
-
-		const ctx = createActionContext(wallet, { chain, services });
-		const { messagebox: messageboxUrl } = endpointsOf(chain);
-		const count = addressManager.getAddresses().length || 5;
-		const { promise, started } = coordinator.run({
-			addresses: () =>
-				syncAddresses.execute(ctx, {
-					prefix: RECEIVE_ADDRESS_PREFIX,
-					count,
-				}),
-			// PeerPay on every read box first, then paymail on the own box.
-			payments: async () => {
-				const peerPay = await syncAccountPeerPayInbox(
-					wallet,
-					chain,
-					identityKey,
-				);
-				let paymail = null;
-				try {
-					paymail = await syncMessages.execute(ctx, { messageboxUrl });
-				} catch (error) {
-					paymailSyncFailed(error);
-				}
-				return combineInboxResults(peerPay, paymail);
-			},
-			cosignDeliveries: () =>
-				syncCosignDeliveries.execute(ctx, { messageboxUrl }),
-		});
-
-		if (started) {
-			void promise.then((isCurrentIdentity) => {
-				if (isCurrentIdentity) refreshBalance();
+	// The handle inbox (BRC-232 deliveries, BRC-169 handle payments). Where the
+	// chain has 1Color it runs on the color context only: its `p color`
+	// basket insertions are the module's. Elsewhere it runs on the raw wallet,
+	// like the other inboxes, and leaves 1Color deliveries in the box.
+	const oneColorChain = isOneColorAvailable(chain);
+	const handleInboxSync = useMemo(() => {
+		if (oneColorChain) {
+			if (!colorContext || !colorOverlay) return null;
+			return createHandleInboxSync(colorContext, {
+				overlayFor: (assetId) => colorOverlay.resolveOrigin(assetId),
 			});
 		}
-	}, [
-		addressManagerRef,
-		canRun,
-		wallet,
-		services,
-		identityKey,
-		chain,
-		coordinator,
-		refreshBalance,
-	]);
+		if (!wallet || !services) return null;
+		return createHandleInboxSync(
+			createActionContext(wallet, { chain, services }),
+		);
+	}, [oneColorChain, colorContext, colorOverlay, wallet, services, chain]);
+
+	const runSync = useCallback(
+		(names: readonly SyncTaskName[] = TASK_NAMES) => {
+			const addressManager = addressManagerRef.current;
+			if (!canRun || !wallet || !services || !identityKey || !addressManager) {
+				return;
+			}
+
+			const ctx = createActionContext(wallet, { chain, services });
+			const { messagebox: messageboxUrl } = endpointsOf(chain);
+			const count = addressManager.getAddresses().length || 5;
+			let inboxReceived = false;
+			let oneColorReceived = false;
+			const { promise, started } = coordinator.run(
+				{
+					addresses: () =>
+						syncAddresses.execute(ctx, {
+							prefix: RECEIVE_ADDRESS_PREFIX,
+							count,
+						}),
+					// PeerPay on every read box first, then paymail on the own box.
+					payments: async () => {
+						const peerPay = await syncAccountPeerPayInbox(
+							wallet,
+							chain,
+							identityKey,
+						);
+						let paymail = null;
+						try {
+							paymail = await syncMessages.execute(ctx, { messageboxUrl });
+						} catch (error) {
+							paymailSyncFailed(error);
+						}
+						return combineInboxResults(peerPay, paymail);
+					},
+					cosignDeliveries: () =>
+						syncCosignDeliveries.execute(ctx, { messageboxUrl }),
+					handleInbox: async () => {
+						if (!handleInboxSync) {
+							throw new Error(
+								"The 1Color wallet context isn't ready, so the handle inbox wasn't read",
+							);
+						}
+						const result = await handleInboxSync();
+						inboxReceived = result.processed > 0;
+						oneColorReceived = result.assetIds.length > 0;
+						return result;
+					},
+				},
+				names,
+			);
+
+			if (started) {
+				void promise.then((isCurrentIdentity) => {
+					if (!isCurrentIdentity) return;
+					if (names !== HANDLE_INBOX_ONLY || inboxReceived) refreshBalance();
+					if (oneColorReceived) onOneColorReceived();
+				});
+			}
+		},
+		[
+			addressManagerRef,
+			canRun,
+			wallet,
+			services,
+			identityKey,
+			chain,
+			coordinator,
+			handleInboxSync,
+			refreshBalance,
+			onOneColorReceived,
+		],
+	);
 
 	useEffect(() => {
 		const onVisibilityChange = () =>
@@ -286,6 +380,16 @@ export function useSyncEngine({
 		void syncRevision;
 		runSync();
 	}, [canRun, runSync, syncRevision]);
+
+	// Handle deliveries arrive any time: collect them on a timer while visible.
+	useEffect(() => {
+		if (!canRun) return;
+		const timer = setInterval(
+			() => runSync(HANDLE_INBOX_ONLY),
+			HANDLE_INBOX_SYNC_INTERVAL_MS,
+		);
+		return () => clearInterval(timer);
+	}, [canRun, runSync]);
 
 	const stopSyncWorkers = useCallback(() => coordinator.stop(), [coordinator]);
 
