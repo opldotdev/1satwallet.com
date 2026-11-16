@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { PrivateKey } from "@bsv/sdk";
-import { MAINNET_ONLY_HOSTS, TESTNET_FAUCET_URL } from "../e2e/support/env";
 import {
 	createTestnetBackup,
 	openTestnetBackup,
 } from "../e2e/support/test-network";
-import { endpointsOf } from "../lib/chain-endpoints";
 import { createEncryptedWalletBackup } from "../lib/wallet-storage";
 
 const keys = {
@@ -54,12 +52,4 @@ describe("e2e test wallet guard", () => {
 			/E2E_WALLET_A_BACKUP could not be decrypted/,
 		);
 	});
-});
-
-test("e2e copies of the chain endpoints match lib/chain-endpoints", () => {
-	assert.equal(TESTNET_FAUCET_URL, endpointsOf("test").faucet);
-	assert.deepEqual(MAINNET_ONLY_HOSTS, [
-		new URL(endpointsOf("main").storage).host,
-		new URL(endpointsOf("main").messagebox).host,
-	]);
 });

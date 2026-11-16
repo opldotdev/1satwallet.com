@@ -13,8 +13,7 @@ import {
 	generateMnemonic,
 } from "@/lib/keys";
 import { deriveReceiveAddress } from "@/lib/receive-address-manager";
-import { TESTNET_FAUCET_URL } from "../support/env";
-import { ENV_FILE } from "../support/paths";
+import { ENV_FILE, TESTNET_FAUCET_URL } from "../support/env";
 import {
 	createTestnetBackup,
 	openTestnetBackup,
@@ -70,7 +69,6 @@ async function createWallet(
 const passphrase = randomPassphrase();
 const walletA = await createWallet(passphrase, "wallet A");
 const walletB = await createWallet(passphrase, "wallet B");
-const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
 
 const lines = [
 	"# Throwaway testnet wallets for the 1satwallet.com e2e tests.",
@@ -78,9 +76,6 @@ const lines = [
 	`E2E_WALLET_A_BACKUP='${walletA.backup}'`,
 	`E2E_WALLET_B_BACKUP='${walletB.backup}'`,
 	`E2E_WALLET_PASSPHRASE=${passphrase}`,
-	bypass
-		? `VERCEL_AUTOMATION_BYPASS_SECRET=${bypass}`
-		: "# VERCEL_AUTOMATION_BYPASS_SECRET= (add the Vercel Protection Bypass for Automation secret here)",
 ];
 
 try {

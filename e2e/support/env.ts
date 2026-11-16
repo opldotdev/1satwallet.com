@@ -1,13 +1,27 @@
+import path from "node:path";
+import { endpointsOf } from "@/lib/chain-endpoints";
 import { openTestnetBackup } from "./test-network";
 
-/*
- * Copies of values in lib/chain-endpoints.ts, which the Playwright runner
- * cannot load (it imports the ESM-only @1sat/types from CommonJS).
- * tests/e2e-test-network.test.ts keeps them equal to endpointsOf().
- */
-export const TESTNET_FAUCET_URL = "https://faucet.bananablocks.com";
+/** Local secrets written by `bun run e2e:wallets:create` (gitignored). */
+export const ENV_FILE = path.join(__dirname, "..", "..", ".env.e2e.local");
+
+/** Failure screenshots, taken only after the passphrase field is cleared. */
+export const ARTIFACTS_DIR = path.join(__dirname, "..", "..", "e2e-artifacts");
+
+export const TESTNET_FAUCET_URL = endpointsOf("test").faucet;
+
+const hostOf = (url: string) => new URL(url).host;
+
 /** Mainnet backends a testnet account must never call. */
-export const MAINNET_ONLY_HOSTS = ["wallet.1sat.app", "messagebox.1sat.app"];
+export const MAINNET_ONLY_HOSTS = [
+	endpointsOf("main").storage,
+	endpointsOf("main").messagebox,
+].map(hostOf);
+
+/** Testnet backends a mainnet visitor must never call. */
+export const TESTNET_HOSTS = Object.values(endpointsOf("test"))
+	.filter((url): url is string => typeof url === "string")
+	.map(hostOf);
 
 /**
  * One installation id for every run, so the testnet storage server sees the
@@ -17,7 +31,7 @@ export const E2E_INSTALLATION_ID =
 	"1sat-web-6f0c2a4e-3b1d-4c8e-9a72-5d1e0b7c4f36";
 
 const SETUP_HINT =
-	'Locally: run "bun run e2e:wallets:create" (writes .env.e2e.local). In CI: set them as secrets of the GitHub environment "e2e-testnet".';
+	'E2E_BASE_URL is the site under test, e.g. http://localhost:3000 after "bun run build && bun run start". For the wallet settings, run "bun run e2e:wallets:create" locally (writes .env.e2e.local); in CI they are secrets of the GitHub environment "e2e-testnet".';
 
 /** Reads the named settings, failing once with every missing name. */
 export function requireEnv<const Name extends string>(
@@ -34,7 +48,7 @@ export function requireEnv<const Name extends string>(
 	) as Record<Name, string>;
 }
 
-/** The deployed site under test, from E2E_BASE_URL. */
+/** The site under test, from E2E_BASE_URL (CI: the local `next start`). */
 export function baseUrl(): URL {
 	const { E2E_BASE_URL } = requireEnv(["E2E_BASE_URL"]);
 	let url: URL;

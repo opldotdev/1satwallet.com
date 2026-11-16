@@ -42,7 +42,5 @@ yarn-error.log*
 next-env.d.ts
 .env*.local
 
-# e2e
-/playwright-report/
-/test-results/
-/e2e/.auth/
+# e2e failure screenshots
+/e2e-artifacts/

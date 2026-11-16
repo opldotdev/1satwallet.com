@@ -1,23 +1,29 @@
-import { expect, test } from "./fixtures/wallet";
+import assert from "node:assert/strict";
 import { TESTNET_FAUCET_URL } from "./support/env";
 import {
 	readBalanceSats,
 	readDepositAddress,
 	TESTNET_BADGE_LABEL,
-} from "./support/waits";
+	walletTest,
+} from "./support/wallet";
 
-/** Enough for many runs of the spending projects at a few thousand sats each. */
+/** Enough for many runs of the spending tests at a few thousand sats each. */
 const MINIMUM_SATS = 50_000;
 
-test("wallet A is a funded testnet account", async ({ page }) => {
-	await expect(
-		page.getByLabel(TESTNET_BADGE_LABEL).filter({ visible: true }).first(),
-	).toBeVisible();
+walletTest("wallet A is a funded testnet account", async (browser) => {
+	await browser.waitFor(
+		"the Testnet badge",
+		(label: string) =>
+			Array.from(document.querySelectorAll(`[aria-label="${label}"]`)).some(
+				(el) => el.getClientRects().length > 0,
+			),
+		TESTNET_BADGE_LABEL,
+	);
 
-	const address = await readDepositAddress(page);
-	expect(address, "testnet deposit address").toMatch(/^[mn]/);
+	const address = await readDepositAddress(browser);
+	assert.match(address, /^[mn]/, "testnet deposit address");
 
-	const balance = await readBalanceSats(page);
+	const balance = await readBalanceSats(browser);
 	if (balance < MINIMUM_SATS) {
 		throw new Error(
 			`Top up the e2e test wallet: send testnet BSV to ${address} (${TESTNET_FAUCET_URL}). Balance: ${balance.toLocaleString("en-US")} sats, need ${MINIMUM_SATS.toLocaleString("en-US")}.`,
