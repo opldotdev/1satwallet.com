@@ -96,10 +96,11 @@ type DisposablePermissionModule = { dispose: () => void };
 export const WALLET_CONNECTION_MODE_KEY = "1sat-wallet-connection-mode";
 const CONNECTION_OPTION_KEY = "1sat-wallet-connection-option";
 
+// The wallet's own originator: a host with an optional port, the only form
+// the toolbox's validateOriginator accepts. Apps never match it exactly: the
+// relay and the redirect flow pass an app's hostname without a port.
 const ADMIN_ORIGINATOR =
-	typeof window !== "undefined"
-		? window.location.origin
-		: "https://1satwallet.com";
+	typeof window !== "undefined" ? window.location.host : "1satwallet.com";
 
 const PERMISSIONS_CONFIG: PermissionsManagerConfig = {
 	seekProtocolPermissionsForSigning: true,
@@ -920,6 +921,7 @@ export function WalletToolboxProvider({
 						...PERMISSIONS_CONFIG,
 						permissionModules,
 					}),
+					ADMIN_ORIGINATOR,
 				);
 				const loadedState = loadReceiveAddressState(
 					{ chain, identityKey: newIdentityKey },
@@ -1028,6 +1030,9 @@ export function WalletToolboxProvider({
 
 	// -- Wallet destroy --
 	const destroyWallet = useCallback(async () => {
+		// A teardown already under way (an external wallet disconnecting) may
+		// keep the built-in wallet; wait it out, then destroy the local wallet.
+		while (teardownPromiseRef.current) await teardownPromiseRef.current;
 		await teardownWallet("disconnected");
 	}, [teardownWallet]);
 
@@ -1164,7 +1169,7 @@ export function WalletToolboxProvider({
 		[chain, deriveExternalAddresses, teardownWallet],
 	);
 
-	useEffect(() => () => void teardownWallet("disconnected"), [teardownWallet]);
+	useEffect(() => () => void destroyWallet(), [destroyWallet]);
 
 	// -- Compose sync status with init state --
 	const syncStatus = useMemo<SyncStatus>(() => {

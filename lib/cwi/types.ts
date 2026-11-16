@@ -290,6 +290,25 @@ export const parseBrowserOrigin = (
 	}
 };
 
+/**
+ * The originator a redirect request runs as: the app's hostname, the same
+ * form the relay passes. Null when `origin` is not a valid app origin, or when
+ * it is on the wallet's own hostname (any port): the toolbox scopes
+ * originators to the hostname, so such an origin would act as the wallet.
+ * `walletHost` is the wallet's host, e.g. `request.nextUrl.host`.
+ */
+export const redirectOriginator = (
+	origin: string,
+	walletHost: string,
+): string | null => {
+	const identity = parseBrowserOrigin(origin);
+	if (!identity) return null;
+	const wallet = parseBrowserOrigin(`https://${walletHost}`);
+	return identity.originator === wallet?.originator
+		? null
+		: identity.originator;
+};
+
 /** Conservative structured-clone size guard; stops once the limit is crossed. */
 export const isWithinCWIPayloadLimit = (
 	value: unknown,

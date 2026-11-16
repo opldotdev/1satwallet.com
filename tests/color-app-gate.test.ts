@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import {
-	assetBasket,
-	ColorConsentDeclinedError,
-	colorProtocolID,
-} from "@bsv/color-permission-module";
+import { assetBasket, colorProtocolID } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
 import {
 	type PermissionsManagerConfig,
@@ -14,14 +10,19 @@ import {
 	clearDiagnostics,
 	getDiagnosticEvents,
 } from "@/lib/runtime-diagnostics";
-import { createWalletColorModule } from "@/lib/wallet/color-module";
+import {
+	ColorUnavailableToAppsError,
+	createWalletColorModule,
+} from "@/lib/wallet/color-module";
 import {
 	findMisroutedModuleIdentifier,
+	findRefusedAppName,
 	guardModuleIdentifiers,
+	listActionsForApp,
 	MisroutedModuleIdentifierError,
 } from "@/lib/wallet/module-identifier-guard";
 
-const ADMIN = "https://1satwallet.com";
+const ADMIN = "1satwallet.com";
 const APP = "app.example.com";
 const ASSET = `${"a".repeat(64)}_0`;
 const BASKET = assetBasket(ASSET, "value");
@@ -56,22 +57,25 @@ const CONFIG: PermissionsManagerConfig = {
 	seekGroupedPermission: true,
 };
 
-type RawCall = { method: string; originator: unknown };
+type RawCall = { method: string; originator: unknown; args: unknown };
 
 /**
  * A raw wallet that records every call and answers the few the manager needs;
  * a prompt of any kind is recorded and granted, so a test sees both.
  */
-const setup = () => {
+const setup = (listed: unknown = { totalActions: 0, actions: [] }) => {
 	const calls: RawCall[] = [];
 	const wallet = new Proxy(
 		{},
 		{
 			get:
 				(_target, prop: string) =>
-				async (_args: unknown, originator: unknown) => {
-					calls.push({ method: prop, originator });
+				async (args: unknown, originator: unknown) => {
+					calls.push({ method: prop, originator, args });
 					if (prop === "listOutputs") return { totalOutputs: 0, outputs: [] };
+					if (prop === "listActions") return structuredClone(listed);
+					if (prop === "revealSpecificKeyLinkage")
+						return { encryptedLinkage: [1], encryptedLinkageProof: [1] };
 					if (prop === "getPublicKey") return { publicKey: PUBKEY };
 					if (prop === "encrypt") return { ciphertext: [1, 2, 3] };
 					if (prop === "createSignature") return { signature: [1] };
@@ -92,6 +96,7 @@ const setup = () => {
 			...CONFIG,
 			permissionModules: { color: color.permissionModule },
 		}),
+		ADMIN,
 	);
 	const prompts: string[] = [];
 	for (const event of [
@@ -146,6 +151,7 @@ describe("findMisroutedModuleIdentifier", () => {
 			assert.deepEqual(findMisroutedModuleIdentifier(args), {
 				field,
 				value: bad,
+				reason: "misrouted",
 				prefix: "p ",
 			});
 		}
@@ -177,25 +183,98 @@ describe("findMisroutedModuleIdentifier", () => {
 			assert.deepEqual(findMisroutedModuleIdentifier(args), {
 				field,
 				value,
+				reason: "misrouted",
 				prefix: "admin",
 			});
 		}
 	});
 
-	it("leaves canonical reserved names, plain names and non-strings alone", () => {
+	it("leaves canonical reserved names and plain names alone", () => {
 		for (const args of [
 			{ basket: BASKET, labels: ["p color plan 0 1 ab"], tags: ["p color"] },
 			{ basket: "admin foo", labels: ["admin originator x"] },
 			{ protocolID: [2, "admin keys"], tags: ["my admin", "ad min"] },
 			{ protocolID: PROTOCOL },
 			{ basket: "Default", labels: ["Payments"], tags: [" pcolor"] },
-			{ basket: 1, labels: [null], protocolID: [2] },
-			{ outputs: [null, { insertionRemittance: null }] },
+			{ protocolID: [2] },
+			{ outputs: [{ protocol: "wallet payment" }] },
 			"P color",
 			undefined,
 		]) {
 			assert.equal(findMisroutedModuleIdentifier(args), null);
 		}
+	});
+
+	it("refuses names that are not primitive strings and lists that are not arrays", () => {
+		const cases: [unknown, string, string, string][] = [
+			[
+				{ basket: new String("P color x") },
+				"basket",
+				"not-a-string",
+				"an object (String)",
+			],
+			[{ basket: 1 }, "basket", "not-a-string", "number"],
+			[{ labels: [null] }, "labels[0]", "not-a-string", "null"],
+			[{ tags: "p color" }, "tags", "not-an-array", "string"],
+			[
+				{ labels: { 0: "P color x", length: 1 } },
+				"labels",
+				"not-an-array",
+				"an object (Object)",
+			],
+			[
+				{ protocolID: { 0: 2, 1: "P color x" } },
+				"protocolID",
+				"not-an-array",
+				"an object (Object)",
+			],
+			[
+				{ protocolID: [2, new String("P color x")] },
+				"protocolID[1]",
+				"not-a-string",
+				"an object (String)",
+			],
+			[
+				{ outputs: { 0: { insertionRemittance: { basket: "P color x" } } } },
+				"outputs",
+				"not-an-array",
+				"an object (Object)",
+			],
+			[{ outputs: [null] }, "outputs[0]", "not-an-object", "null"],
+			[
+				{ outputs: [{ insertionRemittance: null }] },
+				"outputs[0].insertionRemittance",
+				"not-an-object",
+				"null",
+			],
+			[
+				{
+					outputs: [
+						{ insertionRemittance: { basket: "b", tags: [new String("x")] } },
+					],
+				},
+				"outputs[0].insertionRemittance.tags[0]",
+				"not-a-string",
+				"an object (String)",
+			],
+		];
+		for (const [args, field, reason, value] of cases) {
+			assert.deepEqual(findMisroutedModuleIdentifier(args), {
+				field,
+				value,
+				reason,
+			});
+		}
+	});
+
+	it("cuts long values to 64 characters", () => {
+		const long = `P color ${"x".repeat(200)}`;
+		const hit = findMisroutedModuleIdentifier({ basket: long });
+		assert.equal(hit?.value, `${long.slice(0, 64)}…`);
+		assert.ok(hit);
+		const error = new MisroutedModuleIdentifierError(hit);
+		assert.ok(!error.message.includes(long));
+		assert.ok(error.message.length < 300);
 	});
 });
 
@@ -301,14 +380,15 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 		const [event] = getDiagnosticEvents();
 		assert.equal(event.operation, "wallet.module-identifier.listOutputs");
 		const detail = logged.find(
-			(args) => args[0] === "[wallet] refused a misrouted reserved name",
+			(args) => args[0] === "[wallet] refused a reserved or malformed name",
 		);
 		assert.deepEqual(detail?.[1], {
 			correlationId: event.correlationId,
 			method: "listOutputs",
 			originator: APP,
 			field: "basket",
-			value: ` ${BASKET}`,
+			value: `${` ${BASKET}`.slice(0, 64)}…`,
+			reason: "misrouted",
 			prefix: "p ",
 		});
 	});
@@ -358,7 +438,7 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 		assert.deepEqual(calls, []);
 		assert.deepEqual(prompts, []);
 		const detail = logged.find(
-			(args) => args[0] === "[wallet] refused a misrouted reserved name",
+			(args) => args[0] === "[wallet] refused a reserved or malformed name",
 		);
 		assert.deepEqual(detail?.[1], {
 			correlationId: getDiagnosticEvents()[0].correlationId,
@@ -366,6 +446,7 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 			originator: APP,
 			field: "basket",
 			value: " admin foo",
+			reason: "misrouted",
 			prefix: "admin",
 		});
 	});
@@ -374,7 +455,7 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 		const { manager, calls } = setup();
 		await assert.rejects(
 			manager.listOutputs({ basket: BASKET }, APP),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 		assert.deepEqual(calls, []);
 	});
@@ -398,7 +479,7 @@ describe("1Color refuses every app on every routed method", () => {
 				{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
 				APP,
 			),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 		await assert.rejects(
 			manager.verifySignature(
@@ -411,7 +492,7 @@ describe("1Color refuses every app on every routed method", () => {
 				},
 				APP,
 			),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 		assert.deepEqual(calls, []);
 	});
@@ -433,7 +514,7 @@ describe("1Color refuses every app on every routed method", () => {
 				},
 				APP,
 			),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 		assert.deepEqual(calls, []);
 	});
@@ -450,7 +531,7 @@ describe("1Color refuses every app on every routed method", () => {
 					},
 					APP,
 				),
-				ColorConsentDeclinedError,
+				ColorUnavailableToAppsError,
 			);
 		}
 		assert.ok(!methods(calls).includes("createAction"));
@@ -481,7 +562,7 @@ describe("1Color refuses every app on every routed method", () => {
 				{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
 				"HTTPS://1SATWALLET.COM",
 			),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 	});
 
@@ -494,6 +575,237 @@ describe("1Color refuses every app on every routed method", () => {
 		assert.equal(
 			color.permissionModule.capabilities,
 			color.module.capabilities,
+		);
+	});
+});
+
+const SPEC_OP_CHANGE_BASKET =
+	"b9184a72141e6a4d3d148c67a6d0ad92864a4d85290579ea5bef8bd62eb01b6f";
+
+describe("apps may only send canonical names", () => {
+	it("refuses padded or uppercase spellings of the admin-only baskets", async () => {
+		const { manager, calls, prompts } = setup();
+		for (const basket of [
+			" default",
+			"Default",
+			"default ",
+			SPEC_OP_CHANGE_BASKET.toUpperCase(),
+			` ${SPEC_OP_CHANGE_BASKET}`,
+		]) {
+			await assert.rejects(manager.listOutputs({ basket }, APP), {
+				name: "MisroutedModuleIdentifierError",
+				reason: "not-canonical",
+				field: "basket",
+			});
+		}
+		assert.deepEqual(calls, []);
+		assert.deepEqual(prompts, []);
+	});
+
+	it("refuses non-canonical labels, tags and protocol names from apps only", () => {
+		for (const args of [
+			{ labels: ["Payments"] },
+			{ tags: [" invoice"] },
+			{ protocolID: [2, "Todo List"] },
+			{ outputs: [{ basket: "Tokens" }] },
+		]) {
+			assert.equal(
+				findRefusedAppName("createAction", args)?.reason,
+				"not-canonical",
+			);
+			assert.equal(findMisroutedModuleIdentifier(args), null);
+		}
+		assert.equal(
+			findRefusedAppName("createAction", {
+				labels: ["payments"],
+				protocolID: [2, "todo list"],
+			}),
+			null,
+		);
+	});
+
+	it("refuses shapes structured clone allows before the manager runs", async () => {
+		const { manager, calls, prompts } = setup();
+		for (const [call, reason] of [
+			[
+				manager.listOutputs(
+					{ basket: new String("P color x") as unknown as string },
+					APP,
+				),
+				"not-a-string",
+			],
+			[
+				manager.getPublicKey(
+					{
+						protocolID: [
+							PROTOCOL[0],
+							new String(`P${PROTOCOL[1].slice(1)}`) as unknown as string,
+						],
+						keyID: "color",
+						counterparty: "self",
+					},
+					APP,
+				),
+				"not-a-string",
+			],
+			[
+				manager.internalizeAction(
+					{
+						tx: [1],
+						description: "take it in",
+						outputs: {
+							0: {
+								outputIndex: 0,
+								protocol: "basket insertion",
+								insertionRemittance: { basket: "P color x" },
+							},
+						} as never,
+					},
+					APP,
+				),
+				"not-an-array",
+			],
+		] as const) {
+			await assert.rejects(call, { reason });
+		}
+		assert.deepEqual(calls, []);
+		assert.deepEqual(prompts, []);
+	});
+
+	it("still lets the wallet itself use other spellings outside the reserved prefixes", async () => {
+		const { manager, calls } = setup();
+		await manager.listOutputs({ basket: "Default" }, ADMIN);
+		assert.deepEqual(methods(calls), ["listOutputs"]);
+	});
+});
+
+describe("apps never see 1Sat module actions or outputs in listActions", () => {
+	const listed = {
+		totalActions: 5,
+		actions: [
+			{
+				txid: "a",
+				labels: ["p color plan 0 1 ab", "payments"],
+				outputs: [{ outputIndex: 0, basket: BASKET }],
+			},
+			{
+				txid: "b",
+				labels: ["payments"],
+				outputs: [
+					{ outputIndex: 0, basket: "default" },
+					{ outputIndex: 1, basket: BASKET },
+					{ outputIndex: 2, basket: "p 1sat ordinals" },
+				],
+			},
+			{ txid: "c", labels: [" P 1sat bsv21"], outputs: [] },
+			{
+				txid: "d",
+				labels: [],
+				outputs: [{ outputIndex: 0, basket: "tokens" }],
+			},
+		],
+	};
+
+	it("drops p-labelled actions and strips p-basket outputs for an app", async () => {
+		const { manager, calls } = setup(listed);
+		const result = await manager.listActions(
+			{ labels: [], includeOutputs: true },
+			APP,
+		);
+		assert.equal(
+			(calls[0].args as { includeLabels?: boolean }).includeLabels,
+			true,
+		);
+		assert.deepEqual(result, {
+			totalActions: 3,
+			actions: [
+				{
+					txid: "b",
+					outputs: [{ outputIndex: 0, basket: "default" }],
+				},
+				{
+					txid: "d",
+					outputs: [{ outputIndex: 0, basket: "tokens" }],
+				},
+			],
+		});
+	});
+
+	it("keeps labels when the app asked for them", async () => {
+		const { manager } = setup(listed);
+		const result = await manager.listActions(
+			{ labels: ["payments"], includeLabels: true, includeOutputs: true },
+			APP,
+		);
+		assert.deepEqual(
+			result.actions.map((action) => [action.txid, action.labels]),
+			[
+				["b", ["payments"]],
+				["d", []],
+			],
+		);
+	});
+
+	it("leaves the wallet's own listing untouched", async () => {
+		const { manager, calls } = setup(listed);
+		const result = await manager.listActions({ labels: [] }, ADMIN);
+		assert.equal(result.totalActions, 5);
+		assert.equal(result.actions.length, 4);
+		assert.equal(
+			(calls[0].args as { includeLabels?: boolean }).includeLabels,
+			undefined,
+		);
+	});
+
+	it("never reports a negative total", async () => {
+		const result = await listActionsForApp(
+			async () => structuredClone({ ...listed, totalActions: 1 }),
+			{ labels: [] },
+			APP,
+		);
+		assert.equal(result.totalActions, 0);
+	});
+});
+
+describe("apps may not reveal key linkage for reserved protocols", () => {
+	const linkage = (
+		name: string,
+		originator: string,
+		manager: WalletPermissionsManager,
+	) =>
+		manager.revealSpecificKeyLinkage(
+			{
+				counterparty: PUBKEY,
+				verifier: PUBKEY,
+				protocolID: [2, name],
+				keyID: "color",
+			},
+			originator,
+		);
+
+	for (const name of [PROTOCOL[1], "p 1sat ordinals", "admin keys"]) {
+		it(`refuses ${JSON.stringify(name.slice(0, 16))} without a prompt`, async () => {
+			const { manager, calls, prompts } = setup();
+			await assert.rejects(linkage(name, APP, manager), {
+				name: "MisroutedModuleIdentifierError",
+				reason: "reserved-linkage",
+				message: /not available to apps/,
+			});
+			assert.deepEqual(calls, []);
+			assert.deepEqual(prompts, []);
+		});
+	}
+
+	it("still prompts for an ordinary protocol and serves the wallet itself", async () => {
+		const { manager, calls, prompts } = setup();
+		await linkage("todo list", APP, manager);
+		assert.deepEqual(prompts, ["onProtocolPermissionRequested"]);
+		await linkage(PROTOCOL[1], ADMIN, manager);
+		assert.deepEqual(
+			calls
+				.filter((call) => call.method === "revealSpecificKeyLinkage")
+				.map((call) => call.originator),
+			[APP, ADMIN],
 		);
 	});
 });

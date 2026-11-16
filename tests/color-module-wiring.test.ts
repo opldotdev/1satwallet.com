@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
 	assetBasket,
-	ColorConsentDeclinedError,
 	ColorPermissionModule,
 } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
@@ -12,13 +11,14 @@ import { WalletPermissionsManager } from "@bsv/wallet-toolbox-client";
 import type { Chain } from "@/lib/chain-endpoints";
 import {
 	adminOnlyTokenAccess,
+	ColorUnavailableToAppsError,
 	createColorContext,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
 import { withOriginator } from "@/lib/wallet/with-originator";
 
-const ADMIN = "https://1satwallet.com";
-const APP = "https://app.example.com";
+const ADMIN = "1satwallet.com";
+const APP = "app.example.com";
 const ASSET = `${"a".repeat(64)}_0`;
 
 type Call = { method: string; args: unknown; originator?: string };
@@ -94,7 +94,7 @@ describe("1Color consent (admin only)", () => {
 		const { manager, raw } = managerFor("test");
 		await assert.rejects(
 			listAssetBasket(manager, APP),
-			ColorConsentDeclinedError,
+			ColorUnavailableToAppsError,
 		);
 		assert.equal(raw.calls.length, 0);
 	});
@@ -259,12 +259,35 @@ describe("wallet provider color wiring", () => {
 		);
 	});
 
+	it("uses the wallet's host, the form the toolbox accepts, as the admin", () => {
+		assert.match(
+			source,
+			/const ADMIN_ORIGINATOR =\s*typeof window !== "undefined" \? window\.location\.host : "1satwallet\.com";/,
+		);
+		assert.doesNotMatch(source, /location\.origin/);
+	});
+
 	it("guards the manager it exposes to apps against misrouted p names", () => {
 		assert.match(
 			init,
-			/const wpm = guardModuleIdentifiers\(\s*new WalletPermissionsManager\(result\.wallet, ADMIN_ORIGINATOR,/,
+			/const wpm = guardModuleIdentifiers\(\s*new WalletPermissionsManager\(result\.wallet, ADMIN_ORIGINATOR, \{[\s\S]*?\}\),\s*ADMIN_ORIGINATOR,\s*\);/,
 		);
 		assert.doesNotMatch(source, /setPermissionsManager\(new /);
+	});
+
+	it("destroy waits out a pending teardown, then destroys the built-in wallet", () => {
+		const destroy = source.slice(
+			source.indexOf("const destroyWallet"),
+			source.indexOf("const disconnectExternalWallet"),
+		);
+		assert.match(
+			destroy,
+			/while \(teardownPromiseRef\.current\) await teardownPromiseRef\.current;\s*await teardownWallet\("disconnected"\);/,
+		);
+		assert.match(
+			source,
+			/useEffect\(\(\) => \(\) => void destroyWallet\(\), \[destroyWallet\]\);/,
+		);
 	});
 
 	it("dispose clears the module's in-memory state", () => {
