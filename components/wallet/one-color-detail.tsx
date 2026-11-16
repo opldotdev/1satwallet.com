@@ -27,6 +27,7 @@ import {
 } from "@/hooks/use-one-color-history";
 import { useOneColorToken } from "@/hooks/use-one-color-token";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { cn } from "@/lib/utils";
 import { actionExplorerUrl } from "@/lib/wallet/action-history";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
 import { NoColorOverlayError } from "@/lib/wallet/color-overlay";
@@ -251,6 +252,29 @@ function OneColorHistory({ assetId, dec }: { assetId: string; dec: number }) {
 	);
 }
 
+// Shown in every state of the page: a failed re-read after a mint must not hide its outcome.
+function LastMintNotice({
+	lastMint,
+	className,
+}: {
+	lastMint: { ok: boolean; message: string } | null;
+	className?: string;
+}) {
+	if (!lastMint) return null;
+	return (
+		<p
+			className={cn(
+				"text-sm",
+				lastMint.ok ? "text-primary" : "text-destructive",
+				className,
+			)}
+			role={lastMint.ok ? "status" : "alert"}
+		>
+			{lastMint.message}
+		</p>
+	);
+}
+
 function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const { chain, identityKey, colorOverlay } = useWalletToolbox();
 	const queryClient = useQueryClient();
@@ -297,6 +321,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 		return (
 			<OneColorNotice>
 				<p>This isn't a 1Color token.</p>
+				<LastMintNotice lastMint={lastMint} className="mt-3" />
 			</OneColorNotice>
 		);
 	}
@@ -313,6 +338,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 				>
 					<RefreshCw data-icon="inline-start" /> Retry
 				</Button>
+				<LastMintNotice lastMint={lastMint} className="mt-3" />
 			</OneColorNotice>
 		);
 	}
@@ -361,14 +387,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 						onMinted={onMinted}
 						onMintFailed={onMintFailed}
 					/>
-					{lastMint ? (
-						<p
-							className={`text-sm ${lastMint.ok ? "text-primary" : "text-destructive"}`}
-							role={lastMint.ok ? "status" : "alert"}
-						>
-							{lastMint.message}
-						</p>
-					) : null}
+					<LastMintNotice lastMint={lastMint} />
 					{lastSend ? (
 						<p
 							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}
