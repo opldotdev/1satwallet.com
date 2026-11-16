@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { MessageboxReceiving } from "@/components/wallet/messagebox-receiving";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { useSound } from "@/hooks/use-sound";
 import { CURRENCY_KEY, PRIVACY_MODE_KEY } from "@/lib/constants";
@@ -92,6 +93,8 @@ export function WalletSettingsForm() {
 								copy in this browser is kept in sync as a backup.
 							</span>
 						</div>
+						<Separator className="my-4" />
+						<MessageboxReceiving />
 					</CardContent>
 				)}
 				{connectionMode === "external" && (
