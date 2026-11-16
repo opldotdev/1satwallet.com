@@ -44,6 +44,7 @@ export function useCWIRelay(): void {
 		const relay = new CWIRelay({
 			getWallet: () => walletRef.current,
 			getStatus: () => statusRef.current,
+			walletHost: window.location.host,
 		});
 		relay.start();
 		relay.sendStatus();

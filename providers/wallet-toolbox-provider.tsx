@@ -20,10 +20,7 @@ import {
 	createWalletSession,
 	type WalletSession,
 } from "@1sat/connect";
-import {
-	createAssetPermissionModules,
-	type OneSatPermissionModule,
-} from "@1sat/permission-module";
+import { createAssetPermissionModules } from "@1sat/permission-module";
 import {
 	type AddressManager,
 	createWebWallet,
@@ -51,6 +48,7 @@ import {
 	advanceReceiveAddress,
 	buildReceiveAddressManager,
 	getActiveReceiveAddresses,
+	getDepositAddress,
 	RECEIVE_ADDRESS_PREFIX,
 	RECEIVE_ADDRESS_WINDOW,
 } from "@/lib/receive-address-manager";
@@ -63,6 +61,11 @@ import {
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
+import {
+	createColorContext,
+	createWalletColorModule,
+} from "@/lib/wallet/color-module";
+import type { ColorOverlay } from "@/lib/wallet/color-overlay";
 import {
 	CONNECTION_OPTION_KEY,
 	clearConnection,
@@ -80,6 +83,7 @@ import {
 	externalWalletChain,
 } from "@/lib/wallet/external-network";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
+import { guardModuleIdentifiers } from "@/lib/wallet/module-identifier-guard";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -104,6 +108,7 @@ import { useWallet } from "./wallet-provider";
 
 type Chain = "main" | "test";
 export type WalletConnectionMode = "none" | "built-in" | "external";
+type DisposablePermissionModule = { dispose: () => void };
 
 export { WALLET_CONNECTION_MODE_KEY };
 
@@ -159,10 +164,11 @@ function setExternalHop(hop: ExternalHop | null): void {
  */
 let carriedInitError: string | null = null;
 
+// The wallet's own originator: a host with an optional port, the only form
+// the toolbox's validateOriginator accepts. Apps never match it exactly: the
+// relay and the redirect flow pass an app's hostname without a port.
 const ADMIN_ORIGINATOR =
-	typeof window !== "undefined"
-		? window.location.origin
-		: "https://1satwallet.com";
+	typeof window !== "undefined" ? window.location.host : "1satwallet.com";
 
 const PERMISSIONS_CONFIG: PermissionsManagerConfig = {
 	seekProtocolPermissionsForSigning: true,
@@ -292,6 +298,10 @@ interface WalletToolboxContextValue {
 	hasActiveSync: boolean;
 
 	oneSatContext: OneSatContext | null;
+	/** 1Color writes and the inbox: the permissions manager as the admin. Null off testnet. */
+	colorContext: OneSatContext | null;
+	/** The 1Color overlay, for `resolveOrigin`. Null off testnet. */
+	colorOverlay: ColorOverlay | null;
 
 	balance: WalletBalance | null;
 	ordinals: WalletOutput[];
@@ -362,12 +372,26 @@ export function WalletToolboxProvider({
 		useState<WalletConnectionStatus>("no-wallet");
 	const [providerType, setProviderType] = useState<string | null>(null);
 	const walletResultRef = useRef<WebWalletResult | null>(null);
+	// The built-in wallet's manager and overlay, kept beside walletResultRef so
+	// switching back from an external wallet restores them.
+	const localPermissionsRef = useRef<{
+		manager: WalletPermissionsManager;
+		colorOverlay: ColorOverlay | null;
+	} | null>(null);
+	// The built-in wallet's identity and receive addresses, kept current across
+	// rotations, so switching back from an external wallet restores them too.
+	const localReceiveRef = useRef<{
+		identityKey: string;
+		addressManager: AddressManager;
+		state: ReceiveAddressState;
+	} | null>(null);
 	const walletSessionRef = useRef<WalletSession | null>(null);
 	const walletSessionCleanupRef = useRef<() => void>(() => {});
 	const externalServicesRef = useRef<OneSatServices | null>(null);
 	const connectionGenerationRef = useRef(0);
 	const teardownPromiseRef = useRef<Promise<void> | null>(null);
-	const assetPermissionModulesRef = useRef<OneSatPermissionModule[]>([]);
+	const assetPermissionModulesRef = useRef<DisposablePermissionModule[]>([]);
+	const [colorOverlay, setColorOverlay] = useState<ColorOverlay | null>(null);
 
 	const [isInitialized, setIsInitialized] = useState(false);
 	const [isInitializing, setIsInitializing] = useState(false);
@@ -433,6 +457,16 @@ export function WalletToolboxProvider({
 			builtIn: connectionMode === "built-in",
 		});
 	}, [wallet, services, chain, connectionMode]);
+
+	const colorContext = useMemo<OneSatContext | null>(() => {
+		if (!permissionsManager || !colorOverlay || connectionMode !== "built-in")
+			return null;
+		return createColorContext(permissionsManager, {
+			adminOriginator: ADMIN_ORIGINATOR,
+			chain,
+			services: services ?? undefined,
+		});
+	}, [permissionsManager, colorOverlay, services, chain, connectionMode]);
 
 	// -- Balance hook --
 	const savedConnectionOption =
@@ -553,6 +587,13 @@ export function WalletToolboxProvider({
 
 				receiveStateRef.current = advanced.state;
 				addressManagerRef.current = advanced.addressManager;
+				if (localReceiveRef.current?.identityKey === identityKey) {
+					localReceiveRef.current = {
+						identityKey,
+						addressManager: advanced.addressManager,
+						state: advanced.state,
+					};
+				}
 
 				saveReceiveAddressState({ chain, identityKey }, advanced.state);
 
@@ -618,6 +659,7 @@ export function WalletToolboxProvider({
 
 			setWallet(null);
 			setPermissionsManager(null);
+			setColorOverlay(null);
 			setServices(null);
 			setIdentityKey(null);
 			setConnectionMode("none");
@@ -685,6 +727,8 @@ export function WalletToolboxProvider({
 			const webWallet = destroyLocal ? walletResultRef.current : null;
 			if (destroyLocal) {
 				walletResultRef.current = null;
+				localPermissionsRef.current = null;
+				localReceiveRef.current = null;
 				for (const module of assetPermissionModulesRef.current)
 					module.dispose();
 				assetPermissionModulesRef.current = [];
@@ -978,7 +1022,7 @@ export function WalletToolboxProvider({
 			setIsInitializing(true);
 			setConnectionStatus("authenticating");
 			let pendingResult: WebWalletResult | null = null;
-			let pendingPermissionModules: OneSatPermissionModule[] = [];
+			let pendingPermissionModules: DisposablePermissionModule[] = [];
 			try {
 				const rootKey = PrivateKey.fromHex(rootKeyHex);
 				const newIdentityKey = rootKey.toPublicKey().toString();
@@ -1004,14 +1048,23 @@ export function WalletToolboxProvider({
 					adminOriginator: ADMIN_ORIGINATOR,
 					services: result.services,
 				});
-				pendingPermissionModules = Object.values(assetPermissionModules);
-				const wpm = new WalletPermissionsManager(
-					result.wallet,
-					ADMIN_ORIGINATOR,
-					{
+				const color = createWalletColorModule({
+					wallet: result.wallet,
+					chain,
+					adminOriginator: ADMIN_ORIGINATOR,
+				});
+				const permissionModules = color
+					? { ...assetPermissionModules, color: color.permissionModule }
+					: assetPermissionModules;
+				pendingPermissionModules = Object.values(permissionModules);
+				// Apps reach the wallet only through this manager (CWI relay and
+				// redirect authorize), so the guard covers every app-originated call.
+				const wpm = guardModuleIdentifiers(
+					new WalletPermissionsManager(result.wallet, ADMIN_ORIGINATOR, {
 						...PERMISSIONS_CONFIG,
-						permissionModules: assetPermissionModules,
-					},
+						permissionModules,
+					}),
+					ADMIN_ORIGINATOR,
 				);
 				const loadedState = loadReceiveAddressState(
 					{ chain, identityKey: newIdentityKey },
@@ -1043,12 +1096,22 @@ export function WalletToolboxProvider({
 
 				pendingResult = null;
 				walletResultRef.current = result;
+				localPermissionsRef.current = {
+					manager: wpm,
+					colorOverlay: color?.overlay ?? null,
+				};
+				localReceiveRef.current = {
+					identityKey: newIdentityKey,
+					addressManager: receiveResult.addressManager,
+					state: receiveResult.state,
+				};
 				assetPermissionModulesRef.current = pendingPermissionModules;
 				pendingPermissionModules = [];
 				setWallet(result.wallet);
 				setServices(result.services);
 
 				setPermissionsManager(wpm);
+				setColorOverlay(color?.overlay ?? null);
 				setIdentityKey(newIdentityKey);
 				setConnectionMode("built-in");
 				setConnectionStatus("ready");
@@ -1110,6 +1173,9 @@ export function WalletToolboxProvider({
 
 	// -- Wallet destroy --
 	const destroyWallet = useCallback(async () => {
+		// A teardown already under way (an external wallet disconnecting) may
+		// keep the built-in wallet; wait it out, then destroy the local wallet.
+		while (teardownPromiseRef.current) await teardownPromiseRef.current;
 		await teardownWallet("disconnected");
 	}, [teardownWallet]);
 
@@ -1123,8 +1189,10 @@ export function WalletToolboxProvider({
 			setExternalHop(null);
 			if (option === "embedded") {
 				const local = walletResultRef.current;
-				if (!local) {
-					if (hasBuiltInWallet) {
+				const localPermissions = localPermissionsRef.current;
+				const localReceive = localReceiveRef.current;
+				if (!local || !localPermissions || !localReceive) {
+					if (!local && hasBuiltInWallet) {
 						// Not running here (the page opened in external mode, or the
 						// external wallet is on the other chain): close the external
 						// session; the chain returns to the account's network and the
@@ -1147,6 +1215,18 @@ export function WalletToolboxProvider({
 				externalServicesRef.current = null;
 				setWallet(local.wallet);
 				setServices(local.services);
+				setPermissionsManager(localPermissions.manager);
+				setColorOverlay(localPermissions.colorOverlay);
+				const { addressManager, state } = localReceive;
+				addressManagerRef.current = addressManager;
+				receiveStateRef.current = state;
+				setIdentityKey(localReceive.identityKey);
+				setReceiveAddressIndex(state.currentIndex);
+				setDepositAddress(getDepositAddress(addressManager, state) || null);
+				setReceiveAddresses(getActiveReceiveAddresses(addressManager, state));
+				setTrackedAddresses(addressManager.getAddresses());
+				setLastRotationOutpoint(state.lastRotationOutpoint ?? null);
+				setAddressManagerReady(true);
 				setConnectionMode("built-in");
 				setProviderType("1sat-web");
 				setConnectionStatus("ready");
@@ -1253,12 +1333,14 @@ export function WalletToolboxProvider({
 		[chain, deriveExternalAddresses, hasBuiltInWallet, teardownWallet],
 	);
 
-	// Unmount (including a remount on another chain) closes the wallet but keeps
-	// the persisted connection, which decides the chain the next mount uses.
-	useEffect(
-		() => () => void teardownWallet("disconnected", { keepConnection: true }),
-		[teardownWallet],
-	);
+	// Unmount (including a remount on another chain) waits out a teardown
+	// already under way, then closes the wallet but keeps the persisted
+	// connection, which decides the chain the next mount uses.
+	const unmountWallet = useCallback(async () => {
+		while (teardownPromiseRef.current) await teardownPromiseRef.current;
+		await teardownWallet("disconnected", { keepConnection: true });
+	}, [teardownWallet]);
+	useEffect(() => () => void unmountWallet(), [unmountWallet]);
 
 	// -- Compose sync status with init state --
 	const syncStatus = useMemo<SyncStatus>(() => {
@@ -1317,6 +1399,8 @@ export function WalletToolboxProvider({
 			clearWalletEvents: clearWalletEvents,
 			hasActiveSync,
 			oneSatContext,
+			colorContext,
+			colorOverlay: colorContext ? colorOverlay : null,
 			balance: balance,
 			ordinals: ordinals,
 			bsv20Tokens: [],
@@ -1361,6 +1445,8 @@ export function WalletToolboxProvider({
 			clearWalletEvents,
 			hasActiveSync,
 			oneSatContext,
+			colorContext,
+			colorOverlay,
 			balance,
 			ordinals,
 			bsv21Balances,

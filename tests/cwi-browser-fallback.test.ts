@@ -23,10 +23,28 @@ afterEach(() => {
 });
 
 describe("hosted CWI browser fallback", () => {
+	test("has no app identity when the declared origin is the wallet's own site", () => {
+		const opener = {} as WindowProxy;
+		const topLevel = {
+			location: {
+				search: "?origin=https%3A%2F%2F1satwallet.com%3A8443",
+				host: "1satwallet.com",
+			},
+			opener,
+		} as Window & typeof globalThis;
+		topLevel.parent = topLevel;
+		setGlobal("window", topLevel);
+		setGlobal("document", { referrer: "" });
+		assert.deepEqual(getCWIClient(), { window: opener, identity: null });
+	});
+
 	test("uses the opener for a top-level bridge and the parent for an embed", () => {
 		const opener = {} as WindowProxy;
 		const topLevel = {
-			location: { search: "?origin=https%3A%2F%2Fapp.example" },
+			location: {
+				search: "?origin=https%3A%2F%2Fapp.example",
+				host: "1satwallet.com",
+			},
 			opener,
 		} as Window & typeof globalThis;
 		topLevel.parent = topLevel;
@@ -41,7 +59,11 @@ describe("hosted CWI browser fallback", () => {
 		});
 
 		const parent = {} as WindowProxy;
-		setGlobal("window", { parent, opener: null });
+		setGlobal("window", {
+			parent,
+			opener: null,
+			location: { host: "1satwallet.com" },
+		});
 		setGlobal("document", { referrer: "https://embed.example/studio" });
 		assert.deepEqual(getCWIClient(), {
 			window: parent,
@@ -61,6 +83,7 @@ describe("hosted CWI browser fallback", () => {
 			parent,
 			self: {},
 			top: parent,
+			location: { host: "1satwallet.com" },
 		});
 		setGlobal("document", { referrer: "https://app.example" });
 
@@ -83,7 +106,10 @@ describe("hosted CWI browser fallback", () => {
 	test("accepts popup requests only from the declared origin and opener", () => {
 		const opener = { postMessage() {} } as unknown as WindowProxy;
 		const topLevel = {
-			location: { search: "?origin=https%3A%2F%2Fapp.example" },
+			location: {
+				search: "?origin=https%3A%2F%2Fapp.example",
+				host: "1satwallet.com",
+			},
 			opener,
 		} as Window & typeof globalThis;
 		topLevel.parent = topLevel;

@@ -115,6 +115,77 @@ describe("CWI BRC-100 ABI", () => {
 		assert.equal(productionRedirect.searchParams.has("error_stack"), false);
 	});
 
+	test("bridge refuses the wallet's own site on any port", () => {
+		const responses: Array<{ message: unknown; origin: string }> = [];
+		const channelMessages: unknown[] = [];
+		const logged: unknown[][] = [];
+		const parent = {
+			postMessage: (message: unknown, origin: string) =>
+				responses.push({ message: structuredClone(message), origin }),
+		};
+		const previousWindow = globalThis.window;
+		const originalError = console.error;
+		Object.defineProperty(globalThis, "window", {
+			configurable: true,
+			value: { parent, location: { host: "1satwallet.com" } },
+		});
+		console.error = (...args: unknown[]) => {
+			logged.push(args);
+		};
+		try {
+			const bridge = new CWIBridge({
+				onStatusChange: () => undefined,
+				onPermissionRequest: () => undefined,
+				onSessionReset: () => undefined,
+			});
+			const internals = bridge as unknown as {
+				channel: { postMessage: (message: unknown) => void; close: () => void };
+				handleDAppMessage: (event: MessageEvent) => void;
+			};
+			internals.channel = {
+				postMessage: (message) =>
+					channelMessages.push(structuredClone(message)),
+				close: () => undefined,
+			};
+			internals.handleDAppMessage({
+				isTrusted: true,
+				source: parent,
+				origin: "https://1satwallet.com:8443",
+				data: {
+					type: "CWI",
+					isInvocation: true,
+					id: "own",
+					call: "getVersion",
+					args: {},
+				},
+			} as unknown as MessageEvent);
+			assert.deepEqual(channelMessages, []);
+			assert.deepEqual(responses, [
+				{
+					message: {
+						type: "CWI",
+						isInvocation: false,
+						id: "own",
+						status: "error",
+						code: 1,
+						description: "The wallet's own site cannot connect as an app.",
+					},
+					origin: "https://1satwallet.com:8443",
+				},
+			]);
+			assert.equal(
+				logged[logged.length - 1]?.[0],
+				"[cwi] refused a connection from the wallet's own site",
+			);
+		} finally {
+			console.error = originalError;
+			Object.defineProperty(globalThis, "window", {
+				configurable: true,
+				value: previousWindow,
+			});
+		}
+	});
+
 	test("bridge rejects extensions and preserves structured-clone bytes", () => {
 		const responses: unknown[] = [];
 		const channelMessages: unknown[] = [];
@@ -126,7 +197,7 @@ describe("CWI BRC-100 ABI", () => {
 		const previousWindow = globalThis.window;
 		Object.defineProperty(globalThis, "window", {
 			configurable: true,
-			value: { parent },
+			value: { parent, location: { host: "1satwallet.com" } },
 		});
 
 		try {
@@ -296,6 +367,7 @@ describe("CWI BRC-100 ABI", () => {
 		const relay = new CWIRelay({
 			getWallet: () => wallet,
 			getStatus: () => "unlocked",
+			walletHost: "1satwallet.com",
 		});
 		relay.start();
 		await new Promise((resolve) => setImmediate(resolve));

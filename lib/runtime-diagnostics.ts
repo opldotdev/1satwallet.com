@@ -79,6 +79,10 @@ const safeToken = (value: string, fallback: string): string => {
 		: fallback;
 };
 
+/** A caller-supplied string cut to `max` characters for errors and logs. */
+export const clipForLog = (value: string, max = 64): string =>
+	value.length > max ? `${value.slice(0, max)}…` : value;
+
 export function createCorrelationId(): string {
 	return (
 		globalThis.crypto?.randomUUID?.() ?? `local-${Date.now()}-${nextId + 1}`

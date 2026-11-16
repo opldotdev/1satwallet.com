@@ -16,6 +16,7 @@ import {
 	REDIRECT_AUTH_REQUEST_TTL_MS,
 	withCorsHeaders,
 } from "@/lib/cwi/redirect-utils";
+import { redirectOriginator } from "@/lib/cwi/types";
 
 export const runtime = "nodejs";
 
@@ -92,6 +93,11 @@ export async function POST(request: NextRequest) {
 			{ error: "origin_must_be_https_or_loopback_http" },
 			{ status: 400 },
 		);
+	}
+	// The wallet's own pages are the admin, never an app; refuse them here so
+	// a request can never run with the wallet's own authority.
+	if (!redirectOriginator(origin.origin, request.nextUrl.host)) {
+		return NextResponse.json({ error: "origin_not_an_app" }, { status: 400 });
 	}
 
 	// redirect_uri validation
