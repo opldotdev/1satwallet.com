@@ -59,13 +59,47 @@ describe("safe areas", () => {
 		const shell = read("components/dual-sidebar-layout.tsx");
 		const wrapper = shell.match(/<div className="([^"]*)">\s*\{children\}/);
 		assert.ok(wrapper, "content wrapper");
-		for (const side of ["right", "bottom", "left"]) {
+		const classes = wrapper[1].split(/\s+/);
+		for (const side of ["right", "bottom"]) {
 			assert.ok(
-				wrapper[1].includes(`p${side[0]}-[env(safe-area-inset-${side})]`),
+				classes.includes(`p${side[0]}-[env(safe-area-inset-${side})]`),
 				side,
 			);
 		}
+		// From md the left icon rail takes the left inset.
+		assert.ok(classes.includes("max-md:pl-[env(safe-area-inset-left)]"));
+		assert.ok(!classes.includes("pl-[env(safe-area-inset-left)]"));
 		assert.doesNotMatch(read("components/page-layout.tsx"), /safe-area-inset/);
+	});
+
+	it("puts the left inset on the icon rail from md, not on the page", () => {
+		const shell = read("components/dual-sidebar-layout.tsx");
+		assert.match(
+			shell,
+			/<header[^>]*pl-4 max-md:pl-\[max\(1rem,env\(safe-area-inset-left\)\)\]/,
+		);
+		const sidebar = read("components/ui/sidebar.tsx");
+		// The rail sits beside the inset, and its gap reserves the inset.
+		assert.match(
+			sidebar,
+			/"left-\[env\(safe-area-inset-left\)\] group-data-\[collapsible=offcanvas\]/,
+		);
+		assert.match(
+			sidebar,
+			/group-data-\[side=left\]:box-content group-data-\[side=left\]:pl-\[env\(safe-area-inset-left\)\]/,
+		);
+	});
+
+	it("keeps fixed landing controls clear of the home indicator", () => {
+		const bottom = "bottom-[max(--spacing(4),env(safe-area-inset-bottom))]";
+		const hero = read("components/landing/hero.tsx");
+		const presence = read("components/landing/shared-presence.tsx");
+		assert.ok(hero.includes(`fixed ${bottom} left-4`));
+		assert.ok(presence.includes(`md:${bottom}`));
+		assert.ok(presence.includes(`fixed ${bottom} left-1/2`));
+		for (const src of [hero, presence]) {
+			assert.doesNotMatch(src, /[\s"]bottom-4[\s"]/);
+		}
 	});
 
 	it("clears the home indicator on full-screen overlays and sheets", () => {
@@ -137,7 +171,17 @@ describe("dialogs", () => {
 	});
 
 	it("keep the close control pinned while a long sheet scrolls", () => {
-		assert.match(dialog, /sticky top-0 z-10 order-first/);
+		// Sticky top counts from inside the padding, so the anchor needs a
+		// negative top of one spacing to sit at the padding edge.
+		assert.match(dialog, /sticky -top-\(--dialog-spacing\) z-10 order-first/);
+		assert.doesNotMatch(dialog, /sticky top-0/);
+		// It has the dialog's background so scrolled content does not show
+		// through; the icon is dimmed, not the button.
+		assert.match(dialog, /bg-background\/80 [^"]*backdrop-blur-sm/);
+		assert.doesNotMatch(
+			dialog,
+			/data-slot="dialog-close"\s+className="[^"]*[\s"]opacity-70/,
+		);
 		// Header text clears the close control.
 		assert.match(
 			dialog,
@@ -155,6 +199,8 @@ describe("dialogs", () => {
 			"components/landing/inventory-selector.tsx",
 			"components/modal/artifact-modal.tsx",
 			"components/wallet/wallet-home-actions.tsx",
+			"components/wallet/one-color-send.tsx",
+			"components/wallet/one-color-deploy.tsx",
 		];
 		for (const file of callers) {
 			const src = read(file);
@@ -185,6 +231,8 @@ describe("dialogs", () => {
 			"components/wallet/ordinal-action-dialog.tsx",
 			"components/wallet/certificate-center.tsx",
 			"components/wallet/wallet-home-actions.tsx",
+			"components/wallet/one-color-send.tsx",
+			"components/wallet/one-color-deploy.tsx",
 		]) {
 			assert.doesNotMatch(
 				read(file),

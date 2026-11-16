@@ -1,8 +1,10 @@
 import type { Browser } from "./support/agent-browser";
 import { baseUrl } from "./support/env";
 import {
+	CLOSE_CHECK_VIEWPORTS,
 	checkBottomSheet,
 	checkCenteredDialog,
+	checkCloseControlCorner,
 	checkNoSidewaysScroll,
 	DESKTOP_VIEWPORT,
 	describeViewport,
@@ -82,17 +84,22 @@ const bannerPickerButton: Locator = {
 };
 const bannerPicker: DialogLocator = { role: "dialog", name: "Choose a banner" };
 
-/** Opens a dialog at `viewport`, measures it and closes it again. */
+/**
+ * Opens a dialog at `viewport`, measures it, runs `whileOpen` (if any) and
+ * closes it again.
+ */
 async function measureDialogAt(
 	browser: Browser,
 	viewport: Viewport,
 	trigger: Locator,
 	dialog: DialogLocator,
+	whileOpen?: () => Promise<unknown>,
 ) {
 	await setViewport(browser, viewport);
 	await browser.click(trigger);
 	await waitForOpenDialog(browser, dialog.name);
 	const geometry = await measureOpenDialog(browser);
+	await whileOpen?.();
 	await browser.press("Escape");
 	await browser.waitUntil(
 		`the "${dialog.name}" dialog to close`,
@@ -106,6 +113,19 @@ walletTest(
 	"mobile layout: dialogs are bottom sheets on phones and centered on desktop",
 	async (browser) => {
 		const problems = new LayoutProblems();
+		// The close control stays in the top-right corner, at rest and with
+		// the content scrolled to the bottom.
+		const closeCheckAt = (viewport: Viewport) =>
+			CLOSE_CHECK_VIEWPORTS.some(
+				(v) => v.width === viewport.width && v.height === viewport.height,
+			)
+				? () =>
+						checkCloseControlCorner(
+							browser,
+							`Send dialog at ${describeViewport(viewport)}`,
+							problems,
+						)
+				: undefined;
 
 		for (const viewport of PHONE_VIEWPORTS) {
 			const geometry = await measureDialogAt(
@@ -113,6 +133,7 @@ walletTest(
 				viewport,
 				sendButton,
 				sendDialog,
+				closeCheckAt(viewport),
 			);
 			// The Send dialog has no footer today; any it gains is checked here.
 			checkBottomSheet(
@@ -126,6 +147,7 @@ walletTest(
 			DESKTOP_VIEWPORT,
 			sendButton,
 			sendDialog,
+			closeCheckAt(DESKTOP_VIEWPORT),
 		);
 		checkCenteredDialog(
 			desktop,

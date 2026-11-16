@@ -475,7 +475,8 @@ describe("1Color deploy entry point", () => {
 		const runAt = component.indexOf("await runOneColorDeploy(");
 		assert.ok(runAt > 0);
 		assert.ok(runAt < component.lastIndexOf("setBusy(false)"));
-		assert.match(component, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
+		// The shared dialog surface scrolls; no per-screen height patch.
+		assert.doesNotMatch(component, /max-h-\[calc\(100dvh-2rem\)\]/);
 		assert.match(component, /Supply model/);
 		assert.match(component, /Mint authority/);
 	});
@@ -1009,7 +1010,8 @@ describe("1Color send entry point", () => {
 		assert.ok(runAt < component.indexOf("setBusy(false)", runAt));
 		assert.match(component, /if \(busy\) return;/);
 		assert.match(component, /refreshBalance\(\)/);
-		assert.match(component, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
+		// The shared dialog surface scrolls; no per-screen height patch.
+		assert.doesNotMatch(component, /max-h-\[calc\(100dvh-2rem\)\]/);
 		assert.match(component, /w-full sm:w-auto/);
 	});
 });

@@ -98,13 +98,18 @@ function DialogContent({
           // unchanged; shown first and sticky so the close control stays in
           // reach on a long, scrolled sheet. It spans the padding box and
           // takes no height, so the layout is the same as an absolute close.
+          // Sticky top is measured from the content edge (inside the
+          // padding), so a negative top of one spacing pins it to the
+          // padding edge, at rest and while scrolled. The button has the
+          // dialog's background so scrolled content does not show through;
+          // the dimming is on the icon so that background stays opaque.
           <div
             data-slot="dialog-close-anchor"
-            className="sticky top-0 z-10 order-first -mx-(--dialog-spacing) -mt-(--dialog-spacing) mb-[calc(var(--dialog-spacing)-var(--dialog-gap))] h-0"
+            className="sticky -top-(--dialog-spacing) z-10 order-first -mx-(--dialog-spacing) -mt-(--dialog-spacing) mb-[calc(var(--dialog-spacing)-var(--dialog-gap))] h-0"
           >
             <DialogPrimitive.Close
               data-slot="dialog-close"
-              className="ring-offset-background focus-visible:ring-ring absolute top-1 right-1 flex size-11 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+              className="bg-background/80 ring-offset-background focus-visible:ring-ring absolute top-1 right-1 flex size-11 items-center justify-center rounded-md backdrop-blur-sm focus-visible:ring-2 focus-visible:outline-hidden disabled:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg]:opacity-70 [&_svg]:transition-opacity hover:[&_svg]:opacity-100 [&_svg:not([class*='size-'])]:size-4"
             >
               <XIcon />
               <span className="sr-only">Close</span>

@@ -64,7 +64,7 @@ function InnerContent({
 }) {
 	return (
 		<SidebarInset>
-			<header className="flex h-[calc(--spacing(16)+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))] transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-[calc(--spacing(12)+env(safe-area-inset-top))]">
+			<header className="flex h-[calc(--spacing(16)+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-4 max-md:pl-[max(1rem,env(safe-area-inset-left))] transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-[calc(--spacing(12)+env(safe-area-inset-top))]">
 				<div className="flex items-center gap-2">
 					<Button
 						variant="ghost"
@@ -86,8 +86,9 @@ function InnerContent({
 			</header>
 			{/* The shell owns the side and bottom safe-area insets (viewport-fit=
 			    cover), so every page clears the notch and home indicator whether
-			    or not it uses Page. The header pads its own. */}
-			<div className="flex flex-1 flex-col gap-4 pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+			    or not it uses Page. The header pads its own. From md the left
+			    icon rail takes the left inset, so only phones pad it here. */}
+			<div className="flex flex-1 flex-col gap-4 pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] max-md:pl-[env(safe-area-inset-left)]">
 				{children}
 			</div>
 		</SidebarInset>

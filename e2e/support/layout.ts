@@ -291,9 +291,13 @@ export async function waitForOpenDialog(browser: Browser, title: string) {
 			).filter((el) => el.getClientRects().length > 0);
 			if (open.length !== 1) return false;
 			const [dialog] = open;
-			const shown = (
-				dialog.querySelector('[data-slot="dialog-title"]')?.textContent ?? ""
-			).trim();
+			// The title may sit outside the content (the command palette puts
+			// its header beside it); aria-labelledby names it either way.
+			const labelId = dialog.getAttribute("aria-labelledby");
+			const title =
+				dialog.querySelector('[data-slot="dialog-title"]') ??
+				(labelId ? document.getElementById(labelId) : null);
+			const shown = (title?.textContent ?? "").trim();
 			return (
 				shown === expected &&
 				dialog
@@ -351,6 +355,139 @@ export function measureOpenDialog(browser: Browser): Promise<DialogGeometry> {
 			footers,
 		};
 	}, null);
+}
+
+/**
+ * The close control sits in the dialog's top-right corner: 4px in from the
+ * padding edge plus the 1px border, so 5px. Anything past this is a misplaced
+ * control (a sticky offset counted from inside the padding puts it 20-28px
+ * down).
+ */
+export const CLOSE_CORNER_OFFSET = 8;
+
+/** The viewports the close control's corner is checked at. */
+export const CLOSE_CHECK_VIEWPORTS: readonly Viewport[] = [
+	{ width: 390, height: 844 },
+	DESKTOP_VIEWPORT,
+];
+
+interface CloseControlPlacement {
+	count: number;
+	dialog: { top: number; right: number };
+	close: { top: number; right: number } | null;
+	scrollTop: number;
+	maxScrollTop: number;
+	/** The dialog scrolls itself (overflow-y auto or scroll) and overflows. */
+	scrollable: boolean;
+}
+
+function measureCloseControl(browser: Browser): Promise<CloseControlPlacement> {
+	return browser.evaluate(() => {
+		const round = (n: number) => Math.round(n * 100) / 100;
+		const open = Array.from(
+			document.querySelectorAll(
+				'[data-slot="dialog-content"][data-state="open"]',
+			),
+		).filter((el) => el.getClientRects().length > 0);
+		const dialog = open[0];
+		const rect = dialog?.getBoundingClientRect();
+		const close = dialog
+			?.querySelector('[data-slot="dialog-close"]')
+			?.getBoundingClientRect();
+		const overflowY = dialog ? getComputedStyle(dialog).overflowY : "";
+		const maxScrollTop = dialog ? dialog.scrollHeight - dialog.clientHeight : 0;
+		return {
+			count: open.length,
+			dialog: {
+				top: round(rect?.top ?? Number.NaN),
+				right: round(rect?.right ?? Number.NaN),
+			},
+			close: close
+				? { top: round(close.top), right: round(close.right) }
+				: null,
+			scrollTop: round(dialog?.scrollTop ?? 0),
+			maxScrollTop: round(maxScrollTop),
+			scrollable:
+				(overflowY === "auto" || overflowY === "scroll") && maxScrollTop > 1,
+		};
+	}, null);
+}
+
+function checkCloseCorner(
+	m: CloseControlPlacement,
+	where: string,
+	problems: LayoutProblems,
+) {
+	if (m.count !== 1) {
+		problems.add(`${where}: ${m.count} open dialogs, expected 1.`);
+		return;
+	}
+	if (!m.close) {
+		problems.add(
+			`${where}: no [data-slot="dialog-close"] in the dialog, expected a close button.`,
+		);
+		return;
+	}
+	const fromTop = Math.round((m.close.top - m.dialog.top) * 100) / 100;
+	if (fromTop < 0 || fromTop > CLOSE_CORNER_OFFSET) {
+		problems.add(
+			`${where}: close button top is ${m.close.top}px, ${fromTop}px below the dialog top ${m.dialog.top}px, expected 0-${CLOSE_CORNER_OFFSET}px below it.`,
+		);
+	}
+	const fromRight = Math.round((m.dialog.right - m.close.right) * 100) / 100;
+	if (fromRight < 0 || fromRight > CLOSE_CORNER_OFFSET) {
+		problems.add(
+			`${where}: close button right is ${m.close.right}px, ${fromRight}px in from the dialog right ${m.dialog.right}px, expected 0-${CLOSE_CORNER_OFFSET}px in from it.`,
+		);
+	}
+}
+
+/**
+ * Checks that the open dialog's close control is in its top-right corner at
+ * rest and, when the dialog overflows, still there once the content is
+ * scrolled to the bottom (the control is sticky). Returns whether the
+ * scrolled case was measured.
+ */
+export async function checkCloseControlCorner(
+	browser: Browser,
+	where: string,
+	problems: LayoutProblems,
+): Promise<boolean> {
+	const atRest = await measureCloseControl(browser);
+	checkCloseCorner(atRest, `${where}, at rest`, problems);
+	if (atRest.count !== 1 || !atRest.scrollable) return false;
+
+	await browser.evaluate(() => {
+		const dialog = Array.from(
+			document.querySelectorAll(
+				'[data-slot="dialog-content"][data-state="open"]',
+			),
+		).find((el) => el.getClientRects().length > 0);
+		if (dialog) dialog.scrollTop = dialog.scrollHeight;
+	}, null);
+	await browser.waitFor(
+		`${where}: the dialog to scroll to the bottom`,
+		() => {
+			const dialog = Array.from(
+				document.querySelectorAll(
+					'[data-slot="dialog-content"][data-state="open"]',
+				),
+			).find((el) => el.getClientRects().length > 0);
+			return (
+				!!dialog &&
+				dialog.scrollTop > 0 &&
+				dialog.scrollHeight - dialog.clientHeight - dialog.scrollTop <= 1
+			);
+		},
+		null,
+	);
+	const scrolled = await measureCloseControl(browser);
+	checkCloseCorner(
+		scrolled,
+		`${where}, scrolled to the bottom (scrollTop ${scrolled.scrollTop} of ${scrolled.maxScrollTop})`,
+		problems,
+	);
+	return true;
 }
 
 /**

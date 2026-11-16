@@ -2,6 +2,8 @@ import { e2eTest } from "./support/e2e-test";
 import { baseUrl, TESTNET_HOSTS } from "./support/env";
 import { visitorInitScript } from "./support/init-script";
 import {
+	CLOSE_CHECK_VIEWPORTS,
+	checkCloseControlCorner,
 	checkDesktopDensity,
 	checkNoSidewaysScroll,
 	checkTapTargets,
@@ -11,6 +13,7 @@ import {
 	LayoutProblems,
 	PHONE_VIEWPORTS,
 	setViewport,
+	waitForOpenDialog,
 	waitForSettledPage,
 } from "./support/layout";
 
@@ -96,3 +99,44 @@ for (const route of ROUTES) {
 		},
 	);
 }
+
+// The command palette (Ctrl+K, on every page) is the one dialog a visitor can
+// open without a wallet or a peer, so it carries the close control check on
+// every PR. It does not scroll itself (its list does), so only the resting
+// corner is measured here; the wallet spec's Send dialog covers scrolling.
+const COMMAND_PALETTE = "Command Palette";
+
+e2eTest(
+	"mobile layout: the dialog close control sits in the top-right corner",
+	async () => {
+		const origin = baseUrl().origin;
+		return {
+			url: new URL("/", origin).href,
+			initScript: visitorInitScript(origin),
+			secrets: [],
+			forbiddenHosts: TESTNET_HOSTS,
+		};
+	},
+	async (browser) => {
+		const problems = new LayoutProblems();
+		await waitForSettledPage(browser, "/", "h1");
+		for (const viewport of CLOSE_CHECK_VIEWPORTS) {
+			await setViewport(browser, viewport);
+			await waitForSettledPage(browser, "/", "h1");
+			await browser.press("Control+k");
+			await waitForOpenDialog(browser, COMMAND_PALETTE);
+			await checkCloseControlCorner(
+				browser,
+				`Command palette at ${describeViewport(viewport)}`,
+				problems,
+			);
+			await browser.press("Escape");
+			await browser.waitUntil(
+				"the command palette to close",
+				{ role: "dialog", name: COMMAND_PALETTE },
+				(result) => result.count === 0,
+			);
+		}
+		problems.throwIfAny("Dialog close control");
+	},
+);
