@@ -234,7 +234,7 @@ export function WalletHomeActions() {
 					showCloseButton={sendState.status !== "success"}
 					className={
 						sendState.status === "success"
-							? "pay-success-card rounded-3xl bg-popover p-6 text-center sm:p-8"
+							? "pay-success-card rounded-3xl bg-popover text-center [--dialog-spacing:--spacing(6)] sm:[--dialog-spacing:--spacing(8)]"
 							: undefined
 					}
 				>

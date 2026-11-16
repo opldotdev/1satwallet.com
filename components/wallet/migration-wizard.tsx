@@ -480,14 +480,14 @@ export function MigrationWizard() {
 			role="dialog"
 			aria-modal="true"
 			aria-label="Wallet migration"
-			className="fixed inset-0 z-[120] flex items-center justify-center bg-background backdrop-blur-md"
+			className="fixed inset-0 z-[120] flex items-center justify-center bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] backdrop-blur-md"
 		>
 			{/* Ambient glow */}
 			<div className="pointer-events-none absolute inset-0 overflow-hidden">
 				<div className="absolute -top-1/4 left-1/2 h-[600px] w-[600px] -translate-x-1/2 rounded-full bg-primary/5 blur-[120px]" />
 			</div>
 
-			<div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 animate-in fade-in zoom-in-95 duration-300">
+			<div className="relative z-10 w-full max-w-2xl max-h-[min(90vh,100%)] overflow-y-auto p-4 animate-in fade-in zoom-in-95 duration-300">
 				{step === "intro" && (
 					<IntroStep
 						onMigrateNow={() => setStep("scan")}

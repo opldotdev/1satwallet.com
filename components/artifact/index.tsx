@@ -255,7 +255,7 @@ const Artifact: React.FC<ArtifactProps> = ({
 	} block transition mx-auto ${classNames?.wrapper ? classNames.wrapper : ""}`;
 
 	const footerContent = showFooter === true && num !== undefined && (
-		<div className="text-xs absolute bottom-0 left-0 bg-background/90 flex items-center justify-between w-full p-2 h-[56px]">
+		<div className="text-xs absolute bottom-0 left-0 bg-background/90 flex items-center justify-between w-full p-2 min-h-[56px]">
 			<Button
 				variant="secondary"
 				size="sm"

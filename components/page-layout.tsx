@@ -7,10 +7,11 @@ export function Page({ children, className, ...props }: PageProps) {
 		<div
 			className={cn(
 				"mx-auto flex w-full min-w-0 max-w-[1320px] flex-col gap-6",
-				// Gutters step 16/24/32 by breakpoint and never sit under the notch
-				// or the home indicator (viewport-fit=cover).
+				// Gutters step 16/24/32 by breakpoint. The safe-area insets are
+				// already padded by the shell (dual-sidebar-layout), so they are
+				// not added again here.
 				"[--page-x:--spacing(4)] [--page-y:--spacing(5)] md:[--page-x:--spacing(6)] md:[--page-y:--spacing(6)] xl:[--page-x:--spacing(8)] xl:[--page-y:--spacing(7)]",
-				"pt-(--page-y) pr-[max(var(--page-x),env(safe-area-inset-right))] pb-[max(var(--page-y),env(safe-area-inset-bottom))] pl-[max(var(--page-x),env(safe-area-inset-left))]",
+				"px-(--page-x) py-(--page-y)",
 				className,
 			)}
 			{...props}

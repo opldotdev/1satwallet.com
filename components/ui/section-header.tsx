@@ -6,6 +6,7 @@ function SectionHeader({
   title,
   description,
   action,
+  as: Heading = "h2",
   className,
   ...props
 }: Omit<React.ComponentProps<"div">, "title"> & {
@@ -13,6 +14,8 @@ function SectionHeader({
   description?: React.ReactNode
   /** Trailing control, such as the section's one primary action. */
   action?: React.ReactNode
+  /** Heading level: h2 for a page section, h3 for a section inside one. */
+  as?: "h2" | "h3"
 }) {
   return (
     <div
@@ -21,9 +24,9 @@ function SectionHeader({
       {...props}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <h2 className="text-lg leading-tight font-semibold tracking-tight">
+        <Heading className="text-lg leading-tight font-semibold tracking-tight">
           {title}
-        </h2>
+        </Heading>
         {description && (
           <p className="text-muted-foreground text-sm">{description}</p>
         )}

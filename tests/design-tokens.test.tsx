@@ -33,14 +33,49 @@ describe("safe areas", () => {
 		assert.match(layout, /viewportFit: "cover"/);
 	});
 
-	it("pads the top bar and the page by the insets", () => {
+	it("adds viewport-fit=cover with a keyboard that resizes the content", () => {
 		assert.match(
-			read("components/dual-sidebar-layout.tsx"),
-			/<header[^>]*pt-\[env\(safe-area-inset-top\)\]/,
+			read("app/layout.tsx"),
+			/interactiveWidget: "resizes-content"/,
 		);
-		const page = read("components/page-layout.tsx");
-		for (const side of ["left", "right", "bottom"]) {
-			assert.match(page, new RegExp(`env\\(safe-area-inset-${side}\\)`));
+	});
+
+	it("keeps the top bar 64px (48px collapsed) plus the top inset", () => {
+		const shell = read("components/dual-sidebar-layout.tsx");
+		assert.match(shell, /<header[^>]*pt-\[env\(safe-area-inset-top\)\]/);
+		assert.match(
+			shell,
+			/<header[^>]*h-\[calc\(--spacing\(16\)\+env\(safe-area-inset-top\)\)\]/,
+		);
+		assert.match(
+			shell,
+			/sidebar-wrapper:h-\[calc\(--spacing\(12\)\+env\(safe-area-inset-top\)\)\]/,
+		);
+		// The border sits inside the height, as it did before the insets.
+		assert.doesNotMatch(shell, /box-content/);
+	});
+
+	it("pads every page once, in the shell, not again in Page", () => {
+		const shell = read("components/dual-sidebar-layout.tsx");
+		const wrapper = shell.match(/<div className="([^"]*)">\s*\{children\}/);
+		assert.ok(wrapper, "content wrapper");
+		for (const side of ["right", "bottom", "left"]) {
+			assert.ok(
+				wrapper[1].includes(`p${side[0]}-[env(safe-area-inset-${side})]`),
+				side,
+			);
+		}
+		assert.doesNotMatch(read("components/page-layout.tsx"), /safe-area-inset/);
+	});
+
+	it("clears the home indicator on full-screen overlays and sheets", () => {
+		for (const file of [
+			"components/wallet/full-screen-unlock.tsx",
+			"components/wallet/migration-wizard.tsx",
+			"components/ui/sheet.tsx",
+			"app/(embed)/wallet/cwi/page.tsx",
+		]) {
+			assert.match(read(file), /env\(safe-area-inset-bottom\)/, file);
 		}
 	});
 });
@@ -101,6 +136,50 @@ describe("dialogs", () => {
 		assert.match(dialog, /max-sm:\*:w-full sm:flex-row/);
 	});
 
+	it("keep the close control pinned while a long sheet scrolls", () => {
+		assert.match(dialog, /sticky top-0 z-10 order-first/);
+		// Header text clears the close control.
+		assert.match(
+			dialog,
+			/--dialog-header-pr:max\(0px,calc\(3rem-var\(--dialog-spacing\)\)\)/,
+		);
+		assert.match(dialog, /pr-\[var\(--dialog-header-pr,0px\)\]/);
+	});
+
+	it("change padding and gap through the variables, not p-* or gap-*", () => {
+		// A p-* or gap-* override would drop the home-indicator padding and
+		// misplace the close control.
+		const callers = [
+			"components/ui/command.tsx",
+			"components/landing/trade-dialog.tsx",
+			"components/landing/inventory-selector.tsx",
+			"components/modal/artifact-modal.tsx",
+			"components/wallet/wallet-home-actions.tsx",
+		];
+		for (const file of callers) {
+			const src = read(file);
+			const contents = [...src.matchAll(/<DialogContent[\s\S]*?>/g)].map(
+				(m) => m[0],
+			);
+			assert.ok(contents.length > 0, file);
+			for (const tag of contents) {
+				assert.doesNotMatch(tag, /[\s"]p-\d|[\s"]gap-\d|sm:p-\d/, file);
+			}
+		}
+	});
+
+	it("AlertDialog is the same sheet, with full-width footer buttons", () => {
+		const alert = read("components/ui/alert-dialog.tsx");
+		assert.match(alert, /dialogSurfaceClassName/);
+		assert.match(alert, /max-sm:\*:w-full sm:flex-row/);
+	});
+
+	it("artifact preview keeps its 96dvh height and its own close button", () => {
+		const modal = read("components/modal/artifact-modal.tsx");
+		assert.match(modal, /showCloseButton=\{false\}/);
+		assert.match(modal, /h-\[96dvh\] max-h-\[96dvh\] max-sm:max-h-\[96dvh\]/);
+	});
+
 	it("leave no per-screen height patches behind", () => {
 		for (const file of [
 			"components/wallet/ordinal-action-dialog.tsx",
@@ -146,6 +225,10 @@ describe("shared building blocks", () => {
 		assert.match(
 			html,
 			/<h2 class="text-lg[^"]*font-semibold[^"]*">Tokens<\/h2>/,
+		);
+		assert.match(
+			renderToStaticMarkup(<SectionHeader as="h3" title="Holders" />),
+			/<h3 class="text-lg[^"]*">Holders<\/h3>/,
 		);
 		assert.match(html, /BSV-21 and 1Color/);
 		assert.match(
@@ -196,7 +279,13 @@ describe("shared building blocks", () => {
 			/<dt class="text-muted-foreground shrink-0">Amount<\/dt>/,
 		);
 		assert.match(html, /<dd class="[^"]*font-mono[^"]*">1\.5 BSV<\/dd>/);
-		assert.match(html, /<dd class="[^"]*text-right">Fixed<\/dd>/);
+		assert.match(
+			html,
+			/<dd class="max-w-full min-w-0 wrap-anywhere">Fixed<\/dd>/,
+		);
+		// Beside its label it sits at the right; wrapped, under it at the start.
+		assert.match(html, /flex flex-wrap items-baseline justify-between/);
+		assert.doesNotMatch(html, /text-right|ml-auto/);
 		assert.match(html, /flex flex-col gap-1/);
 	});
 });

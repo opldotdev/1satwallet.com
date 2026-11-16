@@ -14,9 +14,10 @@ function DetailList({ className, ...props }: React.ComponentProps<"dl">) {
 }
 
 /**
- * A long value (address, txid) that does not fit beside its label wraps
- * onto its own line under it. `stack` always puts it there. Values are mono
- * (amounts, addresses, txids); pass mono={false} for words.
+ * A value sits at the right of its label. A long one (address, txid) that
+ * does not fit beside it wraps onto its own line under the label,
+ * left-aligned. `stack` always puts it there. Values are mono (amounts,
+ * addresses, txids); pass mono={false} for words.
  */
 function DetailRow({
   label,
@@ -43,12 +44,10 @@ function DetailRow({
       {...props}
     >
       <dt className="text-muted-foreground shrink-0">{label}</dt>
+      {/* justify-between puts the value at the right while it shares the
+          label's line, and at the start of its own line once it wraps. */}
       <dd
-        className={cn(
-          "max-w-full min-w-0 wrap-anywhere",
-          !stack && "ml-auto text-right",
-          mono && "font-mono"
-        )}
+        className={cn("max-w-full min-w-0 wrap-anywhere", mono && "font-mono")}
       >
         {children}
       </dd>

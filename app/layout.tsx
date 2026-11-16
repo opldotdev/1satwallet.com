@@ -53,9 +53,12 @@ export const metadata: Metadata = {
 };
 
 // Draw under the notch and home indicator; the shell pads itself with the
-// safe-area insets (see dual-sidebar-layout header, Page, DialogContent).
+// safe-area insets (see dual-sidebar-layout, DialogContent, Sheet). The
+// on-screen keyboard resizes the layout viewport where supported, so dvh
+// sheets and fixed footers stay above it.
 export const viewport: Viewport = {
 	viewportFit: "cover",
+	interactiveWidget: "resizes-content",
 };
 
 const jsonLd: WithContext<WebApplication> = {
