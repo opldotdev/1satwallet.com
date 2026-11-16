@@ -2,7 +2,6 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-	ArrowDownLeft,
 	ArrowLeft,
 	Copy,
 	ExternalLink,
@@ -40,6 +39,7 @@ import {
 	oneColorTicker,
 } from "@/lib/wallet/one-color";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { OneColorReceiveDialog } from "./one-color-receive";
 
 const DIRECTION_LABEL: Record<OneColorDirection, string> = {
 	received: "Received",
@@ -86,9 +86,7 @@ function OneColorActions({ token }: { token: OneColorBalance }) {
 	return (
 		<div className="space-y-1">
 			<div className="flex flex-wrap gap-2">
-				<Button size="sm" variant="outline" disabled>
-					<ArrowDownLeft className="size-4" data-icon="inline-start" /> Receive
-				</Button>
+				<OneColorReceiveDialog />
 				<Button size="sm" variant="outline" disabled>
 					<Send className="size-4" data-icon="inline-start" /> Send
 				</Button>
@@ -98,7 +96,11 @@ function OneColorActions({ token }: { token: OneColorBalance }) {
 					</Button>
 				) : null}
 			</div>
-			<p className="text-xs text-muted-foreground">Not available yet.</p>
+			<p className="text-xs text-muted-foreground">
+				{token.authorities > 0
+					? "Send and Mint aren't available yet."
+					: "Send isn't available yet."}
+			</p>
 		</div>
 	);
 }
