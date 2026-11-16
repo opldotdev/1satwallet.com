@@ -8,6 +8,7 @@ export interface BapProfileDraft {
 	alternateName: string;
 	description: string;
 	image: string;
+	banner: string;
 	email: string;
 	paymail: string;
 }
@@ -17,6 +18,7 @@ export const EMPTY_BAP_PROFILE: BapProfileDraft = {
 	alternateName: "",
 	description: "",
 	image: "",
+	banner: "",
 	email: "",
 	paymail: "",
 };
@@ -26,6 +28,7 @@ const FIELD_LIMITS: Record<keyof BapProfileDraft, number> = {
 	alternateName: 100,
 	description: 500,
 	image: 2_048,
+	banner: 2_048,
 	email: 254,
 	paymail: 254,
 };
@@ -57,14 +60,58 @@ export function profileDraftFromRecord(
 		alternateName: stringField("alternateName"),
 		description: stringField("description"),
 		image: stringField("image"),
+		// A legacy `coverImage` is read as the banner, as the iOS app reads it.
+		banner:
+			profile?.banner === undefined
+				? typeof profile?.coverImage === "string"
+					? profile.coverImage
+					: ""
+				: stringField("banner"),
 		email: stringField("email"),
 		paymail: stringField("paymail"),
 	};
 }
 
+const ORDINAL_REFERENCE =
+	/^(?:(?:1sat|ord):\/\/)?([a-fA-F0-9]{64})(?:[._](\d+))?$/;
+
+/**
+ * The ordinal origin (`txid_vout`) an image reference names: `1sat://txid.vout`
+ * (what the iOS app and Yours write), the older `ord://txid_vout`, or a bare
+ * outpoint. A reference without an output index names output 0.
+ */
+export function imageReferenceOrigin(value: string): string | undefined {
+	const match = ORDINAL_REFERENCE.exec(value.trim());
+	if (!match) return undefined;
+	return `${match[1].toLowerCase()}_${match[2] ?? "0"}`;
+}
+
+/** The `1sat://txid.vout` string BAP `image` and `banner` hold for an ordinal. */
+export function ordinalImageReference(origin: string): string | undefined {
+	const outpoint = imageReferenceOrigin(origin);
+	return outpoint ? `1sat://${outpoint.replace("_", ".")}` : undefined;
+}
+
+/**
+ * The string to publish for a typed or picked image: an https URL stays as
+ * typed, an ordinal reference in any accepted form becomes `1sat://txid.vout`.
+ * Anything else is not a publishable image.
+ */
+export function storedImageReference(value: string): string | undefined {
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	const ordinal = ordinalImageReference(trimmed);
+	if (ordinal) return ordinal;
+	try {
+		return new URL(trimmed).protocol === "https:" ? trimmed : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export function isSafePublicImageUrl(value: string): boolean {
 	if (value.startsWith("ord://") || value.startsWith("1sat://")) {
-		return /^(?:ord|1sat):\/\/[a-fA-F0-9]{64}(?:[._]\d+)?$/.test(value);
+		return imageReferenceOrigin(value) !== undefined;
 	}
 	try {
 		return new URL(value).protocol === "https:";
@@ -90,8 +137,13 @@ export function validateBapProfile(
 			errors[field] = "Control characters are not allowed.";
 			continue;
 		}
-		if (field === "image" && !isSafePublicImageUrl(value)) {
-			errors[field] = "Use an https://, ord://, or 1sat:// image URL.";
+		if (field === "image" || field === "banner") {
+			const stored = storedImageReference(value);
+			if (!stored) {
+				errors[field] = "Use an https://, ord://, or 1sat:// image URL.";
+				continue;
+			}
+			profile[field] = stored;
 			continue;
 		}
 		if (field === "email" && !EMAILISH.test(value)) {
@@ -111,7 +163,7 @@ export function validateBapProfile(
 /**
  * The record to publish: the currently published profile with the editor's
  * changes laid over it. `updateProfile` writes the object it is given whole,
- * so keys this editor does not show (banner, logo, url, sameAs, `@context`,
+ * so keys this editor does not show (logo, url, sameAs, `@context`,
  * anything another client published) must be carried over. A field whose
  * draft still matches `baseline` (what the editor opened with) keeps its
  * published value, whatever its JSON type. A changed field left empty is
@@ -135,6 +187,9 @@ export function mergeBapProfile(
 		if (draft[field].trim() === baseline[field].trim()) continue;
 		if (profile[field]) record[field] = profile[field];
 		else delete record[field];
+		// A legacy `coverImage` stands in for the banner; drop it once the
+		// banner is edited or removed, as the iOS app does.
+		if (field === "banner") delete record.coverImage;
 	}
 	return record;
 }

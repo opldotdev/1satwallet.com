@@ -4,10 +4,13 @@ import {
 	bapDisplayName,
 	buildBapAttestationReview,
 	identityActionMessage,
+	imageReferenceOrigin,
 	isSafePublicImageUrl,
 	mergeBapProfile,
 	normalizeBapDiscovery,
+	ordinalImageReference,
 	profileDraftFromRecord,
+	storedImageReference,
 	validateBapProfile,
 } from "../lib/wallet/bap-identity";
 
@@ -29,6 +32,7 @@ test("validates and trims the fixed public BAP profile schema", () => {
 		alternateName: "alice",
 		description: "Public builder",
 		image: "https://example.com/alice.png",
+		banner: "",
 		email: "alice@example.com",
 		paymail: "alice@1sat.app",
 	});
@@ -50,11 +54,16 @@ test("rejects unsafe profile URLs and malformed contact fields", () => {
 		alternateName: "",
 		description: "",
 		image: "javascript:alert(1)",
+		banner: "http://example.com/banner.png",
 		email: "not-an-email",
 		paymail: "not-paymail",
 	});
 	assert.equal(
 		result.errors.image,
+		"Use an https://, ord://, or 1sat:// image URL.",
+	);
+	assert.equal(
+		result.errors.banner,
 		"Use an https://, ord://, or 1sat:// image URL.",
 	);
 	assert.equal(result.errors.email, "Enter a valid email address.");
@@ -73,6 +82,7 @@ test("only reads known string fields from stored profile data", () => {
 			alternateName: "",
 			description: "",
 			image: "",
+			banner: "",
 			email: "",
 			paymail: "",
 		},
@@ -227,4 +237,112 @@ test("display name prefers alternateName, then name", () => {
 	assert.equal(bapDisplayName({ name: "Alice", alternateName: "ali" }), "ali");
 	assert.equal(bapDisplayName({ name: "Alice", alternateName: " " }), "Alice");
 	assert.equal(bapDisplayName({}), undefined);
+});
+
+const TXID = "0f".repeat(32);
+
+test("image references round-trip with the 1sat:// form the iOS app writes", () => {
+	// AvatarReference.ordinal("txid_vout") on iOS and the Yours AvatarPicker
+	// both write `1sat://txid.vout` for an ordinal origin.
+	const ios = `1sat://${TXID}.3`;
+	assert.equal(ordinalImageReference(`${TXID}_3`), ios);
+	assert.equal(imageReferenceOrigin(ios), `${TXID}_3`);
+	assert.equal(ordinalImageReference(imageReferenceOrigin(ios) ?? ""), ios);
+	// Older and pasted forms are read, then stored the way iOS stores them.
+	for (const pasted of [
+		ios,
+		`ord://${TXID}_3`,
+		`${TXID}_3`,
+		`${TXID}.3`,
+		` 1sat://${TXID.toUpperCase()}.3 `,
+	]) {
+		assert.equal(storedImageReference(pasted), ios, pasted);
+	}
+	assert.equal(storedImageReference(`1sat://${TXID}`), `1sat://${TXID}.0`);
+	assert.equal(
+		storedImageReference("https://example.com/b.png"),
+		"https://example.com/b.png",
+	);
+	for (const rejected of [
+		"",
+		"http://example.com/b.png",
+		"javascript:alert(1)",
+		`1sat://${TXID}.3/../settings`,
+		"1sat://wallet/settings",
+	]) {
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+	}
+});
+
+test("banner is validated like the avatar and stored as 1sat://txid.vout", () => {
+	const draft = profileDraftFromRecord({
+		image: `ord://${TXID}_0`,
+		banner: `${TXID}_1`,
+	});
+	const result = validateBapProfile(draft);
+	assert.deepEqual(result.errors, {});
+	assert.equal(result.profile.image, `1sat://${TXID}.0`);
+	assert.equal(result.profile.banner, `1sat://${TXID}.1`);
+});
+
+test("banner reads the published banner, falling back to a legacy coverImage", () => {
+	assert.equal(
+		profileDraftFromRecord({ banner: "https://b.png", coverImage: "x" }).banner,
+		"https://b.png",
+	);
+	assert.equal(
+		profileDraftFromRecord({ coverImage: "https://c.png" }).banner,
+		"https://c.png",
+	);
+	assert.equal(profileDraftFromRecord({ banner: { url: "x" } }).banner, "");
+});
+
+test("profile save writes an edited banner and keeps everything else", () => {
+	const published = {
+		"@context": "https://schema.org",
+		"@type": "Person",
+		alternateName: "alice",
+		image: `1sat://${TXID}.0`,
+		logo: "https://example.com/logo.png",
+		url: "https://alice.example",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, banner: `1sat://${TXID}.2` };
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		banner: `1sat://${TXID}.2`,
+	});
+});
+
+test("profile save keeps an unedited banner and removes a cleared one", () => {
+	const published = {
+		"@type": "Person",
+		name: "Alice",
+		banner: `1sat://${TXID}.1`,
+	};
+	const baseline = profileDraftFromRecord(published);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, name: "Al" }),
+		{ "@type": "Person", name: "Al", banner: `1sat://${TXID}.1` },
+	);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, banner: " " }),
+		{ "@type": "Person", name: "Alice" },
+	);
+});
+
+test("an edited banner replaces a legacy coverImage; an unedited one keeps it", () => {
+	const published = { "@type": "Person", coverImage: "https://c.png" };
+	const baseline = profileDraftFromRecord(published);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, name: "Alice" }),
+		{ "@type": "Person", coverImage: "https://c.png", name: "Alice" },
+	);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, {
+			...baseline,
+			banner: `1sat://${TXID}.4`,
+		}),
+		{ "@type": "Person", banner: `1sat://${TXID}.4` },
+	);
 });
