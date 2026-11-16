@@ -2,6 +2,7 @@
 
 import {
 	ArrowRight,
+	AtSign,
 	CircleDollarSign,
 	Copy,
 	Gem,
@@ -14,6 +15,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
+import { useWalletHandles } from "@/hooks/use-wallet-handles";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
@@ -41,6 +43,8 @@ export function WalletHomeStatus() {
 		syncWallet,
 	} = useWalletToolbox();
 	const [, copy] = useCopyWithSound();
+	const handles = useWalletHandles();
+	const holdsHandle = (handles.data?.length ?? 0) > 0;
 	const shortenedIdentity = identityKey
 		? `${identityKey.slice(0, 14)}…${identityKey.slice(-10)}`
 		: "Unavailable";
@@ -109,6 +113,16 @@ export function WalletHomeStatus() {
 								icon: Inbox,
 								task: syncTasks.cosignDeliveries,
 							},
+							// Only a wallet holding a handle has a handle inbox.
+							...(holdsHandle
+								? [
+										{
+											title: "Handle inbox",
+											icon: AtSign,
+											task: syncTasks.handleInbox,
+										},
+									]
+								: []),
 						].map(({ title, icon: Icon, task }) => (
 							<div key={title} className={styles.serviceRow}>
 								<Icon
