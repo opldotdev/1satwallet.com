@@ -88,16 +88,22 @@ function useOverlayOrigin(assetId: string) {
  */
 function OneColorActions({
 	token,
+	onSendStart,
 	onSendOutcome,
 }: {
 	token: OneColorBalance;
+	onSendStart: () => void;
 	onSendOutcome: (outcome: DeliveredSend) => void;
 }) {
 	return (
 		<div className="space-y-1">
 			<div className="flex flex-wrap gap-2">
 				<OneColorReceiveDialog />
-				<OneColorSendDialog token={token} onOutcome={onSendOutcome} />
+				<OneColorSendDialog
+					token={token}
+					onStart={onSendStart}
+					onOutcome={onSendOutcome}
+				/>
 				{token.authorities > 0 ? (
 					<Button size="sm" variant="outline" disabled>
 						<Sparkles className="size-4" data-icon="inline-start" /> Mint
@@ -259,12 +265,19 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const [undelivered, setUndelivered] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
+	const onSendStart = useCallback(() => setLastSend(null), []);
 	const onSendOutcome = useCallback((outcome: DeliveredSend) => {
 		setLastSend(outcome);
 		if (outcome.kind === "undelivered") {
 			setUndelivered((previous) => new Set([...previous, outcome.txid]));
 		}
 	}, []);
+	// The last send's result no longer holds once a cancel was asked of it.
+	const onCancelOutcome = useCallback(
+		(txid: string) =>
+			setLastSend((previous) => (previous?.txid === txid ? null : previous)),
+		[],
+	);
 
 	if (state.kind === "loading")
 		return <OneColorLoading label="Loading 1Color token…" />;
@@ -329,7 +342,11 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 							<Copy />
 						</Button>
 					</div>
-					<OneColorActions token={token} onSendOutcome={onSendOutcome} />
+					<OneColorActions
+						token={token}
+						onSendStart={onSendStart}
+						onSendOutcome={onSendOutcome}
+					/>
 					{lastSend ? (
 						<p
 							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}
@@ -369,7 +386,11 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 					<dd className="mt-1 break-all font-mono text-sm">{overlayText}</dd>
 				</div>
 			</dl>
-			<OneColorPendingSends token={token} undelivered={undelivered} />
+			<OneColorPendingSends
+				token={token}
+				undelivered={undelivered}
+				onCancelOutcome={onCancelOutcome}
+			/>
 			<section aria-labelledby="one-color-history" className="space-y-3">
 				<div className="flex items-center justify-between gap-3">
 					<h2 id="one-color-history" className="text-lg font-medium">

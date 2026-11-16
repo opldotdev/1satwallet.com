@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, RefreshCw, Send } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,7 +20,11 @@ import { useOneColorPending } from "@/hooks/use-one-color-pending";
 import { useSound } from "@/hooks/use-sound";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import { type OneColorBalance, oneColorTicker } from "@/lib/wallet/one-color";
+import {
+	ONE_COLOR_SCAN_MAX,
+	type OneColorBalance,
+	oneColorTicker,
+} from "@/lib/wallet/one-color";
 import {
 	formatOneColorAmount,
 	normalizeHandle,
@@ -28,6 +32,7 @@ import {
 	type OneColorPendingSend,
 	type OneColorSendInput,
 	type OneColorSendOutcome,
+	oneColorMemoError,
 	oneColorSendAmountError,
 	parseOneColorAmount,
 	runOneColorCancel,
@@ -35,7 +40,7 @@ import {
 } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
-/** Bottom sheet on phones: scrolls inside the viewport, full-width buttons. */
+/** Scrolls inside the viewport on short screens; footer buttons full width on phones. */
 const SHEET_CLASS = "max-h-[calc(100dvh-2rem)] overflow-y-auto";
 const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
 
@@ -60,13 +65,17 @@ function logSendFailure(
 	});
 }
 
-/** Re-reads holdings, history and pending sends (all under `["one-color"]`). */
-function useOneColorRefresh() {
+/**
+ * After a send or a cancel: re-reads the BSV balance and the holdings,
+ * history and pending sends (all under `["one-color"]`).
+ */
+function useRefreshAfterWrite() {
 	const queryClient = useQueryClient();
-	return useCallback(
-		() => queryClient.invalidateQueries({ queryKey: ["one-color"] }),
-		[queryClient],
-	);
+	const { refreshBalance } = useWalletToolbox();
+	return useCallback(async () => {
+		refreshBalance();
+		await queryClient.invalidateQueries({ queryKey: ["one-color"] });
+	}, [queryClient, refreshBalance]);
 }
 
 const shortTxid = (txid: string) => `${txid.slice(0, 8)}…${txid.slice(-8)}`;
@@ -74,17 +83,20 @@ const shortTxid = (txid: string) => `${txid.slice(0, 8)}…${txid.slice(-8)}`;
 /** Send 1Color tokens to a handle. Testnet only; writes through `colorContext`. */
 export function OneColorSendDialog({
 	token,
+	onStart,
 	onOutcome,
 }: {
 	token: OneColorBalance;
+	/** A send is starting: the previous one's result no longer applies. */
+	onStart: () => void;
 	/** A send that reached the wallet: sent, or built but not delivered. */
 	onOutcome: (
 		outcome: Exclude<OneColorSendOutcome, { kind: "failed" }>,
 	) => void;
 }) {
 	const { play } = useSound();
-	const { chain, colorContext, refreshBalance } = useWalletToolbox();
-	const refreshOneColor = useOneColorRefresh();
+	const { chain, colorContext } = useWalletToolbox();
+	const refreshAfterWrite = useRefreshAfterWrite();
 	const ticker = oneColorTicker(token);
 	const [open, setOpen] = useState(false);
 	const [handle, setHandle] = useState("");
@@ -93,6 +105,8 @@ export function OneColorSendDialog({
 	const [review, setReview] = useState<OneColorSendInput | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	// Set before the first await, so a second tap in the same frame is ignored.
+	const inFlight = useRef(false);
 
 	const resetForm = useCallback(() => {
 		setHandle("");
@@ -128,6 +142,11 @@ export function OneColorSendDialog({
 			setError(amountError ?? "Enter a valid amount.");
 			return;
 		}
+		const memoError = oneColorMemoError(memo);
+		if (memoError) {
+			setError(memoError);
+			return;
+		}
 		const trimmedMemo = memo.trim();
 		setReview({
 			assetId: token.assetId,
@@ -138,22 +157,21 @@ export function OneColorSendDialog({
 	}, [amount, handle, memo, token.assetId, token.available, token.dec]);
 
 	const send = useCallback(async () => {
-		if (!(colorContext && review)) return;
+		if (!(colorContext && review) || inFlight.current) return;
+		inFlight.current = true;
 		setBusy(true);
 		setError(null);
+		onStart();
 		// Holdings are re-read before `busy` clears, so Send stays disabled until
 		// the wallet's own read shows whether a send was built.
 		const outcome = await runOneColorSend(colorContext, review, {
 			log: logSendFailure,
-			refresh: async () => {
-				refreshBalance();
-				await refreshOneColor();
-			},
+			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
-			// A send that may have been built is never left one tap away from a
-			// second one: back to the form, and the pending list shows it.
-			if (outcome.mayHaveBeenBuilt) setReview(null);
+			// A send that may have gone out is never left a tap or two away from a
+			// second one: the form is cleared, and the pending list shows it.
+			if (outcome.mayHaveBeenBuilt) resetForm();
 			setError(outcome.message);
 			play("error");
 		} else {
@@ -163,12 +181,13 @@ export function OneColorSendDialog({
 			play(outcome.kind === "sent" ? "success" : "error");
 		}
 		setBusy(false);
+		inFlight.current = false;
 	}, [
 		colorContext,
 		onOutcome,
+		onStart,
 		play,
-		refreshBalance,
-		refreshOneColor,
+		refreshAfterWrite,
 		resetForm,
 		review,
 	]);
@@ -320,10 +339,11 @@ function CancelSendDialog({
 }) {
 	const { play } = useSound();
 	const { colorContext } = useWalletToolbox();
-	const refreshOneColor = useOneColorRefresh();
+	const refreshAfterWrite = useRefreshAfterWrite();
 	const [open, setOpen] = useState(false);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const inFlight = useRef(false);
 
 	const changeOpen = (next: boolean) => {
 		if (busy) return;
@@ -332,12 +352,13 @@ function CancelSendDialog({
 	};
 
 	const cancel = async () => {
-		if (!colorContext) return;
+		if (!colorContext || inFlight.current) return;
+		inFlight.current = true;
 		setBusy(true);
 		setError(null);
 		const outcome = await runOneColorCancel(colorContext, send, {
 			log: logSendFailure,
-			refresh: refreshOneColor,
+			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
 			setError(outcome.message);
@@ -353,12 +374,13 @@ function CancelSendDialog({
 			}
 		}
 		setBusy(false);
+		inFlight.current = false;
 	};
 
 	return (
 		<Dialog open={open} onOpenChange={changeOpen}>
 			<DialogTrigger asChild>
-				<Button size="sm" variant="outline" disabled={!colorContext}>
+				<Button variant="outline" disabled={!colorContext}>
 					Cancel
 				</Button>
 			</DialogTrigger>
@@ -413,10 +435,13 @@ function CancelSendDialog({
 export function OneColorPendingSends({
 	token,
 	undelivered,
+	onCancelOutcome,
 }: {
 	token: OneColorBalance;
 	/** Sends built in this session whose delivery failed. */
 	undelivered: ReadonlySet<string>;
+	/** A cancel was requested or refused for this send: it no longer waits as it did. */
+	onCancelOutcome: (txid: string) => void;
 }) {
 	const { colorContext } = useWalletToolbox();
 	const pending = useOneColorPending(token.assetId);
@@ -452,8 +477,8 @@ export function OneColorPendingSends({
 		);
 	}
 
-	const { sends } = pending.data;
-	if (sends.length === 0 && !notice) return null;
+	const { sends, truncated } = pending.data;
+	if (sends.length === 0 && !notice && !truncated) return null;
 
 	return (
 		<section aria-labelledby="one-color-pending" className="space-y-3">
@@ -509,8 +534,12 @@ export function OneColorPendingSends({
 														(previous) => new Set([...previous, send.txid]),
 													);
 													setNotice(message);
+													onCancelOutcome(send.txid);
 												}}
-												onRefused={setNotice}
+												onRefused={(message) => {
+													setNotice(message);
+													onCancelOutcome(send.txid);
+												}}
 											/>
 										</>
 									)}
@@ -519,6 +548,12 @@ export function OneColorPendingSends({
 						);
 					})}
 				</ul>
+			) : null}
+			{truncated ? (
+				<p className="text-xs text-muted-foreground">
+					Older sends aren't shown: only the newest{" "}
+					{ONE_COLOR_SCAN_MAX.toLocaleString()} transactions are searched.
+				</p>
 			) : null}
 		</section>
 	);

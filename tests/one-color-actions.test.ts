@@ -32,7 +32,9 @@ import {
 	ONE_COLOR_MAX_AMOUNT,
 	ONE_COLOR_MAX_ICON_BYTES,
 	type OneColorActionSet,
+	OneColorHandleLookupError,
 	oneColorDeployFailureMessage,
+	oneColorMemoError,
 	oneColorSendAmountError,
 	oneColorSendPlanLabels,
 	oneColorSupplyError,
@@ -481,15 +483,23 @@ describe("1Color deploy entry point", () => {
 
 const ASSET_ID = `${txid}_0`;
 
-function recordingSend(result: Send1ColorResult) {
+function recordingSend(
+	result: Send1ColorResult,
+	resolve: (handle: string) => Promise<unknown> = async () => ({}),
+) {
 	const calls: Send1ColorInput[] = [];
-	const actions: Pick<OneColorActionSet, "send"> = {
+	const resolved: string[] = [];
+	const actions: Pick<OneColorActionSet, "send" | "resolveHandle"> = {
 		send: async (_ctx, input) => {
 			calls.push(input);
 			return result;
 		},
+		resolveHandle: async (handle) => {
+			resolved.push(handle);
+			return resolve(handle);
+		},
 	};
-	return { calls, actions };
+	return { calls, resolved, actions };
 }
 
 describe("normalizeHandle (Yours)", () => {
@@ -604,6 +614,15 @@ describe("executeOneColorSend", () => {
 				},
 				"amount-out-of-range",
 			],
+			[
+				{
+					assetId: ASSET_ID,
+					amount: 1n,
+					handle: "@a@b.c",
+					memo: "é".repeat(1001),
+				},
+				"memo-too-long",
+			],
 		];
 		for (const [input, error] of cases) {
 			assert.deepEqual(await executeOneColorSend(ctx, input, actions), {
@@ -611,6 +630,33 @@ describe("executeOneColorSend", () => {
 			});
 		}
 		assert.equal(calls.length, 0);
+	});
+
+	it("looks the handle up before the send, and a failed lookup never reaches the wallet", async () => {
+		const ok = recordingSend({ txid, delivered: "envelope" });
+		await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "Alice@Example.COM" },
+			ok.actions,
+		);
+		assert.deepEqual(ok.resolved, ["@Alice@Example.COM"]);
+
+		const unreachable = new TypeError("Failed to fetch");
+		const down = recordingSend({ txid }, async () => {
+			throw unreachable;
+		});
+		const thrown = await executeOneColorSend(
+			ctx,
+			{ assetId: ASSET_ID, amount: 1n, handle: "@alice@Example.COM" },
+			down.actions,
+		).then(
+			() => null,
+			(error: unknown) => error,
+		);
+		assert.ok(thrown instanceof OneColorHandleLookupError);
+		assert.equal(thrown.domain, "example.com");
+		assert.equal(thrown.cause, unreachable);
+		assert.equal(down.calls.length, 0);
 	});
 
 	it("keeps the txid of a send whose delivery failed", async () => {
@@ -692,7 +738,8 @@ describe("executeOneColorSend", () => {
 		} finally {
 			globalThis.fetch = realFetch;
 		}
-		assert.equal(fetched.length, 2);
+		// Looked up once here, then again by send1Color.
+		assert.equal(fetched.length, 4);
 		assert.equal(created.length, 1);
 		const args = created[0];
 		assert.deepEqual(args.options, { noSend: true, randomizeOutputs: false });
@@ -718,7 +765,41 @@ describe("executeOneColorSend", () => {
 	});
 });
 
+describe("oneColorMemoError", () => {
+	it("counts UTF-8 bytes, not characters", () => {
+		assert.equal(oneColorMemoError("a".repeat(2000)), null);
+		assert.equal(oneColorMemoError("é".repeat(1000)), null);
+		assert.match(oneColorMemoError("é".repeat(1001)) ?? "", /2,000 bytes/);
+		assert.match(oneColorMemoError("😀".repeat(501)) ?? "", /2,000 bytes/);
+	});
+});
+
 describe("describeOneColorSendFailure", () => {
+	it("reads every failed handle lookup as not sent", () => {
+		const lookup = (cause: unknown) =>
+			describeOneColorSendFailure(
+				new OneColorHandleLookupError("lkup.net", cause),
+			);
+		for (const cause of [
+			new TypeError("Failed to fetch"),
+			new SyntaxError(
+				"Unexpected token '<', \"<!doctype \"... is not valid JSON",
+			),
+		]) {
+			assert.deepEqual(lookup(cause), {
+				message: "Couldn't reach lkup.net to look up that handle.",
+				mayHaveBeenBuilt: false,
+			});
+		}
+		assert.deepEqual(
+			lookup(new Error("resolve deggen@lkup.net failed: 404 handle-not-found")),
+			{
+				message: "No handle @deggen@lkup.net was found.",
+				mayHaveBeenBuilt: false,
+			},
+		);
+	});
+
 	it("says nothing was sent only for the module's own consent refusal", () => {
 		for (const error of [
 			new ColorConsentDeclinedError("createAction"),
@@ -757,10 +838,13 @@ describe("describeOneColorSendFailure", () => {
 				/doesn't match its key/,
 			],
 			[
-				`insufficient spendable balance of ${ASSET_ID}`,
+				`BRC-207: insufficient spendable balance of ${ASSET_ID}`,
 				/Not enough spendable tokens/,
 			],
-			[`the overlay has no admitted deploy for ${ASSET_ID}`, /hasn't admitted/],
+			[
+				`BRC-207: the overlay has no admitted deploy for ${ASSET_ID}`,
+				/hasn't admitted/,
+			],
 			[
 				`No 1Color overlay is configured for token ${ASSET_ID} on this network.`,
 				/No 1Color overlay/,
@@ -787,8 +871,11 @@ describe("describeOneColorSendFailure", () => {
 		]) {
 			const failure = describeOneColorSendFailure(error);
 			assert.equal(failure.mayHaveBeenBuilt, true, error.message);
-			assert.match(failure.message, /Waiting to be claimed/, error.message);
-			assert.doesNotMatch(failure.message, /Nothing was sent/, error.message);
+			assert.equal(
+				failure.message,
+				"The send may have gone out. Check Waiting to be claimed before sending again.",
+				error.message,
+			);
 		}
 	});
 });
@@ -802,6 +889,7 @@ describe("runOneColorSend", () => {
 			logged,
 			options: {
 				actions: {
+					resolveHandle: async () => ({}),
 					send: async (...args: Parameters<OneColorActionSet["send"]>) => {
 						steps.push("send");
 						return send(...args);
@@ -903,13 +991,18 @@ describe("1Color send entry point", () => {
 		assert.doesNotMatch(component, /oneSatContext|\bwallet\b\s*[,}]/);
 		assert.match(component, />Handle</);
 		assert.match(component, /Waiting to be claimed/);
+		assert.match(component, /truncated \?/);
 	});
 
 	it("closes the review after a possible send and keeps Send busy until holdings are re-read", () => {
 		const component = read("components/wallet/one-color-send.tsx");
+		assert.match(component, /if \(outcome\.mayHaveBeenBuilt\) resetForm\(\)/);
+		// One write at a time, even for two taps in the same frame.
+		assert.equal(component.match(/inFlight\.current\) return;/g)?.length, 2);
+		// Cancel re-reads the balance too, through the same refresh as Send.
 		assert.match(
 			component,
-			/if \(outcome\.mayHaveBeenBuilt\) setReview\(null\)/,
+			/refresh: refreshAfterWrite,\n\t\t}\);[\s\S]*refresh: refreshAfterWrite,/,
 		);
 		const runAt = component.indexOf("await runOneColorSend(");
 		assert.ok(runAt > 0);

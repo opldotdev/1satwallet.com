@@ -220,10 +220,23 @@ describe("runOneColorCancel", () => {
 		});
 	});
 
-	it("surfaces an abort failure with the txid logged, and still refreshes", async () => {
+	it("reports storage's refusal of a settled action as settled, not retryable", async () => {
 		const failure = new Error(
-			"WERR_INVALID_PARAMETER: reference must be an inprocess, outgoing action",
+			"The reference parameter must be an inprocess, outgoing action that has not been signed and shared to the network.",
 		);
+		failure.name = "WERR_INVALID_PARAMETER";
+		const { ctx, options, logged } = harness(async () => {
+			throw failure;
+		});
+		assert.deepEqual(await runOneColorCancel(ctx, send, options), {
+			kind: "refused",
+			message: "This send has already settled, so it can't be cancelled.",
+		});
+		assert.deepEqual(logged, [["send-cancel", failure, { txid: txidOf(7) }]]);
+	});
+
+	it("surfaces an abort failure with the txid logged, and still refreshes", async () => {
+		const failure = new Error("WERR_INTERNAL: storage unavailable");
 		const { steps, ctx, options, logged } = harness(async () => {
 			throw failure;
 		});

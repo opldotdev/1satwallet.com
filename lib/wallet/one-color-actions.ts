@@ -23,6 +23,7 @@ import {
 	type Send1ColorResult,
 	send1Color,
 } from "@1sat/actions";
+import { resolveHandle } from "@1sat/client";
 import { ONE_COLOR_MAX_AMOUNT } from "@1sat/templates";
 import { ColorPlan } from "@bsv/color-permission-module";
 import type { WalletAction, WalletInterface } from "@bsv/sdk";
@@ -44,11 +45,14 @@ export const ONE_COLOR_MAX_ICON_BYTES = 100_000;
 export interface OneColorActionSet {
 	deploy: typeof deploy1Color.execute;
 	send: typeof send1Color.execute;
+	/** BRC-169 handle lookup, run before the send so its failures read as not built. */
+	resolveHandle: (handle: string) => Promise<unknown>;
 }
 
 export const canonicalOneColorActions: OneColorActionSet = {
 	deploy: deploy1Color.execute,
 	send: send1Color.execute,
+	resolveHandle: (handle) => resolveHandle(handle),
 };
 
 /** Full detail of a failure, for the log; never shown to the user. */
@@ -339,6 +343,30 @@ export function oneColorSendAmountError(
 	return null;
 }
 
+/** BRC-232 bounds the memo in UTF-8 bytes. */
+export const ONE_COLOR_MEMO_MAX_BYTES = 2000;
+
+/** Why a memo cannot be sent, or null. */
+export function oneColorMemoError(memo: string): string | null {
+	return new TextEncoder().encode(memo.trim()).length > ONE_COLOR_MEMO_MAX_BYTES
+		? "The memo is too long. Keep it under 2,000 bytes."
+		: null;
+}
+
+/**
+ * The handle lookup failed before anything was built. `message` is the
+ * lookup's own; the original error is `cause`.
+ */
+export class OneColorHandleLookupError extends Error {
+	constructor(
+		readonly domain: string,
+		cause: unknown,
+	) {
+		super(errorText(cause), { cause });
+		this.name = "OneColorHandleLookupError";
+	}
+}
+
 export interface OneColorSendInput {
 	assetId: string;
 	/** Atomic units. */
@@ -353,18 +381,35 @@ export type OneColorSendInputError = "handle-invalid" | "amount-out-of-range";
 /**
  * Sends through `colorContext`. Input errors and a result with no
  * transaction come back as `error`, as the SDK action reports its own; a
- * failed delivery keeps its `txid`.
+ * failed delivery keeps its `txid`. The handle is looked up first, so a
+ * lookup that fails (an unreachable host included) throws
+ * `OneColorHandleLookupError` before the wallet is asked; `send1Color` then
+ * resolves it again for itself.
  */
 export async function executeOneColorSend(
 	ctx: OneSatContext,
 	input: OneColorSendInput,
-	actions: Pick<OneColorActionSet, "send"> = canonicalOneColorActions,
+	actions: Pick<
+		OneColorActionSet,
+		"send" | "resolveHandle"
+	> = canonicalOneColorActions,
 ): Promise<Send1ColorResult> {
 	const handle = normalizeHandle(input.handle);
 	if (!handle) return { error: "handle-invalid" };
 	if (input.amount <= 0n) return { error: "amount-must-be-positive" };
 	if (input.amount > ONE_COLOR_MAX_AMOUNT) {
 		return { error: "amount-out-of-range" };
+	}
+	if (input.memo !== undefined && oneColorMemoError(input.memo)) {
+		return { error: "memo-too-long" };
+	}
+	try {
+		await actions.resolveHandle(handle);
+	} catch (error) {
+		throw new OneColorHandleLookupError(
+			handle.slice(handle.lastIndexOf("@") + 1).toLowerCase(),
+			error,
+		);
 	}
 	const request: Send1ColorInput = {
 		assetId: input.assetId,
@@ -378,8 +423,6 @@ export async function executeOneColorSend(
 	if (!result.txid) return { error: "no-transaction" };
 	return result;
 }
-
-export const DELIVERY_FAILED_PREFIX = "delivery-failed:";
 
 export interface OneColorSendFailure {
 	/** Short and specific; the full error goes to the log. */
@@ -423,7 +466,10 @@ export function describeOneColorSendFailure(
 	if (message.startsWith("invalid-asset-id")) {
 		return notBuilt("This token's id isn't valid, so it can't be sent.");
 	}
-	if (message.startsWith("BRC-232: memo exceeds")) {
+	if (
+		message === "memo-too-long" ||
+		message.startsWith("BRC-232: memo exceeds")
+	) {
 		return notBuilt("The memo is too long. Keep it under 2,000 bytes.");
 	}
 	// `resolveHandle` (@1sat/client): the handle is checked before any key is derived.
@@ -450,13 +496,17 @@ export function describeOneColorSendFailure(
 			"That handle's certificate doesn't match its key. Don't send to it.",
 		);
 	}
+	// Any other lookup failure (no answer, not JSON) happened before the build.
+	if (error instanceof OneColorHandleLookupError) {
+		return notBuilt(`Couldn't reach ${error.domain} to look up that handle.`);
+	}
 	// The color module checks these while selecting inputs, before signing.
-	if (message.startsWith("insufficient spendable balance")) {
+	if (/^(BRC-207: )?insufficient spendable balance/.test(message)) {
 		return notBuilt(
 			"Not enough spendable tokens. Some may be held by sends waiting to be claimed.",
 		);
 	}
-	if (message.startsWith("the overlay has no admitted deploy")) {
+	if (/^(BRC-207: )?the overlay has no admitted deploy/.test(message)) {
 		return notBuilt(
 			"The 1Color overlay hasn't admitted this token yet. Try again later.",
 		);
@@ -471,7 +521,7 @@ export function describeOneColorSendFailure(
 	}
 	return {
 		message:
-			"The send may have been built. Check Waiting to be claimed before sending again.",
+			"The send may have gone out. Check Waiting to be claimed before sending again.",
 		mayHaveBeenBuilt: true,
 	};
 }
@@ -499,7 +549,7 @@ export async function runOneColorSend(
 	options: {
 		refresh: () => Promise<void>;
 		log: OneColorLog;
-		actions?: Pick<OneColorActionSet, "send">;
+		actions?: Pick<OneColorActionSet, "send" | "resolveHandle">;
 	},
 ): Promise<OneColorSendOutcome> {
 	const handle = normalizeHandle(input.handle) ?? input.handle.trim();
@@ -647,10 +697,17 @@ export async function runOneColorCancel(
 				};
 	} catch (error) {
 		options.log("send-cancel", error, { txid: send.txid });
-		outcome = {
-			kind: "failed",
-			message: "The send couldn't be cancelled. Try again.",
-		};
+		// Storage's WERR_INVALID_PARAMETER for an action that is no longer an
+		// unsent outgoing one: claimed, reclaimed or otherwise settled.
+		outcome = /an inprocess, outgoing action/.test(errorText(error))
+			? {
+					kind: "refused",
+					message: "This send has already settled, so it can't be cancelled.",
+				}
+			: {
+					kind: "failed",
+					message: "The send couldn't be cancelled. Try again.",
+				};
 	}
 	try {
 		await options.refresh();
