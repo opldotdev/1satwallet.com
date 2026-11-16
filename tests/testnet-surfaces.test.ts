@@ -193,7 +193,7 @@ describe("testnet surfaces", () => {
 		assert.doesNotMatch(grid, /Switch the network/);
 		assert.doesNotMatch(grid, /\/wallet\/settings/);
 		assert.match(grid, /this wallet is a mainnet\s+account\./);
-		const loaderAt = grid.indexOf("if (!mounted) return <Loading");
+		const loaderAt = grid.indexOf("if (!mounted) return <OneColorLoading");
 		assert.ok(loaderAt > 0);
 		assert.ok(loaderAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
 	});

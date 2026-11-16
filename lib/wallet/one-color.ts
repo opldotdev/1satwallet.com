@@ -1,6 +1,7 @@
 /**
- * 1Color (BRC-162) tokens the wallet holds. Port of Yours (1color branch)
- * `src/services/oneColor.ts`, holdings only; names kept.
+ * 1Color (BRC-162) tokens the wallet holds and their history. Port of Yours
+ * (1color branch) `src/services/oneColor.ts` (holdings, per-action amounts)
+ * and `fetchOneColorHistory` from `src/utils/coinHistory.ts`; names kept.
  *
  * Holdings come from one read of the toolbox's basket-prefix listing: every
  * output in the color module's per-asset baskets, with its locking script and
@@ -26,9 +27,11 @@ import {
 } from "@1sat/templates";
 import {
 	type ActionStatus,
+	type ListActionsArgs,
 	LockingScript,
 	Transaction,
 	Utils,
+	type WalletAction,
 	type WalletInterface,
 	type WalletOutput,
 } from "@bsv/sdk";
@@ -145,13 +148,42 @@ export const aggregateOneColorHoldings = (
 	return byAsset;
 };
 
-const STATUS_SCAN_PAGE = 100;
-const STATUS_SCAN_MAX = 2000;
+/** Actions read per page while scanning the history newest first. */
+const SCAN_PAGE = 100;
+/** A scan stops after this many actions; older history of a busy wallet is not read. */
+const SCAN_MAX = 2000;
+
+/**
+ * The wallet's actions newest first, at most `SCAN_MAX` of them.
+ * `listActions` answers in storage (insertion) order, oldest first, so the
+ * total is probed and pages are read backwards from the end. Stop early by
+ * leaving the loop.
+ */
+async function* actionsNewestFirst(
+	wallet: Pick<WalletInterface, "listActions">,
+	include: Omit<ListActionsArgs, "labels" | "limit" | "offset">,
+): AsyncGenerator<WalletAction> {
+	const probe = await wallet.listActions({ labels: [], limit: 1, offset: 0 });
+	let end = probe.totalActions;
+	let scanned = 0;
+	while (end > 0 && scanned < SCAN_MAX) {
+		const start = Math.max(0, end - SCAN_PAGE);
+		const { actions } = await wallet.listActions({
+			labels: [],
+			...include,
+			limit: end - start,
+			offset: start,
+		});
+		for (let i = actions.length - 1; i >= 0; i--) yield actions[i];
+		scanned += end - start;
+		end = start;
+	}
+}
 
 /**
  * The status of the action spending each outpoint, from the action history
  * newest first (reserved inputs belong to recent actions). Stops as soon as
- * every outpoint is found, or after `STATUS_SCAN_MAX` actions.
+ * every outpoint is found, or after `SCAN_MAX` actions.
  */
 export const findSpendingStatuses = async (
 	wallet: Pick<WalletInterface, "listActions">,
@@ -160,25 +192,12 @@ export const findSpendingStatuses = async (
 	const wanted = new Set(outpoints);
 	const found = new Map<string, ActionStatus>();
 	if (wanted.size === 0) return found;
-	const probe = await wallet.listActions({ labels: [], limit: 1, offset: 0 });
-	let end = probe.totalActions;
-	let scanned = 0;
-	while (end > 0 && found.size < wanted.size && scanned < STATUS_SCAN_MAX) {
-		const start = Math.max(0, end - STATUS_SCAN_PAGE);
-		const { actions } = await wallet.listActions({
-			labels: [],
-			includeInputs: true,
-			limit: end - start,
-			offset: start,
-		});
-		for (const a of actions) {
-			for (const i of a.inputs ?? []) {
-				if (wanted.has(i.sourceOutpoint) && !found.has(i.sourceOutpoint))
-					found.set(i.sourceOutpoint, a.status);
-			}
+	for await (const a of actionsNewestFirst(wallet, { includeInputs: true })) {
+		for (const i of a.inputs ?? []) {
+			if (wanted.has(i.sourceOutpoint) && !found.has(i.sourceOutpoint))
+				found.set(i.sourceOutpoint, a.status);
 		}
-		scanned += end - start;
-		end = start;
+		if (found.size === wanted.size) break;
 	}
 	return found;
 };
@@ -308,4 +327,99 @@ export const getOneColorBalances = async (
 			};
 		}),
 	);
+};
+
+export type OneColorDirection = "sent" | "received" | "transfer";
+
+export type OneColorActionAmount = {
+	direction: OneColorDirection;
+	/** Value units that moved; 0 for a transfer. */
+	amount: bigint;
+};
+
+/** OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG, and nothing else. */
+const isP2pkh = (lock: LockingScript): boolean => {
+	const c = lock.chunks;
+	return (
+		c.length === 5 &&
+		c[0].op === 0x76 &&
+		c[1].op === 0xa9 &&
+		c[2].data?.length === 20 &&
+		c[3].op === 0x88 &&
+		c[4].op === 0xac
+	);
+};
+
+/**
+ * What one wallet action did with an asset, from its decoded inputs and
+ * outputs (`listActions` with locking scripts). Value outputs filed in a
+ * `p color` basket are this wallet's. Inputs are this wallet's when their
+ * lock is P2PKH: the module only ever holds tokens behind P2PKH, while a
+ * covenant such as an AMM pool is somebody else's output even though this
+ * wallet may have signed the transaction. The amount is the net of what came
+ * to us and what left us; outputs to others are not counted. A deploy at
+ * this action's own output 0 counts as the asset arriving, and spending that
+ * deploy output counts as the asset leaving. `null` when the action touches
+ * no output of the asset.
+ */
+export const oneColorActionAmount = (
+	action: Pick<WalletAction, "txid" | "inputs" | "outputs">,
+	assetId: string,
+): OneColorActionAmount | null => {
+	let toUs = 0n;
+	let fromUs = 0n;
+	let involved = false;
+	for (const o of action.outputs ?? []) {
+		const t = decodeOneColor(o.lockingScript);
+		if (!t || assetIdOf(t, `${action.txid}.${o.outputIndex}`) !== assetId)
+			continue;
+		involved = true;
+		if (t.role === "authority") continue;
+		if (o.basket?.startsWith(COLOR_BASKET_PREFIX)) toUs += t.amount;
+	}
+	for (const i of action.inputs ?? []) {
+		const t = decodeOneColor(i.sourceLockingScript);
+		if (!t || assetIdOf(t, i.sourceOutpoint) !== assetId) continue;
+		involved = true;
+		if (t.role !== "authority" && isP2pkh(t.lock)) fromUs += t.amount;
+	}
+	if (!involved) return null;
+	const net = toUs - fromUs;
+	if (net > 0n) return { direction: "received", amount: net };
+	if (net < 0n) return { direction: "sent", amount: -net };
+	return { direction: "transfer", amount: 0n };
+};
+
+export type OneColorHistoryEntry = OneColorActionAmount & {
+	action: WalletAction;
+};
+
+export const ONE_COLOR_HISTORY_PAGE = 25;
+
+/**
+ * One page of an asset's history, newest first: `limit` matching actions
+ * after skipping `offset` of them. 1Color actions carry their BRC-207 plan as
+ * hex chunks in their labels, with no per-asset label to query by, so the
+ * wallet's actions are read newest first with their locking scripts and each
+ * is decoded for the asset (Yours `fetchOneColorHistory`). Read it through
+ * the permissions manager, which decrypts the descriptions it wrote.
+ */
+export const fetchOneColorHistory = async (
+	wallet: Pick<WalletInterface, "listActions">,
+	assetId: string,
+	{ offset = 0, limit = ONE_COLOR_HISTORY_PAGE } = {},
+): Promise<OneColorHistoryEntry[]> => {
+	const matches: OneColorHistoryEntry[] = [];
+	if (limit <= 0) return matches;
+	for await (const action of actionsNewestFirst(wallet, {
+		includeOutputs: true,
+		includeOutputLockingScripts: true,
+		includeInputs: true,
+		includeInputSourceLockingScripts: true,
+	})) {
+		const moved = oneColorActionAmount(action, assetId);
+		if (moved) matches.push({ ...moved, action });
+		if (matches.length >= offset + limit) break;
+	}
+	return matches.slice(offset, offset + limit);
 };
