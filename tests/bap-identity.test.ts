@@ -3,11 +3,16 @@ import test from "node:test";
 import {
 	bapDisplayName,
 	buildBapAttestationReview,
+	EMPTY_BAP_PROFILE,
+	hasProfileErrors,
 	identityActionMessage,
+	imageReferenceOrigin,
 	isSafePublicImageUrl,
 	mergeBapProfile,
 	normalizeBapDiscovery,
+	ordinalImageReference,
 	profileDraftFromRecord,
+	storedImageReference,
 	validateBapProfile,
 } from "../lib/wallet/bap-identity";
 
@@ -29,6 +34,7 @@ test("validates and trims the fixed public BAP profile schema", () => {
 		alternateName: "alice",
 		description: "Public builder",
 		image: "https://example.com/alice.png",
+		banner: "",
 		email: "alice@example.com",
 		paymail: "alice@1sat.app",
 	});
@@ -50,11 +56,16 @@ test("rejects unsafe profile URLs and malformed contact fields", () => {
 		alternateName: "",
 		description: "",
 		image: "javascript:alert(1)",
+		banner: "http://example.com/banner.png",
 		email: "not-an-email",
 		paymail: "not-paymail",
 	});
 	assert.equal(
 		result.errors.image,
+		"Use an https://, ord://, or 1sat:// image URL.",
+	);
+	assert.equal(
+		result.errors.banner,
 		"Use an https://, ord://, or 1sat:// image URL.",
 	);
 	assert.equal(result.errors.email, "Enter a valid email address.");
@@ -73,6 +84,7 @@ test("only reads known string fields from stored profile data", () => {
 			alternateName: "",
 			description: "",
 			image: "",
+			banner: "",
 			email: "",
 			paymail: "",
 		},
@@ -227,4 +239,199 @@ test("display name prefers alternateName, then name", () => {
 	assert.equal(bapDisplayName({ name: "Alice", alternateName: "ali" }), "ali");
 	assert.equal(bapDisplayName({ name: "Alice", alternateName: " " }), "Alice");
 	assert.equal(bapDisplayName({}), undefined);
+});
+
+const TXID = "0f".repeat(32);
+
+test("image references round-trip with the 1sat:// form the iOS app writes", () => {
+	// AvatarReference.ordinal("txid_vout") on iOS and the Yours AvatarPicker
+	// both write `1sat://txid.vout` for an ordinal origin.
+	const ios = `1sat://${TXID}.3`;
+	assert.equal(ordinalImageReference(`${TXID}_3`), ios);
+	assert.equal(imageReferenceOrigin(ios), `${TXID}_3`);
+	assert.equal(ordinalImageReference(imageReferenceOrigin(ios) ?? ""), ios);
+	// Older and pasted forms are read, then stored the way iOS stores them.
+	for (const pasted of [
+		ios,
+		`ord://${TXID}_3`,
+		`${TXID}_3`,
+		`${TXID}.3`,
+		` 1sat://${TXID.toUpperCase()}.3 `,
+	]) {
+		assert.equal(storedImageReference(pasted), ios, pasted);
+	}
+	assert.equal(storedImageReference(`1sat://${TXID}`), `1sat://${TXID}.0`);
+	assert.equal(
+		storedImageReference("https://example.com/b.png"),
+		"https://example.com/b.png",
+	);
+	for (const rejected of [
+		"",
+		"http://example.com/b.png",
+		"javascript:alert(1)",
+		`1sat://${TXID}.3/../settings`,
+		"1sat://wallet/settings",
+	]) {
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+	}
+});
+
+test("banner is validated like the avatar and stored as 1sat://txid.vout", () => {
+	const draft = profileDraftFromRecord({
+		image: `ord://${TXID}_0`,
+		banner: `${TXID}_1`,
+	});
+	const result = validateBapProfile(draft);
+	assert.deepEqual(result.errors, {});
+	assert.equal(result.profile.image, `1sat://${TXID}.0`);
+	assert.equal(result.profile.banner, `1sat://${TXID}.1`);
+});
+
+test("banner reads the published banner, falling back to a legacy coverImage", () => {
+	assert.equal(
+		profileDraftFromRecord({ banner: "https://b.png", coverImage: "x" }).banner,
+		"https://b.png",
+	);
+	assert.equal(
+		profileDraftFromRecord({ coverImage: "https://c.png" }).banner,
+		"https://c.png",
+	);
+	assert.equal(profileDraftFromRecord({ banner: { url: "x" } }).banner, "");
+});
+
+test("profile save writes an edited banner and keeps everything else", () => {
+	const published = {
+		"@context": "https://schema.org",
+		"@type": "Person",
+		alternateName: "alice",
+		image: `1sat://${TXID}.0`,
+		logo: "https://example.com/logo.png",
+		url: "https://alice.example",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, banner: `1sat://${TXID}.2` };
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		banner: `1sat://${TXID}.2`,
+	});
+});
+
+test("profile save keeps an unedited banner and removes a cleared one", () => {
+	const published = {
+		"@type": "Person",
+		name: "Alice",
+		banner: `1sat://${TXID}.1`,
+	};
+	const baseline = profileDraftFromRecord(published);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, name: "Al" }),
+		{ "@type": "Person", name: "Al", banner: `1sat://${TXID}.1` },
+	);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, banner: " " }),
+		{ "@type": "Person", name: "Alice" },
+	);
+});
+
+test("an edited banner replaces a legacy coverImage; an unedited one keeps it", () => {
+	const published = { "@type": "Person", coverImage: "https://c.png" };
+	const baseline = profileDraftFromRecord(published);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, { ...baseline, name: "Alice" }),
+		{ "@type": "Person", coverImage: "https://c.png", name: "Alice" },
+	);
+	assert.deepEqual(
+		mergeBapProfile(published, baseline, {
+			...baseline,
+			banner: `1sat://${TXID}.4`,
+		}),
+		{ "@type": "Person", banner: `1sat://${TXID}.4` },
+	);
+});
+
+test("an unedited published image or banner the editor would not write does not block saving", () => {
+	const published = {
+		"@type": "Person",
+		name: "Alice",
+		image: "ipfs://bafy/avatar.png",
+		coverImage: "http://example.com/cover.png",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, name: "Alicia" };
+	const result = validateBapProfile(draft, baseline);
+	assert.deepEqual(result.errors, {});
+	assert.equal(hasProfileErrors(result.errors), false);
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		name: "Alicia",
+	});
+	// Editing the field makes it the editor's to check again.
+	const edited = validateBapProfile(
+		{ ...draft, banner: "http://example.com/other.png" },
+		baseline,
+	);
+	assert.equal(
+		edited.errors.banner,
+		"Use an https://, ord://, or 1sat:// image URL.",
+	);
+	assert.equal(edited.errors.image, undefined);
+});
+
+test("https image URLs carrying a username or password are not published", () => {
+	for (const rejected of [
+		"https://user@example.com/a.png",
+		"https://user:secret@example.com/a.png",
+		"https://:secret@example.com/a.png",
+	]) {
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+		assert.equal(
+			validateBapProfile({ ...EMPTY_BAP_PROFILE, image: rejected }).errors
+				.image,
+			"Use an https://, ord://, or 1sat:// image URL.",
+		);
+	}
+	const withQuery = "https://example.com/a.png?v=2#crop";
+	assert.equal(storedImageReference(withQuery), withQuery);
+});
+
+test("output indexes are parsed as UInt32 and written in canonical decimal", () => {
+	assert.equal(storedImageReference(`1sat://${TXID}.007`), `1sat://${TXID}.7`);
+	assert.equal(imageReferenceOrigin(`ord://${TXID}_000`), `${TXID}_0`);
+	assert.equal(
+		storedImageReference(`${TXID}.4294967295`),
+		`1sat://${TXID}.4294967295`,
+	);
+	for (const rejected of [
+		`1sat://${TXID}.4294967296`,
+		`1sat://${TXID}.12345678901`,
+		`1sat://${TXID}.${"9".repeat(400)}`,
+	]) {
+		assert.equal(imageReferenceOrigin(rejected), undefined, rejected);
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+		assert.equal(isSafePublicImageUrl(rejected), false, rejected);
+	}
+});
+
+test("an unedited published field that fails validation does not block saving others", () => {
+	const longName = "N".repeat(150);
+	const published = {
+		"@type": "Person",
+		name: longName,
+		email: "not-an-email",
+		paymail: "not paymail",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, description: "Builder" };
+	const result = validateBapProfile(draft, baseline);
+	assert.deepEqual(result.errors, {});
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		description: "Builder",
+	});
+	// Editing the name makes it the editor's to check again.
+	assert.equal(
+		validateBapProfile({ ...draft, name: `${longName}!` }, baseline).errors
+			.name,
+		"Must be 100 characters or fewer.",
+	);
 });
