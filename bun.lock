@@ -16,8 +16,8 @@
         "@1sat/wallet-browser": "0.1.2",
         "@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.3",
         "@bsv/message-box-client": "2.7.0",
-        "@bsv/sdk": "^4.1.0",
-        "@bsv/wallet-toolbox-client": "2.16.0",
+        "@bsv/sdk": "^4.1.1",
+        "@bsv/wallet-toolbox-client": "2.17.0",
         "@convex-dev/presence": "0.4.0",
         "@radix-ui/react-alert-dialog": "^1.2.1",
         "@radix-ui/react-context-menu": "^2.4.1",
@@ -166,11 +166,11 @@
 
     "@bsv/message-box-client": ["@bsv/message-box-client@2.7.0", "", { "dependencies": { "@bsv/authsocket-client": "^2.1.10" }, "peerDependencies": { "@bsv/sdk": "^2.8.6 || ^3.0.0 || ^4.0.1" } }, "sha512-G8LZ4cUK9KfKkvnLiGUnpyDYse8uX+a7Cpjzcf0iJEH17uY2Qs768bJqf7GeynLuq0CdF6329hpkuB6z6PurfA=="],
 
-    "@bsv/sdk": ["@bsv/sdk@4.1.0", "", {}, "sha512-2kSlYTZ+bA6uFdQKDPR+EVGs/IRjYWhBuM0xtjzt30NyAe8NBbpOGZq6PXh3GidMrewSY4z1Oacema/wlJMSMA=="],
+    "@bsv/sdk": ["@bsv/sdk@4.1.1", "", {}, "sha512-s/ComOkwz/Z8pyC2JOJUqazSwNNNJIxgb+UuULfsuTcJKzw3DUoXYA5HLzN7Bj+nYILUGAqc1CSwSMF7g22ZSw=="],
 
     "@bsv/templates": ["@bsv/templates@2.2.0", "", { "peerDependencies": { "@bsv/sdk": "^2.1.6 || ^3.0.0 || ^4.0.1" } }, "sha512-QJKTGdDpew8sdKkvR6DniUwKreeeu44nu2sR7u+yOP2oFExRjl6zY+hVO6Sy2IIVgjclnUabGNocE/hXyOjFuQ=="],
 
-    "@bsv/wallet-toolbox-client": ["@bsv/wallet-toolbox-client@2.16.0", "", { "dependencies": { "@noble/hashes": "2.4.0", "hash-wasm": "^4.12.0", "idb": "^8.0.3" }, "peerDependencies": { "@bsv/sdk": "^2.8.0 || ^3.0.0 || ^4.0.1" } }, "sha512-COw1eO8oSiagJmcUknxnFVKYiroEBC0o3OxFhc94vUdEjbOz2+jzGm+JY4BqqZPvX0JUeNX6abt8RByqbHLzJg=="],
+    "@bsv/wallet-toolbox-client": ["@bsv/wallet-toolbox-client@2.17.0", "", { "dependencies": { "@noble/hashes": "2.4.0", "hash-wasm": "^4.12.0", "idb": "^8.0.3" }, "peerDependencies": { "@bsv/sdk": "^2.8.0 || ^3.0.0 || ^4.0.1" } }, "sha512-WEvvToiBLUYRaRKnAy47DymoC2IjMQanxLUgN5QBpT4wF1s454l4caEn8wsfLTSRN/Zu9aH5p4L1wNcrRhZQqw=="],
 
     "@convex-dev/batch-worker": ["@convex-dev/batch-worker@0.2.2", "", { "peerDependencies": { "convex": "^1.36.1", "react": "^18.3.1 || ^19.0.0" } }, "sha512-3knigElzTVhWw1sN28EYkGBTdrJZ03vMj2PJPuFq3V0Tg41i7tcv/EWDBFQWcUaKzBWWVw693hcJtxCF3CRtEw=="],
 

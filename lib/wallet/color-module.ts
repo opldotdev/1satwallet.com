@@ -67,6 +67,12 @@ export class ColorUnavailableToAppsError extends Error {
  * gate covers every routed method, so no app reaches 1Color until app consent
  * ships. Nobody is asked, so the refusal is `ColorUnavailableToAppsError`,
  * not the module's "user declined".
+ *
+ * Toolbox 2.17 prices an app's spend from the args after this module has
+ * changed them, so token inputs the module funds from the wallet are
+ * subtracted from the app's spend. Once apps can reach 1Color, the spending
+ * prompt alone under-reports token moves; the module's `color_send` consent
+ * at signing must cover every app path that funds token inputs.
  */
 export function adminOnlyColorModule(
 	module: ColorPermissionModule,
