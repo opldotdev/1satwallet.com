@@ -6,6 +6,7 @@
 
 import { PrivateKey, Utils } from "@bsv/sdk";
 import { useCallback, useEffect, useState } from "react";
+import type { Chain } from "@/lib/chain-endpoints";
 import { ENCRYPTION_PREFIX, WALLET_STORAGE_KEY } from "@/lib/constants";
 import {
 	decryptData,
@@ -13,6 +14,7 @@ import {
 } from "@/lib/encryption";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
+import { refreshWalletChain } from "@/lib/wallet-chain";
 
 export interface EncryptedBackupJson {
 	format?: "1sat-web-wallet";
@@ -20,7 +22,17 @@ export interface EncryptedBackupJson {
 	cipher?: "AES-256-GCM";
 	encryptedBackup: string;
 	pubKey: string; // The public key used as salt
+	/**
+	 * Present only for a testnet account; absent means mainnet (the iOS
+	 * encoding). Fixed at create or import. The same field is inside the
+	 * encrypted payload, so the network travels with every backup.
+	 */
+	network?: "test";
 }
+
+/** Envelope or payload network field: only testnet is ever written. */
+const networkField = (network: Chain): { network?: "test" } =>
+	network === "test" ? { network: "test" } : {};
 
 type WalletStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -60,6 +72,9 @@ export function parseEncryptedBackupJson(value: unknown): EncryptedBackupJson {
 	) {
 		throw new Error("Unsupported 1Sat wallet backup version");
 	}
+	if (backup.network !== undefined && backup.network !== "test") {
+		throw new Error("Invalid 1Sat wallet backup");
+	}
 	return backup as unknown as EncryptedBackupJson;
 }
 
@@ -81,7 +96,7 @@ export function commitWalletBackup(
 	}
 }
 
-function walletPayload(keys: Keys) {
+function walletPayload(keys: Keys, network: Chain) {
 	return {
 		mnemonic: keys.mnemonic,
 		payPk: keys.payPk,
@@ -90,10 +105,12 @@ function walletPayload(keys: Keys) {
 		ordDerivationPath: keys.ordAddressPath,
 		identityPk: keys.identityPk,
 		identityDerivationPath: keys.identityAddressPath,
+		...networkField(network),
 	};
 }
 
 function notifyWalletStorage(value: string): void {
+	if (typeof window === "undefined") return;
 	try {
 		window.dispatchEvent(
 			new StorageEvent("storage", {
@@ -101,7 +118,8 @@ function notifyWalletStorage(value: string): void {
 				newValue: value,
 			}),
 		);
-	} catch {
+	} catch (error) {
+		console.error("[wallet-storage] storage notification failed", error);
 		reportDiagnostic({
 			category: "action",
 			code: "action.failed",
@@ -109,6 +127,9 @@ function notifyWalletStorage(value: string): void {
 			recoverable: true,
 		});
 	}
+	// Covers browsers that refuse a constructed StorageEvent; a no-op when
+	// the event already moved the chain.
+	refreshWalletChain();
 }
 
 async function encryptAuthenticated(
@@ -160,6 +181,7 @@ async function decryptAuthenticated(
 export async function createEncryptedWalletBackup(
 	walletData: Keys,
 	passphrase: string,
+	network: Chain = "main",
 ): Promise<EncryptedBackupJson> {
 	if (!walletData.payPk) throw new Error("No payment key found");
 	const pubKey = PrivateKey.fromWif(walletData.payPk).toPublicKey().toString();
@@ -170,7 +192,9 @@ export async function createEncryptedWalletBackup(
 	if (!encryptionKey) throw new Error("Could not derive encryption key");
 
 	const combined = await encryptAuthenticated(
-		new TextEncoder().encode(JSON.stringify(walletPayload(walletData))),
+		new TextEncoder().encode(
+			JSON.stringify(walletPayload(walletData, network)),
+		),
 		encryptionKey,
 	);
 
@@ -180,13 +204,20 @@ export async function createEncryptedWalletBackup(
 		cipher: "AES-256-GCM",
 		encryptedBackup: ENCRYPTION_PREFIX + Utils.toBase64(Array.from(combined)),
 		pubKey,
+		...networkField(network),
 	};
+}
+
+export interface DecryptedWallet {
+	keys: Keys;
+	/** Testnet if either the envelope or the encrypted payload says so. */
+	network: Chain;
 }
 
 export async function decryptEncryptedWalletBackup(
 	backup: EncryptedBackupJson,
 	passphrase: string,
-): Promise<Keys> {
+): Promise<DecryptedWallet> {
 	const parsed = parseEncryptedBackupJson(backup);
 	const encryptionKey = await generateEncryptionKeyFromPassphrase(
 		passphrase,
@@ -214,7 +245,10 @@ export async function decryptEncryptedWalletBackup(
 		}
 		PrivateKey.fromWif(json.identityPk);
 	}
-	return {
+	if (json.network !== undefined && json.network !== "test") {
+		throw new Error("Backup has an invalid network");
+	}
+	const keys: Keys = {
 		payPk: json.payPk,
 		ordPk: json.ordPk,
 		mnemonic: typeof json.mnemonic === "string" ? json.mnemonic : undefined,
@@ -233,18 +267,36 @@ export async function decryptEncryptedWalletBackup(
 				? json.identityDerivationPath
 				: undefined,
 	};
+	return {
+		keys,
+		network:
+			parsed.network === "test" || json.network === "test" ? "test" : "main",
+	};
+}
+
+/** The network of the stored wallet envelope; mainnet when it has none. */
+function storedNetwork(storage: Pick<Storage, "getItem">): Chain {
+	const stored = storage.getItem(WALLET_STORAGE_KEY);
+	if (!stored) throw new Error("No stored wallet to re-encrypt");
+	return parseEncryptedBackupJson(JSON.parse(stored)).network === "test"
+		? "test"
+		: "main";
 }
 
 /**
  * Re-encrypt wallet data using the cached encryption key.
  * Used during migration to update stored keys without requiring the passphrase again.
  */
-export const reencryptWallet = async (keys: Keys): Promise<boolean> => {
-	const storage = getLocalStorage();
+export const reencryptWallet = async (
+	keys: Keys,
+	storage: WalletStorage | undefined = getLocalStorage(),
+): Promise<boolean> => {
 	if (!storage || !cachedEncryptionKey || !cachedPubKeySalt) return false;
 
 	try {
-		const dataStr = JSON.stringify(walletPayload(keys));
+		// The network is fixed at create/import; re-encryption never changes it.
+		const network = storedNetwork(storage);
+		const dataStr = JSON.stringify(walletPayload(keys, network));
 		const dataBytes = new TextEncoder().encode(dataStr);
 
 		const combined = await encryptAuthenticated(dataBytes, cachedEncryptionKey);
@@ -258,6 +310,7 @@ export const reencryptWallet = async (keys: Keys): Promise<boolean> => {
 			cipher: "AES-256-GCM",
 			encryptedBackup,
 			pubKey: cachedPubKeySalt,
+			...networkField(network),
 		};
 
 		const serialized = JSON.stringify(backupJson);
@@ -279,6 +332,7 @@ export const reencryptWallet = async (keys: Keys): Promise<boolean> => {
 export const saveEncryptedWallet = async (
 	walletData: Keys,
 	passphrase: string,
+	network: Chain,
 ): Promise<boolean> => {
 	const storage = getLocalStorage();
 	if (!storage) return false;
@@ -287,6 +341,7 @@ export const saveEncryptedWallet = async (
 		const backupJson = await createEncryptedWalletBackup(
 			walletData,
 			passphrase,
+			network,
 		);
 		const serialized = JSON.stringify(backupJson);
 		commitWalletBackup(storage, serialized);
@@ -313,8 +368,8 @@ export const saveEncryptedWallet = async (
 
 export const loadEncryptedWallet = async (
 	passphrase: string,
+	storage: WalletStorage | undefined = getLocalStorage(),
 ): Promise<Keys | null> => {
-	const storage = getLocalStorage();
 	if (!storage) return null;
 
 	try {
@@ -322,7 +377,22 @@ export const loadEncryptedWallet = async (
 		if (!storedItem) return null;
 
 		const encryptedKeys = parseEncryptedBackupJson(JSON.parse(storedItem));
-		const keys = await decryptEncryptedWalletBackup(encryptedKeys, passphrase);
+		const { keys, network } = await decryptEncryptedWalletBackup(
+			encryptedKeys,
+			passphrase,
+		);
+
+		// A testnet account whose envelope lost its field (the payload is
+		// authenticated, the envelope is not): restore it before the keys are
+		// handed out, so the wallet never initializes on mainnet. No synthetic
+		// storage event here: it would lock the wallet being unlocked.
+		if (network === "test" && encryptedKeys.network !== "test") {
+			commitWalletBackup(
+				storage,
+				JSON.stringify({ ...encryptedKeys, network: "test" }),
+			);
+			refreshWalletChain();
+		}
 
 		cachedEncryptionKey =
 			(await generateEncryptionKeyFromPassphrase(

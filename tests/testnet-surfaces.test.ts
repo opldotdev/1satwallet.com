@@ -103,13 +103,12 @@ describe("testnet surfaces", () => {
 			assert.ok(existsSync(join(process.cwd(), layout)), layout);
 			assert.match(read(layout), /<MainnetOnly>\{children\}<\/MainnetOnly>/);
 		}
-		assert.match(
-			read("components/not-on-testnet.tsx"),
-			/Not available on testnet/,
-		);
+		const notice = read("components/not-on-testnet.tsx");
+		assert.match(notice, /Not available on testnet/);
+		assert.doesNotMatch(notice, /\/wallet\/settings/);
 	});
 
-	it("runs the wallet on the saved chain and re-initializes on a switch", () => {
+	it("runs the wallet on the account's chain and re-initializes when it changes", () => {
 		const layout = read("app/layout.tsx");
 		assert.match(layout, /<WalletChainProvider>/);
 		assert.doesNotMatch(layout, /<WalletToolboxProvider/);
@@ -119,6 +118,36 @@ describe("testnet surfaces", () => {
 			/<WalletToolboxProvider key=\{chain\} chain=\{chain\}>/,
 		);
 		assert.match(provider, /queryClient\.clear\(\)/);
+		assert.match(provider, /takeLegacyTestnetNotice\(\)/);
+		assert.match(provider, /This wallet is on Mainnet/);
+	});
+
+	it("has no manual network switch in settings", () => {
+		const settings = read("components/wallet/wallet-settings-form.tsx");
+		assert.doesNotMatch(settings, /writeWalletChain/);
+		assert.doesNotMatch(settings, /SelectItem value="test"/);
+		assert.doesNotMatch(settings, /Switch network/);
+		assert.doesNotMatch(settings, /AlertDialog/);
+		assert.match(settings, /It cannot be changed\./);
+		assert.match(settings, /Reported by the connected wallet\./);
+		assert.match(settings, /<TestnetBadge \/>/);
+	});
+
+	it("chooses the network once, at create and import", () => {
+		const create = read("app/(main)/wallet/create/encrypt/page.tsx");
+		assert.match(
+			create,
+			/<NetworkChoice value=\{network\} onChange=\{setNetwork\} \/>/,
+		);
+		assert.match(create, /createWallet\(mnemonic, passphrase, network\)/);
+		const importPage = read("app/(main)/wallet/import/passphrase/page.tsx");
+		assert.match(importPage, /<NetworkChoice/);
+		assert.match(importPage, /importWallet\(walletKeys, passphrase, network\)/);
+		assert.match(importPage, /finalNetwork,\s*\)/);
+		assert.match(importPage, /Set by this backup\./);
+		const choice = read("components/wallet/network-choice.tsx");
+		assert.match(choice, /Network\. This cannot be changed later\./);
+		assert.ok(choice.indexOf("Mainnet") < choice.indexOf("Testnet"));
 	});
 
 	it("syncs messages from the chain's messagebox", () => {
@@ -130,8 +159,12 @@ describe("testnet surfaces", () => {
 	it("shows a testnet badge and faucet link in the wallet header", () => {
 		const header = read("components/wallet/wallet-header.tsx");
 		assert.match(header, /chain === "test"/);
-		assert.match(header, /Testnet/);
+		assert.match(header, /<TestnetBadge \/>/);
 		assert.match(header, /href=\{faucet\}/);
+		assert.match(
+			read("components/wallet/testnet-badge.tsx"),
+			/Testnet account\. Coins have no real value\./,
+		);
 	});
 
 	it("refreshes the testnet notice once the wallet is on mainnet", () => {

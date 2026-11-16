@@ -11,10 +11,12 @@ import {
 	useRef,
 	useState,
 } from "react";
+import type { Chain } from "@/lib/chain-endpoints";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
 import { deriveIdentityKey, findKeysFromMnemonic } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
+import { refreshWalletChain } from "@/lib/wallet-chain";
 import {
 	clearCachedEncryptionKey,
 	loadEncryptedWallet,
@@ -28,8 +30,17 @@ interface WalletContextType {
 	walletKeys: Keys | null;
 	unlockWallet: (passphrase: string) => Promise<boolean>;
 	lockWallet: () => void;
-	createWallet: (mnemonic: string, passphrase: string) => Promise<boolean>;
-	importWallet: (keys: Keys, passphrase: string) => Promise<boolean>;
+	/** The network is fixed here, at creation, and never changes after. */
+	createWallet: (
+		mnemonic: string,
+		passphrase: string,
+		network: Chain,
+	) => Promise<boolean>;
+	importWallet: (
+		keys: Keys,
+		passphrase: string,
+		network: Chain,
+	) => Promise<boolean>;
 	deleteWallet: () => void;
 }
 
@@ -108,13 +119,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	}, [router]);
 
 	const createWallet = useCallback(
-		async (mnemonic: string, passphrase: string): Promise<boolean> => {
+		async (
+			mnemonic: string,
+			passphrase: string,
+			network: Chain,
+		): Promise<boolean> => {
 			try {
 				const keys = await findKeysFromMnemonic(mnemonic);
 				const identityKey = deriveIdentityKey(keys.payPk, keys.ordPk);
 				keys.identityPk = identityKey.toWif();
 				keys.identityAddressPath = "derived";
-				const success = await saveEncryptedWallet(keys, passphrase);
+				const success = await saveEncryptedWallet(keys, passphrase, network);
 				if (success) {
 					setWalletKeys(keys);
 					setHasWallet(true);
@@ -138,7 +153,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	);
 
 	const importWallet = useCallback(
-		async (keys: Keys, passphrase: string): Promise<boolean> => {
+		async (
+			keys: Keys,
+			passphrase: string,
+			network: Chain,
+		): Promise<boolean> => {
 			try {
 				const importedKeys = { ...keys };
 				if (
@@ -153,7 +172,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 					importedKeys.identityPk = identityKey.toWif();
 					importedKeys.identityAddressPath = "derived";
 				}
-				const success = await saveEncryptedWallet(importedKeys, passphrase);
+				const success = await saveEncryptedWallet(
+					importedKeys,
+					passphrase,
+					network,
+				);
 				if (success) {
 					setWalletKeys(importedKeys);
 					setHasWallet(true);
@@ -187,6 +210,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 				}),
 			);
 		}
+		// The synthetic event above already moves the chain; this covers
+		// browsers that refuse a constructed StorageEvent.
+		refreshWalletChain();
 		clearCachedEncryptionKey();
 		setWalletKeys(null);
 		setHasWallet(false);

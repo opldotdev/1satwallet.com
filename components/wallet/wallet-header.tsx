@@ -3,8 +3,8 @@
 import { LockKeyhole, LogOut } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, PageTitle } from "@/components/page-layout";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import { useWallet } from "@/providers/wallet-provider";
@@ -48,7 +48,7 @@ export function WalletHeader() {
 			<div className="flex h-9 items-center gap-3 text-xs md:justify-end">
 				{chain === "test" ? (
 					<span className="flex items-center gap-2">
-						<Badge variant="outline">Testnet</Badge>
+						<TestnetBadge />
 						{faucet ? (
 							<a
 								className="underline"

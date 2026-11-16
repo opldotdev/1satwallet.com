@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NetworkChoice } from "@/components/wallet/network-choice";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWallet } from "@/providers/wallet-provider";
 import { useCreateWallet } from "../provider";
@@ -21,10 +22,11 @@ import { useCreateWallet } from "../provider";
 export default function EncryptWalletPage() {
 	const router = useRouter();
 	const { createWallet } = useWallet(); // Global wallet action
-	const { mnemonic, setMnemonic } = useCreateWallet(); // Local wizard state
+	const { mnemonic, setMnemonic, network, setNetwork } = useCreateWallet(); // Local wizard state
 	const [passphrase, setPassphrase] = useState("");
 	const [confirmPassphrase, setConfirmPassphrase] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
+	const [error, setError] = useState("");
 
 	if (!mnemonic) {
 		if (typeof window !== "undefined") router.replace("/wallet/create");
@@ -36,12 +38,14 @@ export default function EncryptWalletPage() {
 		if (!mnemonic || !passphrase || passphrase !== confirmPassphrase) return;
 
 		setIsLoading(true);
+		setError("");
 		try {
-			const success = await createWallet(mnemonic, passphrase);
+			const success = await createWallet(mnemonic, passphrase, network);
 			if (success) {
 				setMnemonic(null); // Clear local state
 				// Note: createWallet already navigates to /wallet on success
 			} else {
+				setError("Could not save the wallet in this browser. Try again.");
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
@@ -100,6 +104,12 @@ export default function EncryptWalletPage() {
 										</p>
 									)}
 							</div>
+							<NetworkChoice value={network} onChange={setNetwork} />
+							{error && (
+								<p className="text-sm text-destructive" role="alert">
+									{error}
+								</p>
+							)}
 							<div className="flex gap-2">
 								<Button
 									aria-live="polite"

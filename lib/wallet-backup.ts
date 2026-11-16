@@ -1,10 +1,11 @@
-import { PrivateKey } from "@bsv/sdk";
+import { PrivateKey, Utils } from "@bsv/sdk";
 import {
 	decryptBackup,
 	isOneSatBackup,
 	isYoursWalletBackup,
 	parseYoursWalletZip,
 } from "bitcoin-backup";
+import type { Chain } from "@/lib/chain-endpoints";
 import type { Keys } from "@/lib/types";
 import {
 	decryptEncryptedWalletBackup,
@@ -14,36 +15,47 @@ import {
 
 type JsonObject = Record<string, unknown>;
 
-export type DetectedWalletBackup =
-	| {
-			kind: "1sat-web";
-			version: 0 | 1;
-			label: string;
-			requiresPassword: true;
-			backup: EncryptedBackupJson;
-	  }
-	| {
-			kind: "bitcoin-backup";
-			version: 1;
-			label: string;
-			requiresPassword: true;
-			encrypted: string;
-	  }
-	| {
-			kind: "yours-keys";
-			version: 1 | 6;
-			archiveVersion: 0 | 1 | 2;
-			label: string;
-			requiresPassword: boolean;
-			chromeStorage: JsonObject;
-	  }
-	| {
-			kind: "plaintext-keys";
-			version: 0;
-			label: string;
-			requiresPassword: false;
-			keys: Keys;
-	  };
+/**
+ * Every variant says which network the file names (null: it does not say, so
+ * the person chooses) and whether its visible keys hint at testnet.
+ */
+interface NetworkInfo {
+	network: Chain | null;
+	hintedNetwork: "test" | null;
+}
+
+export type DetectedWalletBackup = NetworkInfo &
+	(
+		| {
+				kind: "1sat-web";
+				version: 0 | 1;
+				label: string;
+				requiresPassword: true;
+				backup: EncryptedBackupJson;
+		  }
+		| {
+				kind: "bitcoin-backup";
+				version: 1;
+				label: string;
+				requiresPassword: true;
+				encrypted: string;
+		  }
+		| {
+				kind: "yours-keys";
+				version: 1 | 6;
+				archiveVersion: 0 | 1 | 2;
+				label: string;
+				requiresPassword: boolean;
+				chromeStorage: JsonObject;
+		  }
+		| {
+				kind: "plaintext-keys";
+				version: 0;
+				label: string;
+				requiresPassword: false;
+				keys: Keys;
+		  }
+	);
 
 function object(value: unknown): JsonObject | null {
 	return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -59,6 +71,34 @@ function validWif(value: unknown): value is string {
 	} catch {
 		return false;
 	}
+}
+
+/** The chain a WIF is encoded for (version byte 0x80 or 0xef), else null. */
+export function wifNetwork(wif: string): Chain | null {
+	if (!validWif(wif)) return null;
+	const version = Utils.fromBase58(wif)[0];
+	return version === 0x80 ? "main" : version === 0xef ? "test" : null;
+}
+
+/** Testnet only when every key is testnet-encoded; otherwise no hint. */
+export function keysNetworkHint(keys: Keys): "test" | null {
+	const wifs = [keys.payPk, keys.ordPk, keys.identityPk].filter(
+		(wif): wif is string => typeof wif === "string",
+	);
+	return wifs.length > 0 && wifs.every((wif) => wifNetwork(wif) === "test")
+		? "test"
+		: null;
+}
+
+/** Yours `chainOf`: only exactly "testnet" is testnet. */
+function yoursNetwork(storage: JsonObject): Chain {
+	const accounts = object(storage.accounts);
+	const selected = storage.selectedAccount;
+	const account =
+		accounts && typeof selected === "string"
+			? object(accounts[selected])
+			: null;
+	return account?.network === "testnet" ? "test" : "main";
 }
 
 function keysFromPortable(value: unknown, identityRequired: boolean): Keys {
@@ -161,6 +201,8 @@ function detectYoursZip(bytes: Uint8Array): DetectedWalletBackup {
 		requiresPassword:
 			typeof storage.passKey !== "string" || storage.passKey.length === 0,
 		chromeStorage: storage,
+		network: yoursNetwork(storage),
+		hintedNetwork: null,
 	};
 }
 
@@ -194,6 +236,8 @@ export function detectWalletBackup(
 			label: "bitcoin-backup encrypted file",
 			requiresPassword: true,
 			encrypted: text,
+			network: null,
+			hintedNetwork: null,
 		};
 	}
 
@@ -207,6 +251,8 @@ export function detectWalletBackup(
 			label: "bitcoin-backup encrypted file",
 			requiresPassword: true,
 			encrypted: value,
+			network: null,
+			hintedNetwork: null,
 		};
 	}
 
@@ -223,6 +269,9 @@ export function detectWalletBackup(
 					: "1Sat web wallet legacy backup",
 			requiresPassword: true,
 			backup,
+			// A file without the field may predate it, so it is not mainnet yet.
+			network: backup.network === "test" ? "test" : null,
+			hintedNetwork: null,
 		};
 	}
 	if (root.accounts !== undefined) {
@@ -240,15 +289,20 @@ export function detectWalletBackup(
 			requiresPassword:
 				typeof storage.passKey !== "string" || storage.passKey.length === 0,
 			chromeStorage: storage,
+			network: yoursNetwork(storage),
+			hintedNetwork: null,
 		};
 	}
 	if (root.payPk !== undefined || root.ordPk !== undefined) {
+		const keys = keysFromPortable(root, false);
 		return {
 			kind: "plaintext-keys",
 			version: 0,
 			label: "Legacy plaintext wallet keys",
 			requiresPassword: false,
-			keys: keysFromPortable(root, false),
+			keys,
+			network: null,
+			hintedNetwork: keysNetworkHint(keys),
 		};
 	}
 	throw new Error("Unsupported wallet backup file");
@@ -379,23 +433,51 @@ async function decryptYoursKeys(
 	);
 }
 
-export async function decryptWalletBackup(
+export interface DecryptedWalletBackup {
+	keys: Keys;
+	/** The network the backup names, or null when the person must choose. */
+	network: Chain | null;
+	hintedNetwork: "test" | null;
+}
+
+async function decryptKeys(
 	backup: DetectedWalletBackup,
 	password: string,
-): Promise<Keys> {
+): Promise<{ keys: Keys; network: Chain | null }> {
 	switch (backup.kind) {
-		case "1sat-web":
-			return await decryptEncryptedWalletBackup(backup.backup, password);
+		case "1sat-web": {
+			const { keys, network } = await decryptEncryptedWalletBackup(
+				backup.backup,
+				password,
+			);
+			// The authenticated payload's "test" wins over a file that says nothing.
+			return { keys, network: network === "test" ? "test" : backup.network };
+		}
 		case "bitcoin-backup": {
 			const decrypted = await decryptBackup(backup.encrypted, password);
 			if (!isOneSatBackup(decrypted) && !isYoursWalletBackup(decrypted)) {
 				throw new Error("Encrypted backup is not a 1Sat or Yours key backup");
 			}
-			return keysFromPortable(decrypted, true);
+			return { keys: keysFromPortable(decrypted, true), network: null };
 		}
 		case "yours-keys":
-			return await decryptYoursKeys(backup.chromeStorage, password);
+			return {
+				keys: await decryptYoursKeys(backup.chromeStorage, password),
+				network: backup.network,
+			};
 		case "plaintext-keys":
-			return backup.keys;
+			return { keys: backup.keys, network: null };
 	}
+}
+
+export async function decryptWalletBackup(
+	backup: DetectedWalletBackup,
+	password: string,
+): Promise<DecryptedWalletBackup> {
+	const { keys, network } = await decryptKeys(backup, password);
+	return {
+		keys,
+		network,
+		hintedNetwork: network === null ? keysNetworkHint(keys) : null,
+	};
 }

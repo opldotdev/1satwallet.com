@@ -56,11 +56,11 @@ describe("wallet provider React lifecycle contracts", () => {
 		const failure = source.slice(
 			source.indexOf(
 				"\t\t} catch {",
-				source.indexOf("const connectExternalWallet"),
+				source.indexOf("const connectExternal = useCallback"),
 			),
 			source.indexOf(
 				"\t\t} finally {",
-				source.indexOf("const connectExternalWallet"),
+				source.indexOf("const connectExternal = useCallback"),
 			),
 		);
 		for (const cleanup of [

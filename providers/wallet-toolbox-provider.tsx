@@ -64,17 +64,28 @@ import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
+	CONNECTION_OPTION_KEY,
+	clearConnection,
+	persistBuiltInConnection,
+	persistExternalConnection,
+	WALLET_CONNECTION_MODE_KEY,
+} from "@/lib/wallet/connection-mode";
+import {
 	connectSelectedWallet,
 	prepareWalletSwitch,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
-import { externalNetworkMismatch } from "@/lib/wallet/external-network";
+import {
+	EXTERNAL_NETWORK_CHANGED,
+	externalWalletChain,
+} from "@/lib/wallet/external-network";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import {
 	providerCapability,
 	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
 import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
+import { readWalletChain } from "@/lib/wallet-chain";
 import {
 	diagnoseNoWalletResult,
 	statusAfterDisconnect,
@@ -84,12 +95,54 @@ import { loadOrCreateWalletStorageIdentity } from "@/lib/wallet-storage-identity
 import { type SyncTasksState, useSyncEngine } from "./hooks/use-sync-engine";
 import { useWalletBalance } from "./hooks/use-wallet-balance";
 import { useWalletDiagnostics } from "./hooks/use-wallet-diagnostics";
+import { useWallet } from "./wallet-provider";
 
 type Chain = "main" | "test";
 export type WalletConnectionMode = "none" | "built-in" | "external";
 
-export const WALLET_CONNECTION_MODE_KEY = "1sat-wallet-connection-mode";
-const CONNECTION_OPTION_KEY = "1sat-wallet-connection-option";
+export { WALLET_CONNECTION_MODE_KEY };
+
+/**
+ * Set when a connect found the external wallet on another network and moved
+ * the active chain to it. The automatic reconnect on that chain clears it; if
+ * the networks still differ then, it fails instead of moving again.
+ */
+const EXTERNAL_HOP_KEY = "1sat-wallet-external-hop";
+
+function hasExternalHop(): boolean {
+	try {
+		return sessionStorage.getItem(EXTERNAL_HOP_KEY) === "1";
+	} catch {
+		reportDiagnostic({
+			category: "provider",
+			code: "provider.failed",
+			operation: "wallet.external.hop.read",
+			recoverable: true,
+		});
+		return false;
+	}
+}
+
+function setExternalHop(on: boolean): void {
+	try {
+		if (on) sessionStorage.setItem(EXTERNAL_HOP_KEY, "1");
+		else sessionStorage.removeItem(EXTERNAL_HOP_KEY);
+	} catch {
+		reportDiagnostic({
+			category: "provider",
+			code: "provider.failed",
+			operation: "wallet.external.hop.write",
+			recoverable: true,
+		});
+	}
+}
+
+/**
+ * A connection error raised while clearing a connection that moves the active
+ * chain: the provider remounts on the other chain, and the new instance shows
+ * the error instead of losing it.
+ */
+let carriedInitError: string | null = null;
 
 const ADMIN_ORIGINATOR =
 	typeof window !== "undefined"
@@ -280,6 +333,7 @@ export function WalletToolboxProvider({
 }: WalletToolboxProviderProps) {
 	const queryClient = useQueryClient();
 	const { rate: exchangeRate } = useExchangeRate();
+	const { hasWallet: hasBuiltInWallet } = useWallet();
 
 	// -- Core wallet state --
 	const [wallet, setWallet] = useState<WalletInterface | null>(null);
@@ -304,6 +358,24 @@ export function WalletToolboxProvider({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const initGuardRef = useRef(false);
 	const [initError, setInitError] = useState<string | null>(null);
+
+	useEffect(() => {
+		const carried = carriedInitError;
+		carriedInitError = null;
+		if (carried) setInitError(carried);
+	}, []);
+
+	/** Forget the persisted connection and show why. */
+	const failConnection = useCallback(
+		(message: string) => {
+			carriedInitError = message;
+			clearConnection();
+			// Same chain: no remount, so this instance shows the error.
+			if (readWalletChain() === chain) carriedInitError = null;
+			setInitError(message);
+		},
+		[chain],
+	);
 
 	// -- Receive address state --
 	const [depositAddress, setDepositAddress] = useState<string | null>(null);
@@ -573,7 +645,7 @@ export function WalletToolboxProvider({
 	const teardownWallet = useCallback(
 		(
 			status: WalletConnectionStatus,
-			options?: { destroyLocal?: boolean },
+			options?: { destroyLocal?: boolean; keepConnection?: boolean },
 		): Promise<void> => {
 			if (teardownPromiseRef.current) return teardownPromiseRef.current;
 
@@ -601,8 +673,9 @@ export function WalletToolboxProvider({
 					module.dispose();
 				assetPermissionModulesRef.current = [];
 			}
-			localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
-			localStorage.removeItem(CONNECTION_OPTION_KEY);
+			// Clearing an external session moves the chain back to the built-in
+			// account's network (or mainnet).
+			if (!options?.keepConnection) clearConnection();
 			externalServicesRef.current?.close();
 			externalServicesRef.current = null;
 			resetWalletState(status);
@@ -630,8 +703,12 @@ export function WalletToolboxProvider({
 		[resetWalletState, stopSyncWorkers],
 	);
 
-	const connectExternalWallet = useCallback(
-		async (option?: WalletConnectionOption): Promise<boolean> => {
+	const connectExternal = useCallback(
+		async (
+			option: WalletConnectionOption | undefined,
+			resume: boolean,
+		): Promise<boolean> => {
+			if (!resume) setExternalHop(false);
 			const pendingTeardown = teardownPromiseRef.current;
 			if (pendingTeardown) await pendingTeardown;
 			if (initGuardRef.current) {
@@ -657,30 +734,35 @@ export function WalletToolboxProvider({
 				if (!result) {
 					const diagnostic = await diagnoseNoWalletResult();
 					if (generation !== connectionGenerationRef.current) return false;
-					localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
 					setConnectionStatus(diagnostic.status);
-					setInitError(diagnostic.message);
+					failConnection(diagnostic.message);
 					initGuardRef.current = false;
 					return false;
 				}
 
-				const networkError = await externalNetworkMismatch(
-					result.wallet,
-					chain,
-				);
-				if (networkError) {
+				// The external wallet's network becomes the active chain.
+				const reported = await externalWalletChain(result.wallet);
+				if (generation !== connectionGenerationRef.current) {
 					pendingResult = null;
 					result.disconnect();
-					if (generation !== connectionGenerationRef.current) return false;
-					localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
-					localStorage.removeItem(CONNECTION_OPTION_KEY);
-					setConnectionStatus("disconnected");
-					setInitError(networkError);
-					initGuardRef.current = false;
 					return false;
 				}
-				if (generation !== connectionGenerationRef.current) {
+				if ("error" in reported || reported.chain !== chain) {
+					pendingResult = null;
 					result.disconnect();
+					initGuardRef.current = false;
+					if (!("error" in reported) && !hasExternalHop()) {
+						// Reconnect on the wallet's chain: the store change remounts
+						// this provider there, and its auto-reconnect connects again.
+						setExternalHop(true);
+						persistExternalConnection(reported.chain, option);
+						return false;
+					}
+					setExternalHop(false);
+					setConnectionStatus("disconnected");
+					failConnection(
+						"error" in reported ? reported.error : EXTERNAL_NETWORK_CHANGED,
+					);
 					return false;
 				}
 
@@ -716,8 +798,8 @@ export function WalletToolboxProvider({
 				setProviderType(result.provider);
 				setIsInitialized(true);
 
-				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "external");
-				if (option) localStorage.setItem(CONNECTION_OPTION_KEY, option);
+				setExternalHop(false);
+				persistExternalConnection(chain, option);
 
 				const session = createWalletSession(result);
 				walletSessionRef.current = session;
@@ -773,6 +855,13 @@ export function WalletToolboxProvider({
 			} catch {
 				if (generation !== connectionGenerationRef.current) return false;
 				connectionGenerationRef.current += 1;
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.connect.external",
+					recoverable: true,
+					context: { mode: "external", retryable: true },
+				});
 				walletSessionCleanupRef.current();
 				walletSessionCleanupRef.current = () => {};
 				walletSessionRef.current?.stop();
@@ -780,9 +869,8 @@ export function WalletToolboxProvider({
 				pendingResult?.disconnect();
 				externalServicesRef.current?.close();
 				externalServicesRef.current = null;
-				localStorage.removeItem(WALLET_CONNECTION_MODE_KEY);
 				resetWalletState("disconnected");
-				setInitError(
+				failConnection(
 					"Wallet connection failed. Check the provider and try again.",
 				);
 				setIsInitializing(false);
@@ -798,28 +886,38 @@ export function WalletToolboxProvider({
 			chain,
 			clearIdentityQueries,
 			deriveExternalAddresses,
+			failConnection,
 			resetWalletState,
 			teardownWallet,
 		],
+	);
+
+	const connectExternalWallet = useCallback(
+		(option?: WalletConnectionOption) => connectExternal(option, false),
+		[connectExternal],
 	);
 
 	useEffect(() => {
 		if (
 			isInitialized ||
 			isInitializing ||
-			localStorage.getItem(WALLET_CONNECTION_MODE_KEY) !== "external"
+			localStorage.getItem(WALLET_CONNECTION_MODE_KEY) !== "external" ||
+			// About to remount on the external wallet's chain; that instance
+			// reconnects.
+			readWalletChain() !== chain
 		) {
 			return;
 		}
 		const savedOption = localStorage.getItem(CONNECTION_OPTION_KEY);
-		void connectExternalWallet(
+		void connectExternal(
 			savedOption === "injected" ||
 				savedOption === "desktop" ||
 				savedOption === "embedded"
 				? savedOption
 				: undefined,
+			true,
 		);
-	}, [connectExternalWallet, isInitialized, isInitializing]);
+	}, [chain, connectExternal, isInitialized, isInitializing]);
 
 	// -- Wallet init --
 	const initializeWallet = useCallback(
@@ -932,7 +1030,7 @@ export function WalletToolboxProvider({
 
 				setIsInitialized(true);
 				setInitError(null);
-				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "built-in");
+				persistBuiltInConnection();
 
 				return true;
 			} catch {
@@ -980,6 +1078,14 @@ export function WalletToolboxProvider({
 			if (option === "embedded") {
 				const local = walletResultRef.current;
 				if (!local) {
+					if (hasBuiltInWallet) {
+						// Not running here (the page opened in external mode, or the
+						// external wallet is on the other chain): close the external
+						// session; the chain returns to the account's network and the
+						// bridge opens the built-in wallet there once it is unlocked.
+						await teardownWallet("disconnected", { destroyLocal: false });
+						return true;
+					}
 					setInitError(
 						"Create or import a built-in wallet before switching back. The current wallet is unchanged.",
 					);
@@ -1000,21 +1106,26 @@ export function WalletToolboxProvider({
 				setConnectionStatus("ready");
 				setIsInitialized(true);
 				setInitError(null);
-				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "built-in");
-				localStorage.removeItem(CONNECTION_OPTION_KEY);
+				persistBuiltInConnection();
 				return true;
 			}
 
 			setIsInitializing(true);
 			try {
 				const result = await prepareWalletSwitch(option);
-				const networkError = await externalNetworkMismatch(
-					result.wallet,
-					chain,
-				);
-				if (networkError) {
+				// The external wallet's network becomes the active chain.
+				const reported = await externalWalletChain(result.wallet);
+				if ("error" in reported) {
 					result.disconnect();
-					setInitError(`${networkError} The current wallet is unchanged.`);
+					setInitError(`${reported.error} The current wallet is unchanged.`);
+					return false;
+				}
+				if (reported.chain !== chain) {
+					// Reconnect on the wallet's chain: the store change remounts this
+					// provider there, and its auto-reconnect connects again.
+					result.disconnect();
+					setExternalHop(true);
+					persistExternalConnection(reported.chain, option);
 					return false;
 				}
 				const externalServices = createStackServices(chain);
@@ -1052,8 +1163,8 @@ export function WalletToolboxProvider({
 				setProviderType(result.provider);
 				setIsInitialized(true);
 				setInitError(null);
-				localStorage.setItem(WALLET_CONNECTION_MODE_KEY, "external");
-				localStorage.setItem(CONNECTION_OPTION_KEY, option);
+				setExternalHop(false);
+				persistExternalConnection(chain, option);
 
 				const nextSession = createWalletSession(result);
 				walletSessionRef.current = nextSession;
@@ -1080,16 +1191,28 @@ export function WalletToolboxProvider({
 				nextSession.start();
 				return true;
 			} catch {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.switch",
+					recoverable: true,
+					context: { mode: "external", retryable: true },
+				});
 				setInitError("Wallet switch failed. The current wallet is unchanged.");
 				return false;
 			} finally {
 				setIsInitializing(false);
 			}
 		},
-		[chain, deriveExternalAddresses, teardownWallet],
+		[chain, deriveExternalAddresses, hasBuiltInWallet, teardownWallet],
 	);
 
-	useEffect(() => () => void teardownWallet("disconnected"), [teardownWallet]);
+	// Unmount (including a remount on another chain) closes the wallet but keeps
+	// the persisted connection, which decides the chain the next mount uses.
+	useEffect(
+		() => () => void teardownWallet("disconnected", { keepConnection: true }),
+		[teardownWallet],
+	);
 
 	// -- Compose sync status with init state --
 	const syncStatus = useMemo<SyncStatus>(() => {
