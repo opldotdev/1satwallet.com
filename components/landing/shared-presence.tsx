@@ -249,7 +249,7 @@ function PresenceLayer({
 		>
 			{presenceState && (
 				<div
-					className="fixed right-4 top-20 z-30 flex items-center gap-2 rounded-full border border-primary/20 bg-background/80 px-3 py-1.5 text-sm backdrop-blur-sm md:top-auto md:bottom-4"
+					className="fixed right-4 top-20 z-30 flex items-center gap-2 rounded-full border border-primary/20 bg-background/80 px-3 py-1.5 text-sm backdrop-blur-sm md:top-auto md:bottom-[max(--spacing(4),env(safe-area-inset-bottom))]"
 					role="status"
 				>
 					<span className="size-2 rounded-full bg-chart-4 motion-safe:animate-pulse" />
@@ -330,7 +330,7 @@ function PresenceLayer({
 			})}
 
 			{cursors.length > 0 && (
-				<div className="fixed bottom-4 left-1/2 z-30 max-w-[min(calc(100vw-8rem),28rem)] -translate-x-1/2 pointer-events-auto md:hidden [@media(pointer:coarse)]:!block">
+				<div className="fixed bottom-[max(--spacing(4),env(safe-area-inset-bottom))] left-1/2 z-30 max-w-[min(calc(100vw-8rem),28rem)] -translate-x-1/2 pointer-events-auto md:hidden [@media(pointer:coarse)]:!block">
 					<div className="flex items-center gap-1 overflow-x-auto rounded-full border border-primary/20 bg-background/80 p-1 backdrop-blur-sm">
 						{cursors.map((cursor, index) => {
 							const publicIdentity = identityByUserId.get(cursor.userId);

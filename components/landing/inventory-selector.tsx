@@ -93,7 +93,7 @@ export function InventorySelector({
 
 	return (
 		<SoundDialog open={open} onOpenChange={changeOpen}>
-			<DialogContent className="flex h-[min(640px,85dvh)] max-w-3xl flex-col overflow-hidden p-0">
+			<DialogContent className="flex h-[min(640px,85dvh)] max-w-3xl flex-col overflow-hidden pb-0 [--dialog-spacing:0px]">
 				<DialogHeader className="border-b p-6">
 					<DialogTitle>Add an asset to your offer</DialogTitle>
 					<Tabs
@@ -125,7 +125,15 @@ export function InventorySelector({
 						/>
 					</div>
 				</DialogHeader>
-				<div className="flex-1 overflow-y-auto p-6">
+				{/* The last block clears the home indicator: the amount form when it
+				    shows, the list otherwise. */}
+				<div
+					className={
+						kind === "bsv21" && selectedToken
+							? "flex-1 overflow-y-auto p-6"
+							: "flex-1 overflow-y-auto p-6 pb-[max(--spacing(6),env(safe-area-inset-bottom))]"
+					}
+				>
 					{!isInitialized && (
 						<p className="py-10 text-center text-muted-foreground">
 							Wallet loading…
@@ -243,7 +251,7 @@ export function InventorySelector({
 				</div>
 				{kind === "bsv21" && selectedToken && (
 					<form
-						className="border-t bg-muted/20 p-4"
+						className="border-t bg-muted/20 p-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))]"
 						onSubmit={(event) => {
 							event.preventDefault();
 							selectTokenAmount();

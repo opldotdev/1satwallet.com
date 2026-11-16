@@ -45,7 +45,6 @@
 	--radius-md: calc(var(--radius) - 2px);
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
-	--radius: 0rem;
 	--tracking-tighter: calc(var(--tracking-normal) - 0.05em);
 	--tracking-tight: calc(var(--tracking-normal) - 0.025em);
 	--tracking-wide: calc(var(--tracking-normal) + 0.025em);
@@ -57,7 +56,7 @@
 }
 
 :root {
-	--radius: 0rem;
+	--radius: 0.625rem;
 	--background: oklch(0.99 0.002 96);
 	--foreground: oklch(0.1 0.005 96);
 	--card: oklch(1 0 0);
@@ -150,7 +149,6 @@
 	--sidebar-border: var(--border);
 	--sidebar-ring: var(--ring);
 	--destructive-foreground: oklch(0.98 0.005 25);
-	--radius: 0rem;
 	--font-sans:
 		"Space Grotesk", ui-sans-serif, system-ui, -apple-system,
 		BlinkMacSystemFont, sans-serif;

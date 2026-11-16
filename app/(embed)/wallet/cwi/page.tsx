@@ -42,6 +42,11 @@ import type { CWIIndividualGrant } from "@/lib/cwi/types";
 import { useCWIBridge } from "@/lib/hooks/use-cwi-bridge";
 import { createStackServices } from "@/lib/stack";
 
+// Full-screen prompts (in a popup window or the top-level page) keep a 16px
+// gutter and clear the notch and home indicator (viewport-fit=cover).
+const centeredScreenClassName =
+	"min-h-screen flex items-center justify-center bg-background pt-[max(--spacing(4),env(safe-area-inset-top))] pr-[max(--spacing(4),env(safe-area-inset-right))] pb-[max(--spacing(4),env(safe-area-inset-bottom))] pl-[max(--spacing(4),env(safe-area-inset-left))]";
+
 function AssetPermissionCard({
 	permission,
 	onResponse,
@@ -75,7 +80,7 @@ function AssetPermissionCard({
 	};
 
 	return (
-		<div className="min-h-screen overflow-y-auto bg-background">
+		<div className="min-h-screen overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
 			<OneSatPermissionPrompt
 				request={permission.request}
 				onApprove={() => void approve()}
@@ -658,7 +663,7 @@ export default function CWIPage() {
 
 	if (storageAccessRequired) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
+			<div className={centeredScreenClassName}>
 				<Card className="w-full max-w-sm">
 					<CardHeader className="text-center space-y-1">
 						<CardTitle className="text-lg">Connect Wallet</CardTitle>
@@ -692,7 +697,7 @@ export default function CWIPage() {
 	// Grouped permission — single prompt for all app permissions from manifest
 	if (activeGroupedPermission) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
+			<div className={centeredScreenClassName}>
 				<GroupedPermissionCard
 					key={activeGroupedPermission.requestID}
 					permission={activeGroupedPermission}
@@ -707,7 +712,7 @@ export default function CWIPage() {
 	// Counterparty permission — pact with a specific counterparty key
 	if (activeCounterpartyPermission) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
+			<div className={centeredScreenClassName}>
 				<CounterpartyPermissionCard
 					key={activeCounterpartyPermission.requestID}
 					permission={activeCounterpartyPermission}
@@ -722,7 +727,7 @@ export default function CWIPage() {
 	// Individual permission request
 	if (activePermission) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
+			<div className={centeredScreenClassName}>
 				<PermissionCard
 					key={activePermission.requestID}
 					permission={activePermission}

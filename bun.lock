@@ -67,6 +67,7 @@
         "@types/node": "^26.6.6",
         "@types/react": "^19.3.0",
         "@types/react-dom": "^19.3.0",
+        "agent-browser": "^0.43.0",
         "babel-plugin-react-compiler": "1.0.0",
         "fake-indexeddb": "^6.2.8",
         "schema-dts": "^2.1.0",
@@ -103,6 +104,20 @@
     "@1sat/wallet-browser": ["@1sat/wallet-browser@0.1.2", "", { "dependencies": { "@1sat/wallet": "0.1.2" }, "peerDependencies": { "@1sat/client": "0.1.1", "@bsv/sdk": "^4.0.0", "@bsv/wallet-toolbox-client": "^2.15.0" } }, "sha512-nsX63bMdcGCx7yFSSoc+b9il2xUyVYl7ROj2tFs4P0b5ByNNivy5U6zAkvlgAmXh7CTgAsmTM8LI2qgMmahJlQ=="],
 
     "@1sat/wallet-mac": ["@1sat/wallet-mac@0.0.5", "", { "dependencies": { "@1sat/vault": "0.0.8" }, "peerDependencies": { "@bsv/sdk": "^2.0.13" }, "hasInstallScript": true }, "sha512-Lbp136t2RGPJwCdtyrPcLPxDeRV/W6jxVRNwERHHOJEbMz1oQ0a+rzdLSUIhSm4MXzbu+kemyEMZ8LT9M+UZbQ=="],
+
+    "@agent-browser/cli-darwin-arm64": ["@agent-browser/cli-darwin-arm64@0.43.0", "", { "os": "darwin", "cpu": "arm64" }, "sha512-HV6GP59IjNnowlrXR/5rVM8msPWwQDEONt/tWC8STzUfKZQHKZI/Iv9sf2h2ZhwK8xwoqLhxpf+KxcFgJ0sExQ=="],
+
+    "@agent-browser/cli-darwin-x64": ["@agent-browser/cli-darwin-x64@0.43.0", "", { "os": "darwin", "cpu": "x64" }, "sha512-3NKnKFOWLYDYTz4bJxo4jt+GwjM4VtcW5FDrQY35eUrytig65FEDdXmXKuRbZGq9jEEWxh6rmpS4R6xS53XCaw=="],
+
+    "@agent-browser/cli-linux-arm64-gnu": ["@agent-browser/cli-linux-arm64-gnu@0.43.0", "", { "os": "linux", "cpu": "arm64", "libc": "glibc" }, "sha512-8DC234LGlXCn8A2YXGk6woy1uTjyexvtHd/TOQHLrV2sfUMZD647HTHEJyF+2z1J1oR34LaB5jqHJ9d0REC+Cw=="],
+
+    "@agent-browser/cli-linux-arm64-musl": ["@agent-browser/cli-linux-arm64-musl@0.43.0", "", { "os": "linux", "cpu": "arm64", "libc": "musl" }, "sha512-/dYeGX2E1lWZ25q1IZSVs6PaPmr0GmhHU8z/LtCh0anHN4ND50i5fOPbysRBaE8iQCBY74h+1R2kePfEqD7X4Q=="],
+
+    "@agent-browser/cli-linux-x64-gnu": ["@agent-browser/cli-linux-x64-gnu@0.43.0", "", { "os": "linux", "cpu": "x64", "libc": "glibc" }, "sha512-WY8vy2Saa3oRt6XEmz4Sae1W5qS9TjYcbX6IE+dxb8s2APfL9XyQjMHC6jBZrhwqDBIvUeTMCT/P2cq3XLPSBw=="],
+
+    "@agent-browser/cli-linux-x64-musl": ["@agent-browser/cli-linux-x64-musl@0.43.0", "", { "os": "linux", "cpu": "x64", "libc": "musl" }, "sha512-WpCI0cIaVIVj4trdduDmW90h51BAP5Nhx6lALOqHjUhOOae/TkLL4bK8gJfjPb/nOp2FRjsF1l77f6rVwkpsug=="],
+
+    "@agent-browser/cli-win32-x64-msvc": ["@agent-browser/cli-win32-x64-msvc@0.43.0", "", { "os": "win32", "cpu": [ "x64", "arm64", ] }, "sha512-xhk8wnHk3aiBFSR0pd1Ye3ay2jKjgRardgBJLiB9nXJv0ZkbeP/wh3X7jMiKUfUGE1qqJrKdaM5szQ6iz8/8+w=="],
 
     "@alloc/quick-lru": ["@alloc/quick-lru@5.3.0", "", {}, "sha512-U4+70Pc5ZS9osnCBCE5Jha/ciHM+Yp+CNMNC/7HvYbNRk1Ldd+f7qO65W5qfhu/TCv+/ozljlXXe9Nj8419DMA=="],
 
@@ -605,6 +620,8 @@
     "@use-gesture/core": ["@use-gesture/core@10.3.1", "", {}, "sha512-WcINiDt8WjqBdUXye25anHiNxPc0VOrlT8F6LLkU6cycrOGUDyY/yyFmsg3k8i5OLvv25llc0QC45GhR/C8llw=="],
 
     "@use-gesture/react": ["@use-gesture/react@10.3.1", "", { "dependencies": { "@use-gesture/core": "10.3.1" }, "peerDependencies": { "react": ">= 16.8.0" } }, "sha512-Yy19y6O2GJq8f7CHf7L0nxL8bf4PZCPaVOCgJrusOeFHY1LvHgYXnmnXg6N5iwAnbgbZCDjo60SiM6IPJi9C5g=="],
+
+    "agent-browser": ["agent-browser@0.43.0", "", { "optionalDependencies": { "@agent-browser/cli-darwin-arm64": "0.43.0", "@agent-browser/cli-darwin-x64": "0.43.0", "@agent-browser/cli-linux-arm64-gnu": "0.43.0", "@agent-browser/cli-linux-arm64-musl": "0.43.0", "@agent-browser/cli-linux-x64-gnu": "0.43.0", "@agent-browser/cli-linux-x64-musl": "0.43.0", "@agent-browser/cli-win32-x64-msvc": "0.43.0" }, "hasInstallScript": true, "bin": { "agent-browser": "./bin/agent-browser.js" } }, "sha512-TExwnZAW39fUBDJhUPrw8KKGmcjzBo7FxNqoP2/usHG1ODsjGI2jAWq3+Q6I5JYyBMjePFEsj8KGB68mALtglA=="],
 
     "aria-hidden": ["aria-hidden@1.2.6", "", { "dependencies": { "tslib": "^2.0.0" } }, "sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA=="],
 

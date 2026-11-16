@@ -252,7 +252,7 @@ function CertificateProofDialog({
 					<FileKey2 data-icon="inline-start" /> Create proof
 				</Button>
 			</DialogTrigger>
-			<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+			<DialogContent className="sm:max-w-2xl">
 				<form className="space-y-5" onSubmit={createProof}>
 					<DialogHeader>
 						<DialogTitle>Create a selective certificate proof</DialogTitle>
