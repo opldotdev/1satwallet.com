@@ -31,7 +31,6 @@ import { useSound } from "@/hooks/use-sound";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
-	executeOneColorDeploy,
 	formatOneColorAmount,
 	ONE_COLOR_MAX_ICON_BYTES,
 	ONE_COLOR_MAX_SYMBOL_LENGTH,
@@ -39,11 +38,13 @@ import {
 	type OneColorIcon,
 	oneColorDeployFailureMessage,
 	oneColorDeployInputError,
+	oneColorSupplyError,
 	parseOneColorAmount,
+	runOneColorDeploy,
 } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
-type SupplyKind = "fixed" | "mintable";
+type SupplyKind = "fixed" | "authority";
 
 type SelectedIcon = OneColorIcon & { name: string; bytes: Uint8Array };
 
@@ -127,11 +128,7 @@ export function OneColorDeploy() {
 		if (supplyKind === "fixed") {
 			const parsed = parseOneColorAmount(amount, decimals);
 			if (parsed === null) {
-				setError(
-					Number.isInteger(decimals) && decimals >= 0 && decimals <= 18
-						? `Enter a positive fixed supply with at most ${decimals} decimals.`
-						: "Decimals must be a whole number from 0 through 18.",
-				);
+				setError(oneColorSupplyError(amount, decimals));
 				return;
 			}
 			atomic = parsed;
@@ -150,35 +147,52 @@ export function OneColorDeploy() {
 		setReview(input);
 	}, [amount, decimalsText, icon, supplyKind, symbol]);
 
+	const resetForm = useCallback(() => {
+		setSupplyKind("fixed");
+		setSymbol("");
+		setAmount("");
+		setDecimalsText("0");
+		setIcon(null);
+		setReview(null);
+		setError(null);
+	}, []);
+
+	const changeOpen = useCallback(
+		(next: boolean) => {
+			if (busy) return;
+			setOpen(next);
+			if (!next) resetForm();
+		},
+		[busy, resetForm],
+	);
+
 	const deploy = useCallback(async () => {
 		if (!(colorContext && review)) return;
 		setBusy(true);
 		setError(null);
-		try {
-			const result = await executeOneColorDeploy(colorContext, review);
-			if (result.error || !result.assetId) {
-				throw new Error(result.error ?? "no-transaction");
-			}
-			setCreatedAssetId(result.assetId);
-			setReview(null);
+		// Holdings are re-read before `busy` clears, so Authorize stays disabled
+		// until the wallet's own read shows whether a deploy landed.
+		const outcome = await runOneColorDeploy(colorContext, review, {
+			log: logDeployFailure,
+			refresh: async () => {
+				refreshBalance();
+				await queryClient.invalidateQueries({ queryKey: ["one-color"] });
+			},
+		});
+		if (outcome.ok) {
+			setCreatedAssetId(outcome.assetId);
 			setOpen(false);
-			setSymbol("");
-			setAmount("");
-			setIcon(null);
+			resetForm();
 			play("success");
-			refreshBalance();
-			await queryClient.invalidateQueries({ queryKey: ["one-color"] });
-		} catch (cause) {
-			logDeployFailure(
-				review.amount === 0n ? "deploy-authority" : "deploy-fixed",
-				cause,
-			);
-			setError(oneColorDeployFailureMessage(cause));
+		} else {
+			// A failure after signing may have deployed: never leave Authorize
+			// one tap away from a second deploy.
+			if (outcome.mayHaveBeenSent) setReview(null);
+			setError(outcome.message);
 			play("error");
-		} finally {
-			setBusy(false);
 		}
-	}, [colorContext, play, queryClient, refreshBalance, review]);
+		setBusy(false);
+	}, [colorContext, play, queryClient, refreshBalance, resetForm, review]);
 
 	if (!(mounted && isOneColorAvailable(chain) && colorContext)) return null;
 
@@ -197,14 +211,17 @@ export function OneColorDeploy() {
 						color module. Testnet only.
 					</p>
 				</div>
-				<Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
+				<Dialog open={open} onOpenChange={changeOpen}>
 					<DialogTrigger asChild>
 						<Button>
 							<Plus className="size-4" data-icon="inline-start" />
 							Deploy token
 						</Button>
 					</DialogTrigger>
-					<DialogContent showCloseButton={!busy}>
+					<DialogContent
+						className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+						showCloseButton={!busy}
+					>
 						<DialogHeader>
 							<DialogTitle>Deploy 1Color token</DialogTitle>
 							<DialogDescription>
@@ -219,9 +236,9 @@ export function OneColorDeploy() {
 									<dd className="text-right font-mono">
 										{review.symbol ?? "None"}
 									</dd>
-									<dt>Supply type</dt>
+									<dt>Supply model</dt>
 									<dd className="text-right">
-										{review.amount > 0n ? "Fixed" : "Mintable"}
+										{review.amount > 0n ? "Fixed" : "Mint authority"}
 									</dd>
 									{review.amount > 0n ? (
 										<>
@@ -262,17 +279,17 @@ export function OneColorDeploy() {
 						) : (
 							<div className="space-y-4">
 								<div className="space-y-2">
-									<Label htmlFor="one-color-supply-type">Supply type</Label>
+									<Label htmlFor="one-color-supply-model">Supply model</Label>
 									<Select
 										value={supplyKind}
 										onValueChange={(value: SupplyKind) => setSupplyKind(value)}
 									>
-										<SelectTrigger id="one-color-supply-type">
+										<SelectTrigger id="one-color-supply-model">
 											<SelectValue />
 										</SelectTrigger>
 										<SelectContent>
 											<SelectItem value="fixed">Fixed supply</SelectItem>
-											<SelectItem value="mintable">Mintable</SelectItem>
+											<SelectItem value="authority">Mint authority</SelectItem>
 										</SelectContent>
 									</Select>
 								</div>
@@ -318,23 +335,28 @@ export function OneColorDeploy() {
 										accept="image/*"
 										onChange={(event) => void chooseIcon(event)}
 									/>
-									<div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
-										<span className="truncate">
-											{icon
-												? `${icon.name} · ${formatBytes(icon.bytes.length)}`
-												: `Embedded in the deploy, so it is paid for there: at most ${ONE_COLOR_MAX_ICON_BYTES / 1_000} KB.`}
-										</span>
-										{icon ? (
+									{icon ? (
+										<div className="flex items-center gap-2 text-sm text-muted-foreground">
+											<span className="min-w-0 truncate">{icon.name}</span>
+											<span className="shrink-0">
+												{formatBytes(icon.bytes.length)}
+											</span>
 											<Button
 												type="button"
 												variant="ghost"
 												size="sm"
+												className="ml-auto shrink-0"
 												onClick={() => setIcon(null)}
 											>
 												Remove
 											</Button>
-										) : null}
-									</div>
+										</div>
+									) : (
+										<p className="text-sm text-muted-foreground">
+											Embedded in the deploy, so it is paid for there: at most{" "}
+											{ONE_COLOR_MAX_ICON_BYTES / 1_000} KB.
+										</p>
+									)}
 								</div>
 							</div>
 						)}
@@ -348,7 +370,7 @@ export function OneColorDeploy() {
 								type="button"
 								variant="outline"
 								disabled={busy}
-								onClick={() => (review ? setReview(null) : setOpen(false))}
+								onClick={() => (review ? setReview(null) : changeOpen(false))}
 							>
 								{review ? "Edit" : "Cancel"}
 							</Button>

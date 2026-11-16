@@ -166,37 +166,122 @@ const DEPLOY_INPUT_MESSAGES: Record<OneColorDeployInputError, string> = {
 	"icon-too-large": `The icon must be at most ${ONE_COLOR_MAX_ICON_BYTES / 1_000} KB.`,
 };
 
-/** A short message for a failed deploy; the full error goes to the log. */
-export function oneColorDeployFailureMessage(error: unknown): string {
-	const message = error instanceof Error ? error.message : String(error);
-	const known = DEPLOY_INPUT_MESSAGES[message as OneColorDeployInputError];
-	if (known) return known;
-	const normalized = message.toLowerCase();
-	if (normalized === "no-transaction") {
-		return "The wallet returned no transaction. Check your 1Color tokens before trying again.";
-	}
-	if (normalized.includes("dec must be")) {
+/** Why a fixed supply did not parse, in the user's own units. */
+export function oneColorSupplyError(value: string, decimals: number): string {
+	if (
+		!Number.isInteger(decimals) ||
+		decimals < 0 ||
+		decimals > ONE_COLOR_MAX_DECIMALS
+	) {
 		return DEPLOY_INPUT_MESSAGES["decimals-out-of-range"];
 	}
-	if (normalized.includes("amount must be")) {
-		return DEPLOY_INPUT_MESSAGES["amount-out-of-range"];
+	const atomic = parseBsv21Amount(value, decimals);
+	if (atomic !== null && atomic > ONE_COLOR_MAX_AMOUNT) {
+		return `The supply can be at most ${formatOneColorAmount(ONE_COLOR_MAX_AMOUNT, decimals)} with ${decimals} decimals.`;
+	}
+	return `Enter a positive fixed supply with at most ${decimals} decimals.`;
+}
+
+export interface OneColorDeployFailure {
+	/** Short and specific; the full error goes to the log. */
+	message: string;
+	/**
+	 * False only when the deploy is known to have stopped before signing. Any
+	 * later failure (the module files and submits after the wallet signs and
+	 * broadcasts) may have left a deploy on chain.
+	 */
+	mayHaveBeenSent: boolean;
+}
+
+const CONSENT_DECLINED =
+	/\[ColorConsentDeclinedError\]|BRC-207: the user declined/;
+
+/** Classifies a failed deploy for the user. */
+export function describeOneColorDeployFailure(
+	error: unknown,
+): OneColorDeployFailure {
+	const message = error instanceof Error ? error.message : String(error);
+	const known = DEPLOY_INPUT_MESSAGES[message as OneColorDeployInputError];
+	if (known) return { message: known, mayHaveBeenSent: false };
+	// `@1sat/templates` checks these while building the script, before createAction.
+	if (message.startsWith("dec must be")) {
+		return {
+			message: DEPLOY_INPUT_MESSAGES["decimals-out-of-range"],
+			mayHaveBeenSent: false,
+		};
+	}
+	if (message.startsWith("amount must be")) {
+		return {
+			message: DEPLOY_INPUT_MESSAGES["amount-out-of-range"],
+			mayHaveBeenSent: false,
+		};
 	}
 	if (
-		normalized.includes("denied") ||
-		normalized.includes("declined") ||
-		normalized.includes("reject") ||
-		normalized.includes("cancel")
+		(error instanceof Error && error.name === "ColorConsentDeclinedError") ||
+		CONSENT_DECLINED.test(message)
 	) {
-		return "The wallet declined the deploy. Nothing was sent.";
+		return {
+			message: "The wallet declined the deploy. Nothing was sent.",
+			mayHaveBeenSent: false,
+		};
 	}
-	if (
-		normalized.includes("insufficient") ||
-		normalized.includes("not enough")
-	) {
-		return "Not enough BSV to pay for the deploy. Add funds and try again.";
+	// The toolbox refuses to fund the action before anything is signed.
+	if (/WERR_INSUFFICIENT_FUNDS|insufficient funds/i.test(message)) {
+		return {
+			message: "Not enough BSV to pay for the deploy. Add funds and try again.",
+			mayHaveBeenSent: false,
+		};
 	}
-	if (normalized.includes("overlay")) {
-		return "The 1Color overlay did not accept the deploy. It may still have been sent; check your 1Color tokens before trying again.";
+	return {
+		message:
+			"The token may have been deployed; the overlay will be retried. Check your 1Color tokens before deploying again.",
+		mayHaveBeenSent: true,
+	};
+}
+
+/** A short message for a failed deploy; the full error goes to the log. */
+export function oneColorDeployFailureMessage(error: unknown): string {
+	return describeOneColorDeployFailure(error).message;
+}
+
+export type OneColorDeployOutcome =
+	| { ok: true; assetId: string }
+	| ({ ok: false } & OneColorDeployFailure);
+
+/**
+ * Deploys, then re-reads holdings whether or not it worked: a failure after
+ * signing can still leave a deploy on chain. Every failure, including a
+ * failed re-read, goes to `log` in full.
+ */
+export async function runOneColorDeploy(
+	ctx: OneSatContext,
+	input: OneColorDeployInput,
+	options: {
+		refresh: () => Promise<void>;
+		log: (operation: string, error: unknown) => void;
+		actions?: OneColorActionSet;
+	},
+): Promise<OneColorDeployOutcome> {
+	const refresh = async () => {
+		try {
+			await options.refresh();
+		} catch (error) {
+			options.log("holdings-refresh", error);
+		}
+	};
+	try {
+		const result = await executeOneColorDeploy(ctx, input, options.actions);
+		if (result.error || !result.assetId) {
+			throw new Error(result.error ?? "no-transaction");
+		}
+		await refresh();
+		return { ok: true, assetId: result.assetId };
+	} catch (error) {
+		options.log(
+			input.amount === 0n ? "deploy-authority" : "deploy-fixed",
+			error,
+		);
+		await refresh();
+		return { ok: false, ...describeOneColorDeployFailure(error) };
 	}
-	return "The 1Color deploy failed. Check your 1Color tokens before trying again.";
 }

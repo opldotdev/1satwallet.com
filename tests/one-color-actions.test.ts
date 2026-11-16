@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import type { Deploy1ColorInput, OneSatContext } from "@1sat/actions";
+import { HttpError } from "@1sat/client";
 import { OneColor } from "@1sat/templates";
-import { ColorPlan, ISSUE } from "@bsv/color-permission-module";
+import {
+	ColorConsentDeclinedError,
+	ColorPlan,
+	ISSUE,
+} from "@bsv/color-permission-module";
 import {
 	type CreateActionArgs,
 	LockingScript,
@@ -12,13 +17,16 @@ import {
 	type WalletInterface,
 } from "@bsv/sdk";
 import {
+	describeOneColorDeployFailure,
 	executeOneColorDeploy,
 	formatOneColorAmount,
 	ONE_COLOR_MAX_AMOUNT,
 	ONE_COLOR_MAX_ICON_BYTES,
 	type OneColorActionSet,
 	oneColorDeployFailureMessage,
+	oneColorSupplyError,
 	parseOneColorAmount,
+	runOneColorDeploy,
 } from "@/lib/wallet/one-color-actions";
 
 const ctx = { chain: "test" } as unknown as OneSatContext;
@@ -253,26 +261,177 @@ describe("executeOneColorDeploy", () => {
 	});
 });
 
-describe("oneColorDeployFailureMessage", () => {
-	it("maps each failure to a short, specific message", () => {
+describe("oneColorSupplyError", () => {
+	it("names the largest supply when the number parses but is over 2^64-1", () => {
+		assert.equal(
+			oneColorSupplyError("18446744073709551616", 0),
+			"The supply can be at most 18446744073709551615 with 0 decimals.",
+		);
+		assert.equal(
+			oneColorSupplyError("184467440737.09551616", 8),
+			"The supply can be at most 184467440737.09551615 with 8 decimals.",
+		);
+	});
+
+	it("keeps the places message for malformed or over-precise supplies", () => {
+		assert.match(oneColorSupplyError("1.001", 2), /at most 2 decimals/);
+		assert.match(oneColorSupplyError("0", 2), /positive fixed supply/);
+		assert.match(oneColorSupplyError("1", 19), /0 through 18/);
+	});
+});
+
+describe("describeOneColorDeployFailure", () => {
+	it("says nothing was sent only for the module's own consent refusal", () => {
+		for (const error of [
+			new ColorConsentDeclinedError("createAction"),
+			new Error(
+				"[ColorConsentDeclinedError] BRC-207: the user declined the createAction request",
+			),
+			"BRC-207: the user declined the createAction request",
+		]) {
+			assert.deepEqual(describeOneColorDeployFailure(error), {
+				message: "The wallet declined the deploy. Nothing was sent.",
+				mayHaveBeenSent: false,
+			});
+		}
+	});
+
+	it("treats overlay and other post-sign failures as possibly deployed", () => {
+		for (const error of [
+			new HttpError(502, "Bad Gateway"),
+			new TypeError("Failed to fetch"),
+			new Error("transaction rejected"),
+			new Error("User denied the request"),
+			new Error("Request cancelled"),
+			new Error("no-transaction"),
+			new Error("something unexpected"),
+		]) {
+			const failure = describeOneColorDeployFailure(error);
+			assert.equal(failure.mayHaveBeenSent, true, error.message);
+			assert.match(failure.message, /may have been deployed/, error.message);
+			assert.doesNotMatch(failure.message, /Nothing was sent/, error.message);
+		}
+	});
+
+	it("maps checks made before signing to specific messages", () => {
 		const cases: [string, RegExp][] = [
 			["decimals-out-of-range", /0 through 18/],
 			["dec must be an integer 0-18", /0 through 18/],
 			["amount-out-of-range", /2\^64-1/],
+			["amount must be between 0 and 2^64-1", /2\^64-1/],
 			["symbol-invalid", /at most 32 characters/],
 			["icon-too-large", /at most 100 KB/],
 			["icon-not-image", /image file/],
-			["no-transaction", /no transaction/],
-			["Insufficient funds in the available inputs", /Not enough BSV/],
-			["User denied the request", /declined/],
-			["1Color overlay https://x answered with a freeform answer", /overlay/],
-			["something unexpected", /1Color deploy failed/],
+			[
+				"WERR_INSUFFICIENT_FUNDS: Insufficient funds in the available inputs",
+				/Not enough BSV/,
+			],
 		];
 		for (const [error, expected] of cases) {
-			const message = oneColorDeployFailureMessage(new Error(error));
-			assert.match(message, expected, error);
-			assert.ok(message.length < 160, error);
+			const failure = describeOneColorDeployFailure(new Error(error));
+			assert.match(failure.message, expected, error);
+			assert.equal(failure.mayHaveBeenSent, false, error);
+			assert.equal(
+				oneColorDeployFailureMessage(new Error(error)),
+				failure.message,
+			);
+			assert.ok(failure.message.length < 160, error);
 		}
+	});
+});
+
+describe("runOneColorDeploy", () => {
+	const harness = (
+		deploy: OneColorActionSet["deploy"],
+		refreshFails = false,
+	) => {
+		const steps: string[] = [];
+		const logged: [string, unknown][] = [];
+		return {
+			steps,
+			logged,
+			options: {
+				actions: {
+					deploy: async (...args: Parameters<OneColorActionSet["deploy"]>) => {
+						steps.push("deploy");
+						return deploy(...args);
+					},
+				},
+				refresh: async () => {
+					steps.push("refresh");
+					if (refreshFails) throw new Error("listOutputs failed");
+				},
+				log: (operation: string, error: unknown) => {
+					logged.push([operation, error]);
+				},
+			},
+		};
+	};
+
+	it("re-reads holdings after a post-sign failure and logs the full error", async () => {
+		const { steps, logged, options } = harness(async () => ({
+			error: "Bad Gateway",
+		}));
+		const outcome = await runOneColorDeploy(
+			ctx,
+			{ amount: 5n, decimals: 0 },
+			options,
+		);
+		assert.deepEqual(steps, ["deploy", "refresh"]);
+		assert.equal(outcome.ok, false);
+		assert.equal(!outcome.ok && outcome.mayHaveBeenSent, true);
+		assert.equal(logged.length, 1);
+		assert.equal(logged[0][0], "deploy-fixed");
+		assert.equal((logged[0][1] as Error).message, "Bad Gateway");
+	});
+
+	it("still re-reads when the action throws, and logs a failed re-read", async () => {
+		const { steps, logged, options } = harness(async () => {
+			throw new TypeError("Failed to fetch");
+		}, true);
+		const outcome = await runOneColorDeploy(
+			ctx,
+			{ amount: 0n, decimals: 0 },
+			options,
+		);
+		assert.deepEqual(steps, ["deploy", "refresh"]);
+		assert.equal(!outcome.ok && outcome.mayHaveBeenSent, true);
+		assert.deepEqual(
+			logged.map(([operation]) => operation),
+			["deploy-authority", "holdings-refresh"],
+		);
+	});
+
+	it("reports a consent refusal as not sent", async () => {
+		const { options } = harness(async () => ({
+			error: new ColorConsentDeclinedError("createAction").message,
+		}));
+		const outcome = await runOneColorDeploy(
+			ctx,
+			{ amount: 5n, decimals: 0 },
+			options,
+		);
+		assert.deepEqual(outcome, {
+			ok: false,
+			message: "The wallet declined the deploy. Nothing was sent.",
+			mayHaveBeenSent: false,
+		});
+	});
+
+	it("re-reads holdings and returns the asset id on success", async () => {
+		const { steps, logged, options } = harness(async () => ({
+			txid,
+			tx: [1],
+			assetId: `${txid}_0`,
+		}));
+		const outcome = await runOneColorDeploy(
+			ctx,
+			{ amount: 5n, decimals: 0 },
+			options,
+		);
+		assert.deepEqual(outcome, { ok: true, assetId: `${txid}_0` });
+		assert.deepEqual(steps, ["deploy", "refresh"]);
+		assert.deepEqual(logged, []);
 	});
 });
 
@@ -287,8 +446,22 @@ describe("1Color deploy entry point", () => {
 		);
 		const component = read("components/wallet/one-color-deploy.tsx");
 		assert.match(component, /isOneColorAvailable\(chain\)/);
-		assert.match(component, /executeOneColorDeploy\(colorContext, review\)/);
+		assert.match(component, /runOneColorDeploy\(colorContext, review,/);
 		assert.doesNotMatch(component, /oneSatContext|\bwallet\b\s*[,}]/);
 		assert.match(component, /queryKey: \["one-color"\]/);
+	});
+
+	it("closes the review after a possible deploy and keeps Authorize busy until holdings are re-read", () => {
+		const component = read("components/wallet/one-color-deploy.tsx");
+		assert.match(
+			component,
+			/if \(outcome\.mayHaveBeenSent\) setReview\(null\)/,
+		);
+		const runAt = component.indexOf("await runOneColorDeploy(");
+		assert.ok(runAt > 0);
+		assert.ok(runAt < component.lastIndexOf("setBusy(false)"));
+		assert.match(component, /max-h-\[calc\(100dvh-2rem\)\] overflow-y-auto/);
+		assert.match(component, /Supply model/);
+		assert.match(component, /Mint authority/);
 	});
 });
