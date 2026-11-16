@@ -486,9 +486,11 @@ async function settle(
 }
 
 /**
- * Reads a whole box, window after window, up to `MAX_WINDOWS`. A window short
- * of `WINDOW` is the end. A message listed twice (the box shifted between
- * windows) is kept once; one shifted past a window is read next sync.
+ * Reads a whole box, window after window, up to `MAX_WINDOWS`. The box ends at
+ * an empty window or one that adds nothing new: a short window is not the end,
+ * since the client drops a message repeated when the box shifts mid-read, and a
+ * server that ignores `offset` repeats the same window. A message listed twice
+ * is kept once; one shifted past a window is read next sync.
  */
 async function listBox(client: InboxClient, host: string) {
 	const messages = new Map<string, PeerMessage>();
@@ -499,10 +501,13 @@ async function listBox(client: InboxClient, host: string) {
 			offset: index * WINDOW,
 			...PEERPAY_LISTING,
 		});
+		let added = 0;
 		for (const m of page) {
-			if (!messages.has(m.messageId)) messages.set(m.messageId, m);
+			if (messages.has(m.messageId)) continue;
+			messages.set(m.messageId, m);
+			added += 1;
 		}
-		if (page.length < WINDOW) return [...messages.values()];
+		if (page.length === 0 || added === 0) return [...messages.values()];
 	}
 	reportDiagnostic({
 		category: "action",
@@ -617,7 +622,9 @@ export async function syncPeerPayInbox(
 		for (let start = 0; start < ids.length; start += WINDOW) {
 			const messageIds = ids.slice(start, start + WINDOW);
 			try {
-				await clients.get(host)?.acknowledgeMessage({ messageIds, host });
+				const client = clients.get(host);
+				if (!client) throw new Error(`no message box client for ${host}`);
+				await client.acknowledgeMessage({ messageIds, host });
 				if (host === ownHost) ownAcknowledged += messageIds.length;
 			} catch (error) {
 				// In the wallet already: the next sync merges it and acknowledges again.

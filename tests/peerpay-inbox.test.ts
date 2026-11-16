@@ -381,7 +381,7 @@ describe("PeerPay inbox", () => {
 		);
 		assert.deepEqual(
 			run.listings.map((l) => l.offset),
-			[0, 1000],
+			[0, 1000, 2000],
 		);
 		assert.deepEqual(run.listings[0], {
 			messageBox: "payment_inbox",
@@ -392,6 +392,71 @@ describe("PeerPay inbox", () => {
 		assert.equal(internalized.length, 1);
 		assert.deepEqual(run.acknowledged, [{ host: OWN, messageIds: ["late"] }]);
 		assert.equal(run.result.leftOnOwnHost, 0);
+	});
+
+	it("keeps reading after a window cut short by a repeated message", async () => {
+		const listings: number[] = [];
+		const { wallet, internalized } = fakeWallet();
+		const late = message("late", await paidTx());
+		await quietConsole(() =>
+			syncPeerPayInbox({
+				hosts: [OWN],
+				clientFor: () => ({
+					async listMessages({ offset }) {
+						listings.push(offset);
+						// The box shifted mid-read: the first window lost one to a repeat.
+						if (offset === 0)
+							return Array.from({ length: 999 }, (_, i) => ({
+								...paymailMessage,
+								messageId: `j${i}`,
+							}));
+						if (offset === 1000) return [late];
+						return [];
+					},
+					async acknowledgeMessage() {
+						return "success";
+					},
+				}),
+				wallet,
+				record: () => undefined,
+				account: ACCOUNT,
+			}),
+		);
+		assert.deepEqual(listings, [0, 1000, 2000]);
+		assert.equal(internalized.length, 1);
+	});
+
+	it("stops after one repeat on a server that ignores offset", async () => {
+		const listings: number[] = [];
+		const { wallet } = fakeWallet();
+		const same = Array.from({ length: 1000 }, (_, i) => ({
+			...paymailMessage,
+			messageId: `s${i}`,
+		}));
+		const run = await quietConsole(() =>
+			syncPeerPayInbox({
+				hosts: [OWN],
+				clientFor: () => ({
+					async listMessages({ offset }) {
+						listings.push(offset);
+						return same;
+					},
+					async acknowledgeMessage() {
+						return "success";
+					},
+				}),
+				wallet,
+				record: () => undefined,
+				account: ACCOUNT,
+			}),
+		);
+		assert.deepEqual(listings, [0, 1000]);
+		assert.equal(
+			peerpayLogs(run.logged).some(([label]) =>
+				String(label).includes("windows"),
+			),
+			false,
+		);
 	});
 
 	it("stops at the window bound on a box that never ends, and logs the counts", async () => {
@@ -491,7 +556,8 @@ describe("PeerPay inbox", () => {
 				account: ACCOUNT,
 			}),
 		);
-		assert.equal(pages, 15);
+		// 10 pages for the first window, 5 for the second, 1 empty one to end.
+		assert.equal(pages, 16);
 		assert.deepEqual(run.result.unreachableHosts, []);
 		assert.equal(run.result.failed, 0);
 		assert.equal(run.result.processed, 1);
