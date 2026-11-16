@@ -5,9 +5,11 @@ import {
 } from "@bsv/message-box-client";
 import {
 	Beef,
-	Brc29RemittanceModule,
+	P2PKH,
 	PublicKey,
+	Transaction,
 	toBRC100PortableByteArray,
+	Validation,
 	type WalletInterface,
 } from "@bsv/sdk";
 import {
@@ -17,9 +19,9 @@ import {
 } from "@/lib/chain-endpoints";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
+	type InboxSyncOutcome,
 	type IncomingPaymentRecord,
-	loadIncomingPayments,
-	saveIncomingPayments,
+	saveInboxSync,
 } from "@/lib/wallet/incoming-payments";
 
 /**
@@ -31,15 +33,27 @@ import {
  * `IncomingPaymentsService` lists them.
  */
 
-/** TS `PeerPayClient` listing bounds: pages of 100, at most 10 of them. */
-const LISTING = { limit: 1000, pageSize: 100, maxPages: 10 } as const;
+/**
+ * One listing window: TS `PeerPayClient` bounds (pages of 100, at most 1000
+ * messages), asking for one more so a fuller box is noticed, not thrown on.
+ */
+const WINDOW = 1000;
+const LISTING = { limit: WINDOW + 1, pageSize: 100, maxPages: 11 } as const;
 
-/** The settlement `PeerPayClient.acceptPayment` runs, with its own config. */
-const PEERPAY_SETTLEMENT = new Brc29RemittanceModule({
-	protocolID: [2, "3241645161d8"],
-	labels: ["peerpay"],
-	description: "PeerPay payment",
-});
+/** What `PeerPayClient` derives the payment key under. */
+const PEERPAY_PROTOCOL: [2, string] = [2, "3241645161d8"];
+
+/** Short reasons the list shows. Full detail goes to the logs. */
+export const UNREADABLE_REASON = {
+	instructions: "The payment's key instructions are malformed.",
+	transaction: "The payment's transaction can't be read.",
+	amount: "The amount doesn't match the transaction.",
+	recipient: "The payment isn't addressed to this wallet.",
+} as const;
+export const RETRY_REASON = {
+	key: "The wallet couldn't derive this payment's key. It will be retried.",
+	wallet: "The wallet couldn't take this payment. It will be retried.",
+} as const;
 
 export interface PeerPayToken {
 	derivationPrefix: string;
@@ -71,23 +85,28 @@ export interface InboxClient {
 	}): Promise<unknown>;
 }
 
+export type InboxWallet = Pick<
+	WalletInterface,
+	"getPublicKey" | "internalizeAction"
+>;
+
 export interface PeerPayInboxDeps {
 	/** The own box first, then the further read boxes. */
 	hosts: string[];
 	clientFor: (host: string) => InboxClient;
-	/** Throws when the wallet did not take the payment. */
-	internalize: (payment: InboxPayment) => Promise<void>;
-	/** Payment keys already received: these are only acknowledged again. */
-	received: ReadonlySet<string>;
-	record: (records: IncomingPaymentRecord[]) => void;
+	wallet: InboxWallet;
+	record: (outcome: InboxSyncOutcome) => void;
 	now?: () => number;
 }
 
 export interface PeerPayInboxResult {
 	processed: number;
+	/** Payments the wallet could not take, boxes not read, acknowledgements refused. */
 	failed: number;
 	/** PeerPay messages still in the own box, which `syncMessages` also counts as failed. */
 	leftOnOwnHost: number;
+	/** Boxes that could not be read this time. */
+	unreachableHosts: string[];
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -190,16 +209,6 @@ export function paymentKeyOf(payment: InboxPayment): string {
 		: `msg:${payment.messageId}:${payment.host}:${payment.sender}`;
 }
 
-function errorText(error: unknown): string {
-	const cause =
-		error instanceof Error && error.cause instanceof Error ? error.cause : null;
-	const text =
-		cause?.message ||
-		(error instanceof Error ? error.message : String(error)) ||
-		"Unknown error";
-	return text.length > 160 ? `${text.slice(0, 157)}…` : text;
-}
-
 function logFailure(
 	operation: string,
 	detail: Record<string, unknown>,
@@ -214,11 +223,165 @@ function logFailure(
 	console.error(`[peerpay] ${operation} failed`, { ...detail, error });
 }
 
+const paymentDetail = (payment: InboxPayment) => ({
+	host: payment.host,
+	messageId: payment.messageId,
+	sender: payment.sender,
+	satoshis: payment.token.amount,
+});
+
+type Inspection =
+	| { ok: true; prefix: string; suffix: string; script: string }
+	| { ok: false; reason: string; error: unknown };
+
 /**
- * Lists every box, internalizes each PeerPay payment once, and acknowledges it
- * on the box it came from, with its copies on the other boxes. A payment the
- * wallet did not take is not acknowledged anywhere, so the next sync retries
- * it. Never throws: every failure is logged and counted.
+ * The checks that need no wallet, as `Brc29RemittanceModule` makes them:
+ * base64 derivation fields (`validateBase64String`), an Atomic BEEF that
+ * parses, and an output at the index paying the claimed amount.
+ */
+function inspectToken(payment: InboxPayment): Inspection {
+	const { token } = payment;
+	let prefix: string;
+	let suffix: string;
+	try {
+		prefix = Validation.validateBase64String(
+			token.derivationPrefix,
+			"derivationPrefix",
+		);
+		suffix = Validation.validateBase64String(
+			token.derivationSuffix,
+			"derivationSuffix",
+		);
+	} catch (error) {
+		return { ok: false, reason: UNREADABLE_REASON.instructions, error };
+	}
+	let tx: Transaction;
+	try {
+		tx = Transaction.fromAtomicBEEF(token.transaction);
+	} catch (error) {
+		return { ok: false, reason: UNREADABLE_REASON.transaction, error };
+	}
+	const output = tx.outputs[token.outputIndex];
+	if (!output) {
+		return {
+			ok: false,
+			reason: UNREADABLE_REASON.transaction,
+			error: new Error(`No output ${token.outputIndex} in ${tx.id("hex")}`),
+		};
+	}
+	if (output.satoshis !== token.amount) {
+		return {
+			ok: false,
+			reason: UNREADABLE_REASON.amount,
+			error: new Error(
+				`Output pays ${output.satoshis}, token claims ${token.amount}`,
+			),
+		};
+	}
+	return { ok: true, prefix, suffix, script: output.lockingScript.toHex() };
+}
+
+type Settlement =
+	| { status: "received"; payment: InboxPayment }
+	| {
+			status: "failed" | "unreadable";
+			payment: InboxPayment;
+			reason: string;
+	  };
+
+/** Unreadable payments already logged this session, so each is logged once. */
+const loggedUnreadable = new Set<string>();
+
+/**
+ * Takes one payment from the copies of it that were listed: the first copy
+ * that passes the local checks and pays this wallet's derived key is
+ * internalized. Only the key lookup or `internalizeAction` failing is a
+ * retryable failure; a payment no copy of which passes is unreadable.
+ */
+async function settle(
+	key: string,
+	copies: InboxPayment[],
+	wallet: InboxWallet,
+): Promise<Settlement> {
+	let unreadable: { payment: InboxPayment; reason: string } | null = null;
+	const problems: { messageId: string; host: string; error: unknown }[] = [];
+	for (const payment of copies) {
+		const inspected = inspectToken(payment);
+		if (!inspected.ok) {
+			unreadable ??= { payment, reason: inspected.reason };
+			problems.push({ ...paymentDetail(payment), error: inspected.error });
+			continue;
+		}
+		let expected: string;
+		try {
+			const { publicKey } = await wallet.getPublicKey({
+				protocolID: PEERPAY_PROTOCOL,
+				keyID: `${inspected.prefix} ${inspected.suffix}`,
+				counterparty: payment.sender,
+				forSelf: true,
+			});
+			expected = new P2PKH()
+				.lock(PublicKey.fromString(publicKey).toHash())
+				.toHex();
+		} catch (error) {
+			logFailure("derive-key", paymentDetail(payment), error);
+			return { status: "failed", payment, reason: RETRY_REASON.key };
+		}
+		if (expected !== inspected.script) {
+			unreadable ??= { payment, reason: UNREADABLE_REASON.recipient };
+			problems.push({
+				...paymentDetail(payment),
+				error: new Error("Output script is not this wallet's derived P2PKH"),
+			});
+			continue;
+		}
+		try {
+			// The request `PeerPayClient.acceptPayment` sends through its
+			// BRC-29 settlement module.
+			const result = await wallet.internalizeAction({
+				tx: payment.token.transaction,
+				outputs: [
+					{
+						outputIndex: payment.token.outputIndex,
+						protocol: "wallet payment",
+						paymentRemittance: {
+							derivationPrefix: inspected.prefix,
+							derivationSuffix: inspected.suffix,
+							senderIdentityKey: payment.sender,
+						},
+					},
+				],
+				labels: ["peerpay"],
+				description: "BRC-29 payment received",
+			});
+			if (result?.accepted !== true) {
+				throw new Error("internalizeAction did not accept the payment");
+			}
+		} catch (error) {
+			logFailure("internalize", paymentDetail(payment), error);
+			return { status: "failed", payment, reason: RETRY_REASON.wallet };
+		}
+		return { status: "received", payment };
+	}
+	const first = unreadable ?? { payment: copies[0], reason: "" };
+	if (!loggedUnreadable.has(key)) {
+		loggedUnreadable.add(key);
+		console.warn("[peerpay] payment can't be accepted; left in the box", {
+			key,
+			reason: first.reason,
+			copies: problems,
+		});
+	}
+	return { status: "unreadable", ...first };
+}
+
+/**
+ * Lists every box, takes each PeerPay payment into the wallet, and
+ * acknowledges it on the box it came from, with its copies on the other boxes.
+ * A payment not taken is acknowledged nowhere: a failed one is retried next
+ * sync, an unreadable one stays in the box. Wallet storage is the source of
+ * truth, so every listed payment is internalized; one the wallet already
+ * holds merges. Never throws: every failure is logged and counted.
  */
 export async function syncPeerPayInbox(
 	deps: PeerPayInboxDeps,
@@ -237,78 +400,59 @@ export async function syncPeerPayInbox(
 				host,
 				...LISTING,
 			});
-			return messages.flatMap((m) => peerPayPaymentOf(m, host) ?? []);
+			if (messages.length > WINDOW) {
+				console.warn(
+					`[peerpay] ${host} holds more than ${WINDOW} messages; the rest are read on a later sync`,
+				);
+			}
+			const payments = messages.flatMap((m) => peerPayPaymentOf(m, host) ?? []);
+			return { payments: payments.slice(0, WINDOW), total: payments.length };
 		}),
 	);
 
-	// Merge in host order, own box first: the first copy of a payment is the
-	// one taken; later copies are only acknowledged with it.
-	const originals: { key: string; payment: InboxPayment }[] = [];
-	const copiesOf = new Map<string, InboxPayment[]>();
+	// Group copies of one payment in host order, own box first.
+	const groups = new Map<string, InboxPayment[]>();
+	const listedHosts: string[] = [];
+	const unreachableHosts: string[] = [];
 	let ownPeerPay = 0;
 	listings.forEach((listing, index) => {
 		const host = deps.hosts[index];
 		if (listing.status === "rejected") {
 			logFailure("list", { host }, listing.reason);
-			// An unreadable own box fails the task; a further box is noted only.
-			if (host === ownHost) failed += 1;
+			unreachableHosts.push(host);
+			failed += 1;
 			return;
 		}
-		if (host === ownHost) ownPeerPay = listing.value.length;
-		for (const payment of listing.value) {
+		listedHosts.push(host);
+		if (host === ownHost) ownPeerPay = listing.value.total;
+		for (const payment of listing.value.payments) {
 			const key = paymentKeyOf(payment);
-			const copies = copiesOf.get(key);
-			if (copies) {
-				copies.push(payment);
-				continue;
-			}
-			copiesOf.set(key, []);
-			originals.push({ key, payment });
+			groups.set(key, [...(groups.get(key) ?? []), payment]);
 		}
 	});
 
 	const acks = new Map<string, string[]>();
-	const queueAck = (payment: InboxPayment) =>
-		acks.set(payment.host, [
-			...(acks.get(payment.host) ?? []),
-			payment.messageId,
-		]);
-	const records: IncomingPaymentRecord[] = [];
-
-	for (const { key, payment } of originals) {
-		const copies = copiesOf.get(key) ?? [];
-		const record = {
+	const updates: IncomingPaymentRecord[] = [];
+	for (const [key, copies] of groups) {
+		const settled = await settle(key, copies, deps.wallet);
+		const { payment } = settled;
+		updates.push({
 			key,
 			messageId: payment.messageId,
 			host: payment.host,
 			sender: payment.sender,
 			satoshis: payment.token.amount,
 			createdAt: payment.createdAt,
+			status: settled.status,
+			reason: settled.status === "received" ? null : settled.reason,
 			updatedAt: now(),
-		};
-		if (!deps.received.has(key)) {
-			try {
-				await deps.internalize(payment);
-			} catch (error) {
-				logFailure(
-					"internalize",
-					{
-						host: payment.host,
-						messageId: payment.messageId,
-						sender: payment.sender,
-						satoshis: payment.token.amount,
-					},
-					error,
-				);
-				records.push({ ...record, status: "failed", reason: errorText(error) });
-				failed += 1;
-				continue;
-			}
-			records.push({ ...record, status: "received", reason: null });
-			processed += 1;
+		});
+		if (settled.status === "failed") failed += 1;
+		if (settled.status !== "received") continue;
+		processed += 1;
+		for (const copy of copies) {
+			acks.set(copy.host, [...(acks.get(copy.host) ?? []), copy.messageId]);
 		}
-		queueAck(payment);
-		for (const copy of copies) queueAck(copy);
 	}
 
 	let ownAcknowledged = 0;
@@ -317,54 +461,28 @@ export async function syncPeerPayInbox(
 			await clients.get(host)?.acknowledgeMessage({ messageIds, host });
 			if (host === ownHost) ownAcknowledged = messageIds.length;
 		} catch (error) {
-			// Received already: the next sync only acknowledges it again.
+			// In the wallet already: the next sync merges it and acknowledges again.
 			logFailure("acknowledge", { host, messageIds }, error);
+			failed += 1;
 		}
 	}
 
 	try {
-		deps.record(records);
+		deps.record({
+			updates,
+			listedHosts,
+			listedKeys: new Set(groups.keys()),
+			unreachableHosts,
+		});
 	} catch (error) {
-		logFailure("record", { count: records.length }, error);
+		logFailure("record", { count: updates.length }, error);
 	}
 
 	return {
 		processed,
 		failed,
 		leftOnOwnHost: Math.max(0, ownPeerPay - ownAcknowledged),
-	};
-}
-
-/** Internalizes a token exactly as TS `PeerPayClient.acceptPayment` does. */
-export function peerPayInternalizer(wallet: WalletInterface) {
-	return async (payment: InboxPayment): Promise<void> => {
-		let cause: unknown;
-		const capture = (_message: unknown, error?: unknown) => {
-			cause = error;
-		};
-		const result = await PEERPAY_SETTLEMENT.acceptSettlement(
-			{
-				threadId: "peerpay",
-				sender: payment.sender,
-				settlement: {
-					customInstructions: {
-						derivationPrefix: payment.token.derivationPrefix,
-						derivationSuffix: payment.token.derivationSuffix,
-					},
-					transaction: payment.token.transaction,
-					amountSatoshis: payment.token.amount,
-					outputIndex: payment.token.outputIndex,
-				},
-			},
-			{
-				wallet,
-				now: Date.now,
-				logger: { log: () => undefined, warn: capture, error: capture },
-			},
-		);
-		if (result.action !== "accept") {
-			throw new Error(result.termination.message, { cause });
-		}
+		unreachableHosts,
 	};
 }
 
@@ -389,28 +507,33 @@ export function syncAccountPeerPayInbox(
 	chain: Chain,
 	identityKey: string,
 ): Promise<PeerPayInboxResult> {
-	const scope = { chain, identityKey };
 	return syncPeerPayInbox({
 		hosts: messageboxReadHostsOf(chain),
 		clientFor: (host) => messageBoxClientFor(wallet, chain, host),
-		internalize: peerPayInternalizer(wallet),
-		received: new Set(
-			loadIncomingPayments(scope)
-				.filter((r) => r.status === "received")
-				.map((r) => r.key),
-		),
-		record: (records) => saveIncomingPayments(scope, records),
+		wallet,
+		record: (outcome) => saveInboxSync({ chain, identityKey }, outcome),
 	});
 }
 
+/** Logs a paymail sync that threw; the PeerPay result is kept. */
+export function paymailSyncFailed(error: unknown): null {
+	logFailure("paymail-sync", {}, error);
+	return null;
+}
+
 /**
- * The payments task's result: PeerPay plus paymail. A PeerPay message left in
- * the own box is one failure, though `syncMessages` also fails to read it.
+ * The payments task's result: PeerPay plus paymail, each logged on its own.
+ * A PeerPay message left in the own box is counted once, though
+ * `syncMessages` also fails to read it. A paymail sync that threw is one
+ * failure.
  */
 export function combineInboxResults(
 	peerPay: PeerPayInboxResult,
-	paymail: { processed: number; failed: number },
+	paymail: { processed: number; failed: number } | null,
 ): { processed: number; failed: number } {
+	if (!paymail) {
+		return { processed: peerPay.processed, failed: peerPay.failed + 1 };
+	}
 	return {
 		processed: peerPay.processed + paymail.processed,
 		failed:

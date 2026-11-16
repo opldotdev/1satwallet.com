@@ -13,6 +13,7 @@ import { endpointsOf } from "@/lib/chain-endpoints";
 import { RECEIVE_ADDRESS_PREFIX } from "@/lib/receive-address-manager";
 import {
 	combineInboxResults,
+	paymailSyncFailed,
 	syncAccountPeerPayInbox,
 } from "@/lib/wallet/peerpay-inbox";
 
@@ -228,7 +229,12 @@ export function useSyncEngine({
 					chain,
 					identityKey,
 				);
-				const paymail = await syncMessages.execute(ctx, { messageboxUrl });
+				let paymail = null;
+				try {
+					paymail = await syncMessages.execute(ctx, { messageboxUrl });
+				} catch (error) {
+					paymailSyncFailed(error);
+				}
 				return combineInboxResults(peerPay, paymail);
 			},
 			cosignDeliveries: () =>
