@@ -42,17 +42,42 @@ function getItem(storage: ReadStorage | undefined, key: string): string | null {
  */
 export function accountNetworkOf(raw: string | null | undefined): Chain | null {
 	if (!raw) return null;
+	let envelope: unknown;
 	try {
-		const envelope = JSON.parse(raw) as unknown;
-		if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
-			return null;
-		}
-		return (envelope as { network?: unknown }).network === "test"
-			? "test"
-			: "main";
-	} catch {
+		envelope = JSON.parse(raw);
+	} catch (error) {
+		// The envelope holds only ciphertext and the salt's public key, so the
+		// parse error carries no key material.
+		console.error(
+			"[wallet-chain] the stored wallet envelope is not JSON",
+			error,
+		);
 		return null;
 	}
+	if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+		return null;
+	}
+	return (envelope as { network?: unknown }).network === "test"
+		? "test"
+		: "main";
+}
+
+/** A storage event that replaces or removes the wallet: its key, or clear(). */
+export const isWalletStorageEvent = (key: string | null): boolean =>
+	key === null || key === WALLET_STORAGE_KEY;
+
+/**
+ * Whether a wallet is stored after a storage event; undefined when the event
+ * does not touch the wallet. clear() in another tab (key null) carries no
+ * value, so storage is read again.
+ */
+export function walletStoredAfter(
+	event: { key: string | null; newValue: string | null },
+	storage: ReadStorage | undefined,
+): boolean | undefined {
+	if (!isWalletStorageEvent(event.key)) return undefined;
+	if (event.key === WALLET_STORAGE_KEY) return !!event.newValue;
+	return !!getItem(storage, WALLET_STORAGE_KEY);
 }
 
 export function resolveActiveChain(storage: ReadStorage | undefined): Chain {
@@ -117,7 +142,10 @@ export interface WalletChainStore {
 	read(): Chain;
 	refresh(): void;
 	subscribe(listener: () => void): () => void;
-	/** True once, after the migration found the old testnet setting. */
+	/**
+	 * True once, after the migration found the old testnet setting and a
+	 * built-in wallet is stored.
+	 */
 	takeLegacyTestnetNotice(): boolean;
 }
 
@@ -147,8 +175,7 @@ export function createWalletChainStore(
 		legacyTestnet = migrateLegacyWalletChain(env.storage()).wasTestnet;
 		current = compute();
 		events.addEventListener("storage", (event) => {
-			const key = (event as StorageEvent).key;
-			if (key === null || key === WALLET_STORAGE_KEY) refresh();
+			if (isWalletStorageEvent((event as StorageEvent).key)) refresh();
 		});
 		return current;
 	}
@@ -177,7 +204,10 @@ export function createWalletChainStore(
 		},
 		takeLegacyTestnetNotice() {
 			read();
-			const show = legacyTestnet;
+			// Only a stored built-in account was moved to mainnet; with no wallet
+			// there is nothing to tell.
+			const show =
+				legacyTestnet && getItem(env.storage(), WALLET_STORAGE_KEY) !== null;
 			legacyTestnet = false;
 			return show;
 		},
@@ -199,6 +229,9 @@ const store = createWalletChainStore({
 	events: () => (typeof window === "undefined" ? undefined : window),
 });
 
+/** The stored built-in account's network; null with no readable wallet. */
+export const storedAccountNetwork = (): Chain | null =>
+	accountNetworkOf(getItem(browserStorage(), WALLET_STORAGE_KEY));
 /** The active account's chain. Mainnet on the server. */
 export const readWalletChain = (): Chain => store.read();
 /** Recomputes the active chain and notifies subscribers if it changed. */
@@ -206,6 +239,6 @@ export const refreshWalletChain = (): void => store.refresh();
 /** Fires when the active chain changes. */
 export const subscribeWalletChain = (listener: () => void): (() => void) =>
 	store.subscribe(listener);
-/** True once per page load, after the old testnet setting was migrated. */
+/** True once per page load, after the old testnet setting was migrated for a stored wallet. */
 export const takeLegacyTestnetNotice = (): boolean =>
 	store.takeLegacyTestnetNotice();

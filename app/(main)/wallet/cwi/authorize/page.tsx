@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { isValidRedirectMethod } from "@/lib/cwi/redirect-utils";
 import { toCWIErrorFields } from "@/lib/cwi/types";
-import { useWallet } from "@/providers/wallet-provider";
+import { useWallet, WalletSaveError } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 interface PendingAuthRequest {
@@ -244,8 +244,12 @@ function AuthorizeContent() {
 				if (!success) {
 					setUnlockError("Invalid passphrase");
 				}
-			} catch {
-				setUnlockError("Unable to unlock wallet. Please try again.");
+			} catch (error) {
+				setUnlockError(
+					error instanceof WalletSaveError
+						? error.message
+						: "Unable to unlock wallet. Please try again.",
+				);
 			} finally {
 				setPassphrase("");
 				setIsUnlocking(false);

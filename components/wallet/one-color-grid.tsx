@@ -2,7 +2,6 @@
 
 import { Coins, KeyRound, Loader2 } from "lucide-react";
 import Image from "next/image";
-import Link from "next/link";
 import { type ReactNode, useSyncExternalStore } from "react";
 import { useOneColorBalances } from "@/hooks/use-one-color-balances";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
@@ -91,8 +90,8 @@ export default function OneColorGrid() {
 		useWalletToolbox();
 	const query = useOneColorBalances();
 	// The page prerenders as mainnet, so nothing chain-specific renders until
-	// the client knows the saved network: a testnet wallet never flashes the
-	// "testnet only" notice and hydration never mismatches.
+	// the client knows the active account's network: a testnet account never
+	// flashes the "testnet only" notice and hydration never mismatches.
 	const mounted = useSyncExternalStore(
 		noSubscription,
 		() => true,
@@ -105,11 +104,8 @@ export default function OneColorGrid() {
 		return (
 			<Notice>
 				<p>
-					1Color tokens are on testnet only. Switch the network in{" "}
-					<Link className="underline" href="/wallet/settings">
-						Wallet settings
-					</Link>{" "}
-					to see them.
+					1Color tokens are on testnet only, and this wallet is a mainnet
+					account.
 				</p>
 			</Notice>
 		);

@@ -7,6 +7,7 @@ import {
 	accountNetworkOf,
 	createWalletChainStore,
 	EXTERNAL_NETWORK_KEY,
+	isWalletStorageEvent,
 	LEGACY_WALLET_CHAIN_KEY,
 	migrateLegacyWalletChain,
 	parseWalletChain,
@@ -15,6 +16,7 @@ import {
 	syncWalletChainCookie,
 	WALLET_CHAIN_COOKIE,
 	WALLET_CONNECTION_MODE_KEY,
+	walletStoredAfter,
 } from "../lib/wallet-chain";
 
 const MAIN_ENVELOPE = JSON.stringify({
@@ -101,12 +103,17 @@ describe("active chain", () => {
 			resolveActiveChain(memoryStorage({ encryptedBackup: TEST_ENVELOPE })),
 			"test",
 		);
-		assert.equal(
-			resolveActiveChain(memoryStorage({ encryptedBackup: "{not json" })),
-			"main",
-		);
+		// An unreadable envelope is logged, never swallowed.
+		const errors = logged(() => {
+			assert.equal(
+				resolveActiveChain(memoryStorage({ encryptedBackup: "{not json" })),
+				"main",
+			);
+			assert.equal(accountNetworkOf("{not json"), null);
+		});
+		assert.equal(errors.length, 2);
+		assert.match(String(errors[0][0]), /not JSON/);
 		assert.equal(accountNetworkOf(null), null);
-		assert.equal(accountNetworkOf("{not json"), null);
 		assert.equal(accountNetworkOf("[]"), null);
 		assert.equal(accountNetworkOf(MAIN_ENVELOPE), "main");
 		assert.equal(accountNetworkOf(TEST_ENVELOPE), "test");
@@ -150,6 +157,14 @@ describe("legacy network setting migration", () => {
 		assert.equal(storage.values.get("encryptedBackup"), MAIN_ENVELOPE);
 		assert.deepEqual(storage.writes, [`remove:${LEGACY_WALLET_CHAIN_KEY}`]);
 		assert.equal(store.takeLegacyTestnetNotice(), true);
+		assert.equal(store.takeLegacyTestnetNotice(), false);
+	});
+
+	it("shows the notice only when a built-in wallet is stored", () => {
+		const storage = memoryStorage({ [LEGACY_WALLET_CHAIN_KEY]: "test" });
+		const { store } = storeFor(storage);
+		assert.equal(store.read(), "main");
+		assert.equal(storage.values.has(LEGACY_WALLET_CHAIN_KEY), false);
 		assert.equal(store.takeLegacyTestnetNotice(), false);
 	});
 
@@ -234,6 +249,46 @@ describe("chain store", () => {
 		assert.equal(calls, 1);
 	});
 
+	it("treats clear() in another tab as the wallet being removed", () => {
+		const storage = memoryStorage({ encryptedBackup: TEST_ENVELOPE });
+		const { store, events } = storeFor(storage);
+		assert.equal(store.read(), "test");
+		storage.values.clear();
+		events.dispatchEvent(storageEvent(null));
+		assert.equal(store.read(), "main");
+
+		assert.equal(isWalletStorageEvent(null), true);
+		assert.equal(isWalletStorageEvent("encryptedBackup"), true);
+		assert.equal(isWalletStorageEvent(WALLET_CONNECTION_MODE_KEY), false);
+		const empty = memoryStorage();
+		assert.equal(
+			walletStoredAfter({ key: null, newValue: null }, empty),
+			false,
+		);
+		assert.equal(
+			walletStoredAfter(
+				{ key: null, newValue: null },
+				memoryStorage({ encryptedBackup: MAIN_ENVELOPE }),
+			),
+			true,
+		);
+		assert.equal(
+			walletStoredAfter({ key: "encryptedBackup", newValue: null }, empty),
+			false,
+		);
+		assert.equal(
+			walletStoredAfter(
+				{ key: "encryptedBackup", newValue: MAIN_ENVELOPE },
+				empty,
+			),
+			true,
+		);
+		assert.equal(
+			walletStoredAfter({ key: "other", newValue: null }, empty),
+			undefined,
+		);
+	});
+
 	it("mirrors the chain into a cookie, writing only on a change", () => {
 		const storage = memoryStorage({ encryptedBackup: TEST_ENVELOPE });
 		const { store, jar } = storeFor(storage);
@@ -279,8 +334,8 @@ describe("chain store", () => {
 	});
 });
 
-function storageEvent(key: string) {
-	const event = new Event("storage") as Event & { key: string };
+function storageEvent(key: string | null) {
+	const event = new Event("storage") as Event & { key: string | null };
 	Object.defineProperty(event, "key", { value: key });
 	return event;
 }

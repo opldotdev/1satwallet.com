@@ -4,6 +4,8 @@ import { describe, test } from "node:test";
 import { PrivateKey, Utils } from "@bsv/sdk";
 import { encryptBackup } from "bitcoin-backup";
 import {
+	backupRestoreErrorMessage,
+	classifyBackupRestoreError,
 	decryptWalletBackup,
 	detectWalletBackup,
 	wifNetwork,
@@ -16,6 +18,7 @@ import {
 	loadEncryptedWallet,
 	parseEncryptedBackupJson,
 	reencryptWallet,
+	WalletSaveError,
 } from "../lib/wallet-storage";
 
 class MemoryStorage {
@@ -105,6 +108,46 @@ describe("wallet backup and restore", () => {
 		);
 		await assert.rejects(decryptWalletBackup(detected, "wrong-password"));
 		assert.equal(storage.value, original);
+	});
+
+	test("turns a failed restore into a short message, never the raw error", async () => {
+		const encrypted = await createEncryptedWalletBackup(
+			keys,
+			"correct-password",
+		);
+		const detected = detectWalletBackup(
+			new TextEncoder().encode(JSON.stringify(encrypted)),
+			"wallet.json",
+		);
+		const wrong = await decryptWalletBackup(detected, "wrong-password").then(
+			() => assert.fail("a wrong password must not decrypt"),
+			(error: unknown) => error,
+		);
+		assert.equal(classifyBackupRestoreError(wrong), "wrong-password");
+		const yours = detectWalletBackup(await fixture("yours-v6"), "yours.zip");
+		const yoursWrong = await decryptWalletBackup(yours, "wrong-password").then(
+			() => assert.fail("a wrong password must not decrypt"),
+			(error: unknown) => error,
+		);
+		assert.equal(classifyBackupRestoreError(yoursWrong), "wrong-password");
+		assert.equal(
+			classifyBackupRestoreError(
+				new Error("Backup is missing valid payment or ordinal keys"),
+			),
+			"invalid-keys",
+		);
+		assert.equal(
+			backupRestoreErrorMessage("wrong-password", true),
+			"Incorrect backup password, or the file is damaged.",
+		);
+		assert.equal(
+			backupRestoreErrorMessage("wrong-password", false),
+			"This backup could not be decrypted. The file may be damaged.",
+		);
+		assert.equal(
+			backupRestoreErrorMessage("invalid-keys", true),
+			"This backup's keys are invalid or incomplete.",
+		);
 	});
 
 	test("reads independently generated current and 2024 Yours fixtures", async () => {
@@ -246,6 +289,54 @@ describe("account network in backups", () => {
 		const decrypted = await decryptEncryptedWalletBackup(rewritten, password);
 		assert.equal(decrypted.network, "test");
 		assert.equal(decrypted.keys.ordAddressPath, "m/0/1");
+	});
+
+	test("a failed repair write keeps the wallet locked with its own message", async () => {
+		const envelope = await createEncryptedWalletBackup(keys, password, "test");
+		const { network: _stripped, ...stripped } = envelope;
+		const original = JSON.stringify(stripped);
+		const storage = new MemoryStorage(original);
+		storage.failVerification = true;
+		// Both failures report a diagnostic; keep the console quiet (and free of
+		// any console patch another test file installed).
+		const originalError = console.error;
+		const reported: unknown[][] = [];
+		console.error = (...args: unknown[]) => void reported.push(args);
+		try {
+			await assert.rejects(
+				loadEncryptedWallet(password, storage),
+				(error: unknown) =>
+					error instanceof WalletSaveError &&
+					/Couldn't update this wallet's saved data\. Free some browser storage and try again\./.test(
+						error.message,
+					) &&
+					error.cause instanceof Error,
+			);
+			assert.equal(storage.value, original);
+			// A wrong password is still a plain refusal.
+			assert.equal(await loadEncryptedWallet("wrong", storage), null);
+		} finally {
+			console.error = originalError;
+		}
+		assert.deepEqual(
+			reported.map(([, event]) => (event as { operation: string }).operation),
+			["wallet.storage.repair", "wallet.storage.unlock"],
+		);
+	});
+
+	test("re-encryption keeps the unlocked network when the envelope is stripped", async () => {
+		const envelope = await createEncryptedWalletBackup(keys, password, "test");
+		const storage = new MemoryStorage(JSON.stringify(envelope));
+		assert.ok(await loadEncryptedWallet(password, storage));
+		const { network: _stripped, ...stripped } = envelope;
+		storage.value = JSON.stringify(stripped);
+		assert.equal(await reencryptWallet(keys, storage), true);
+		const rewritten = parseEncryptedBackupJson(JSON.parse(storage.value ?? ""));
+		assert.equal(rewritten.network, "test");
+		assert.equal(
+			(await decryptEncryptedWalletBackup(rewritten, password)).network,
+			"test",
+		);
 	});
 
 	test("rejects any network value other than test", () => {

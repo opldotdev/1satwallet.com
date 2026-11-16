@@ -46,10 +46,24 @@ const getLocalStorage = (): Storage | undefined => {
 // --- Encryption Key Cache (for migration re-encryption) ---
 let cachedEncryptionKey: Uint8Array | null = null;
 let cachedPubKeySalt: string | null = null;
+/** The account's network as resolved at unlock or save, kept with the key. */
+let cachedNetwork: Chain | null = null;
 
 export function clearCachedEncryptionKey(): void {
 	cachedEncryptionKey = null;
 	cachedPubKeySalt = null;
+	cachedNetwork = null;
+}
+
+/** The wallet decrypted, but its saved data could not be updated. */
+export class WalletSaveError extends Error {
+	constructor(cause: unknown) {
+		super(
+			"Couldn't update this wallet's saved data. Free some browser storage and try again.",
+			{ cause },
+		);
+		this.name = "WalletSaveError";
+	}
 }
 
 export function parseEncryptedBackupJson(value: unknown): EncryptedBackupJson {
@@ -274,15 +288,6 @@ export async function decryptEncryptedWalletBackup(
 	};
 }
 
-/** The network of the stored wallet envelope; mainnet when it has none. */
-function storedNetwork(storage: Pick<Storage, "getItem">): Chain {
-	const stored = storage.getItem(WALLET_STORAGE_KEY);
-	if (!stored) throw new Error("No stored wallet to re-encrypt");
-	return parseEncryptedBackupJson(JSON.parse(stored)).network === "test"
-		? "test"
-		: "main";
-}
-
 /**
  * Re-encrypt wallet data using the cached encryption key.
  * Used during migration to update stored keys without requiring the passphrase again.
@@ -291,11 +296,17 @@ export const reencryptWallet = async (
 	keys: Keys,
 	storage: WalletStorage | undefined = getLocalStorage(),
 ): Promise<boolean> => {
-	if (!storage || !cachedEncryptionKey || !cachedPubKeySalt) return false;
+	if (!storage || !cachedEncryptionKey || !cachedPubKeySalt || !cachedNetwork)
+		return false;
 
 	try {
+		if (!storage.getItem(WALLET_STORAGE_KEY)) {
+			throw new Error("No stored wallet to re-encrypt");
+		}
 		// The network is fixed at create/import; re-encryption never changes it.
-		const network = storedNetwork(storage);
+		// It comes from the unlock or save, never from the envelope, whose
+		// field could have been stripped.
+		const network = cachedNetwork;
 		const dataStr = JSON.stringify(walletPayload(keys, network));
 		const dataBytes = new TextEncoder().encode(dataStr);
 
@@ -353,6 +364,7 @@ export const saveEncryptedWallet = async (
 				backupJson.pubKey,
 			)) ?? null;
 		cachedPubKeySalt = backupJson.pubKey;
+		cachedNetwork = network;
 		notifyWalletStorage(serialized);
 		return true;
 	} catch {
@@ -366,6 +378,10 @@ export const saveEncryptedWallet = async (
 	}
 };
 
+/**
+ * Decrypts the stored wallet. Null for a wrong password or unreadable data;
+ * throws WalletSaveError when it decrypted but a needed repair write failed.
+ */
 export const loadEncryptedWallet = async (
 	passphrase: string,
 	storage: WalletStorage | undefined = getLocalStorage(),
@@ -385,12 +401,17 @@ export const loadEncryptedWallet = async (
 		// A testnet account whose envelope lost its field (the payload is
 		// authenticated, the envelope is not): restore it before the keys are
 		// handed out, so the wallet never initializes on mainnet. No synthetic
-		// storage event here: it would lock the wallet being unlocked.
+		// storage event here: it would lock the wallet being unlocked. If the
+		// write fails the wallet stays locked, with its own message.
 		if (network === "test" && encryptedKeys.network !== "test") {
-			commitWalletBackup(
-				storage,
-				JSON.stringify({ ...encryptedKeys, network: "test" }),
-			);
+			try {
+				commitWalletBackup(
+					storage,
+					JSON.stringify({ ...encryptedKeys, network: "test" }),
+				);
+			} catch (error) {
+				throw new WalletSaveError(error);
+			}
 			refreshWalletChain();
 		}
 
@@ -400,14 +421,17 @@ export const loadEncryptedWallet = async (
 				encryptedKeys.pubKey,
 			)) ?? null;
 		cachedPubKeySalt = encryptedKeys.pubKey;
+		cachedNetwork = network;
 		return keys;
-	} catch {
+	} catch (error) {
+		const repair = error instanceof WalletSaveError;
 		reportDiagnostic({
 			category: "action",
 			code: "action.failed",
-			operation: "wallet.storage.unlock",
+			operation: repair ? "wallet.storage.repair" : "wallet.storage.unlock",
 			recoverable: true,
 		});
+		if (repair) throw error;
 		return null;
 	}
 };

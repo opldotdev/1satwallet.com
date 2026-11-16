@@ -85,7 +85,11 @@ import {
 	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
 import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
-import { readWalletChain } from "@/lib/wallet-chain";
+import {
+	readWalletChain,
+	refreshWalletChain,
+	storedAccountNetwork,
+} from "@/lib/wallet-chain";
 import {
 	diagnoseNoWalletResult,
 	statusAfterDisconnect,
@@ -103,15 +107,23 @@ export type WalletConnectionMode = "none" | "built-in" | "external";
 export { WALLET_CONNECTION_MODE_KEY };
 
 /**
- * Set when a connect found the external wallet on another network and moved
- * the active chain to it. The automatic reconnect on that chain clears it; if
- * the networks still differ then, it fails instead of moving again.
+ * Set when a connect or a switch found the external wallet on another network
+ * and moved the active chain to it; the value says which. The automatic
+ * reconnect on that chain clears it; if the networks still differ then, it
+ * fails instead of moving again.
  */
 const EXTERNAL_HOP_KEY = "1sat-wallet-external-hop";
+type ExternalHop = "connect" | "switch";
 
-function hasExternalHop(): boolean {
+/** Shown after a switch's reconnect on the new chain failed: the wallet in use before was closed by the move. */
+const SWITCH_HOP_FAILED =
+	"The wallet switch did not finish, and the wallet you were using was disconnected.";
+
+function externalHop(): ExternalHop | null {
 	try {
-		return sessionStorage.getItem(EXTERNAL_HOP_KEY) === "1";
+		const hop = sessionStorage.getItem(EXTERNAL_HOP_KEY);
+		if (hop === null) return null;
+		return hop === "switch" ? "switch" : "connect";
 	} catch {
 		reportDiagnostic({
 			category: "provider",
@@ -119,13 +131,15 @@ function hasExternalHop(): boolean {
 			operation: "wallet.external.hop.read",
 			recoverable: true,
 		});
-		return false;
+		return null;
 	}
 }
 
-function setExternalHop(on: boolean): void {
+const hasExternalHop = (): boolean => externalHop() !== null;
+
+function setExternalHop(hop: ExternalHop | null): void {
 	try {
-		if (on) sessionStorage.setItem(EXTERNAL_HOP_KEY, "1");
+		if (hop) sessionStorage.setItem(EXTERNAL_HOP_KEY, hop);
 		else sessionStorage.removeItem(EXTERNAL_HOP_KEY);
 	} catch {
 		reportDiagnostic({
@@ -369,6 +383,7 @@ export function WalletToolboxProvider({
 	const failConnection = useCallback(
 		(message: string) => {
 			carriedInitError = message;
+			setExternalHop(null);
 			clearConnection();
 			// Same chain: no remount, so this instance shows the error.
 			if (readWalletChain() === chain) carriedInitError = null;
@@ -708,7 +723,12 @@ export function WalletToolboxProvider({
 			option: WalletConnectionOption | undefined,
 			resume: boolean,
 		): Promise<boolean> => {
-			if (!resume) setExternalHop(false);
+			// After a switch moved the chain, a failed reconnect cannot leave the
+			// old wallet in place: the move already closed it.
+			const switchHop = resume && externalHop() === "switch";
+			const afterSwitchHop = (message: string) =>
+				switchHop ? `${message} ${SWITCH_HOP_FAILED}` : message;
+			if (!resume) setExternalHop(null);
 			const pendingTeardown = teardownPromiseRef.current;
 			if (pendingTeardown) await pendingTeardown;
 			if (initGuardRef.current) {
@@ -735,7 +755,7 @@ export function WalletToolboxProvider({
 					const diagnostic = await diagnoseNoWalletResult();
 					if (generation !== connectionGenerationRef.current) return false;
 					setConnectionStatus(diagnostic.status);
-					failConnection(diagnostic.message);
+					failConnection(afterSwitchHop(diagnostic.message));
 					initGuardRef.current = false;
 					return false;
 				}
@@ -754,14 +774,15 @@ export function WalletToolboxProvider({
 					if (!("error" in reported) && !hasExternalHop()) {
 						// Reconnect on the wallet's chain: the store change remounts
 						// this provider there, and its auto-reconnect connects again.
-						setExternalHop(true);
+						setExternalHop("connect");
 						persistExternalConnection(reported.chain, option);
 						return false;
 					}
-					setExternalHop(false);
 					setConnectionStatus("disconnected");
 					failConnection(
-						"error" in reported ? reported.error : EXTERNAL_NETWORK_CHANGED,
+						afterSwitchHop(
+							"error" in reported ? reported.error : EXTERNAL_NETWORK_CHANGED,
+						),
 					);
 					return false;
 				}
@@ -798,7 +819,7 @@ export function WalletToolboxProvider({
 				setProviderType(result.provider);
 				setIsInitialized(true);
 
-				setExternalHop(false);
+				setExternalHop(null);
 				persistExternalConnection(chain, option);
 
 				const session = createWalletSession(result);
@@ -870,8 +891,11 @@ export function WalletToolboxProvider({
 				externalServicesRef.current?.close();
 				externalServicesRef.current = null;
 				resetWalletState("disconnected");
+				// failConnection also clears the hop.
 				failConnection(
-					"Wallet connection failed. Check the provider and try again.",
+					afterSwitchHop(
+						"Wallet connection failed. Check the provider and try again.",
+					),
 				);
 				setIsInitializing(false);
 				initGuardRef.current = false;
@@ -925,6 +949,20 @@ export function WalletToolboxProvider({
 			const pendingTeardown = teardownPromiseRef.current;
 			if (pendingTeardown) await pendingTeardown;
 			if (initGuardRef.current) {
+				return false;
+			}
+			// The keys must belong to the account stored on this chain. If the
+			// wallet was replaced or removed meanwhile, move the chain and let
+			// the remounted provider (or none) open it.
+			if (storedAccountNetwork() !== chain) {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.initialize.chain",
+					recoverable: true,
+					context: { mode: "built-in", retryable: true },
+				});
+				refreshWalletChain();
 				return false;
 			}
 			const generation = ++connectionGenerationRef.current;
@@ -1075,6 +1113,7 @@ export function WalletToolboxProvider({
 
 	const switchWallet = useCallback(
 		async (option: WalletConnectionOption): Promise<boolean> => {
+			setExternalHop(null);
 			if (option === "embedded") {
 				const local = walletResultRef.current;
 				if (!local) {
@@ -1124,7 +1163,7 @@ export function WalletToolboxProvider({
 					// Reconnect on the wallet's chain: the store change remounts this
 					// provider there, and its auto-reconnect connects again.
 					result.disconnect();
-					setExternalHop(true);
+					setExternalHop("switch");
 					persistExternalConnection(reported.chain, option);
 					return false;
 				}
@@ -1163,7 +1202,7 @@ export function WalletToolboxProvider({
 				setProviderType(result.provider);
 				setIsInitialized(true);
 				setInitError(null);
-				setExternalHop(false);
+				setExternalHop(null);
 				persistExternalConnection(chain, option);
 
 				const nextSession = createWalletSession(result);

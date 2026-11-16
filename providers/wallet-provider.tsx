@@ -16,18 +16,25 @@ import { WALLET_STORAGE_KEY } from "@/lib/constants";
 import { deriveIdentityKey, findKeysFromMnemonic } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
-import { refreshWalletChain } from "@/lib/wallet-chain";
+import { refreshWalletChain, walletStoredAfter } from "@/lib/wallet-chain";
 import {
 	clearCachedEncryptionKey,
 	loadEncryptedWallet,
 	saveEncryptedWallet,
+	WalletSaveError,
 } from "@/lib/wallet-storage";
+
+export { WalletSaveError };
 
 interface WalletContextType {
 	hasWallet: boolean;
 	isWalletLocked: boolean;
 	isWalletInitialized: boolean;
 	walletKeys: Keys | null;
+	/**
+	 * False for a wrong password. Throws WalletSaveError, whose message is
+	 * meant for the user, when the wallet's saved data could not be updated.
+	 */
 	unlockWallet: (passphrase: string) => Promise<boolean>;
 	lockWallet: () => void;
 	/** The network is fixed here, at creation, and never changes after. */
@@ -55,10 +62,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	const lifecycleGenerationRef = useRef(0);
 
 	useEffect(() => {
+		// The wallet replaced or removed, here or in another tab (clear() there
+		// arrives with a null key): lock and drop the keys, so the built-in
+		// wallet never opens on one network with another account's keys.
 		const handleStorageChange = (event: StorageEvent) => {
-			if (event.key === WALLET_STORAGE_KEY) {
+			const exists = walletStoredAfter(event, window.localStorage);
+			if (exists !== undefined) {
 				lifecycleGenerationRef.current += 1;
-				const exists = !!event.newValue;
 				setHasWallet(exists);
 				setIsWalletLocked(exists);
 				setWalletKeys(null);
@@ -96,7 +106,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 					setIsWalletLocked(false);
 					return true;
 				}
-			} catch {
+			} catch (error) {
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
@@ -104,6 +114,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 					recoverable: true,
 					context: { retryable: true },
 				});
+				if (error instanceof WalletSaveError) throw error;
 			}
 			return false;
 		},
@@ -203,15 +214,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 		lifecycleGenerationRef.current += 1;
 		if (typeof window !== "undefined") {
 			localStorage.removeItem(WALLET_STORAGE_KEY);
-			window.dispatchEvent(
-				new StorageEvent("storage", {
-					key: WALLET_STORAGE_KEY,
-					newValue: null,
-				}),
-			);
+			// Tells other listeners in this tab. A browser that refuses a
+			// constructed StorageEvent must not skip the refresh and reset below.
+			try {
+				window.dispatchEvent(
+					new StorageEvent("storage", {
+						key: WALLET_STORAGE_KEY,
+						newValue: null,
+					}),
+				);
+			} catch {
+				reportDiagnostic({
+					category: "action",
+					code: "action.failed",
+					operation: "wallet.delete.notify",
+					recoverable: true,
+				});
+			}
 		}
-		// The synthetic event above already moves the chain; this covers
-		// browsers that refuse a constructed StorageEvent.
+		// Moves the chain when the event above did not; a no-op when it did.
 		refreshWalletChain();
 		clearCachedEncryptionKey();
 		setWalletKeys(null);

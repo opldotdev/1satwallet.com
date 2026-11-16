@@ -17,7 +17,12 @@ import { Label } from "@/components/ui/label";
 import { NetworkChoice } from "@/components/wallet/network-choice";
 import type { Chain } from "@/lib/chain-endpoints";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import { decryptWalletBackup, keysNetworkHint } from "@/lib/wallet-backup";
+import {
+	backupRestoreErrorMessage,
+	classifyBackupRestoreError,
+	decryptWalletBackup,
+	keysNetworkHint,
+} from "@/lib/wallet-backup";
 import { useWallet } from "@/providers/wallet-provider";
 import { useImportWallet } from "../provider";
 
@@ -27,7 +32,7 @@ const CHAIN_NAME: Record<Chain, string> = { main: "Mainnet", test: "Testnet" };
 
 export default function ImportPassphrasePage() {
 	const router = useRouter();
-	const { importWallet } = useWallet();
+	const { hasWallet, importWallet } = useWallet();
 	const { walletKeys, setWalletKeys, encryptedBackup } = useImportWallet();
 	const [passphrase, setPassphrase] = useState("");
 	const [localPassphrase, setLocalPassphrase] = useState("");
@@ -51,13 +56,20 @@ export default function ImportPassphrasePage() {
 	);
 	const [hintShown, setHintShown] = useState(visibleHint === "test");
 
+	// Once a wallet is saved, this flow is over: an import onto the other
+	// network remounts this page with empty import state, which must lead to
+	// the wallet, not back to the start of the import.
 	useEffect(() => {
+		if (hasWallet) {
+			router.replace("/wallet");
+			return;
+		}
 		if (!walletKeys && !encryptedBackup) {
 			router.replace("/wallet/import");
 		}
-	}, [walletKeys, encryptedBackup, router]);
+	}, [hasWallet, walletKeys, encryptedBackup, router]);
 
-	if (!walletKeys && !encryptedBackup) return null;
+	if (hasWallet || (!walletKeys && !encryptedBackup)) return null;
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -111,26 +123,23 @@ export default function ImportPassphrasePage() {
 					finalNetwork,
 				);
 				if (!success) {
-					throw new Error(
-						"Could not save the wallet in this browser. Try again.",
-					);
+					// importWallet reported the cause.
+					setError("Could not save the wallet in this browser. Try again.");
+					return;
 				}
 				if (fixedNetwork === null && finalNetwork !== network) {
 					toast("Imported as a testnet account, as the backup says.");
 				}
 			} catch (err) {
+				const failure = classifyBackupRestoreError(err);
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
 					operation: "wallet.import.restore",
 					recoverable: true,
-					context: { retryable: true },
+					context: { status: failure, retryable: true },
 				});
-				setError(
-					err instanceof Error
-						? err.message
-						: "Incorrect password or invalid backup format",
-				);
+				setError(backupRestoreErrorMessage(failure, requiresPassword));
 			} finally {
 				setIsSaving(false);
 			}

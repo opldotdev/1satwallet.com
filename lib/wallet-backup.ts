@@ -481,3 +481,34 @@ export async function decryptWalletBackup(
 		hintedNetwork: network === null ? keysNetworkHint(keys) : null,
 	};
 }
+
+export type BackupRestoreFailure = "wrong-password" | "invalid-keys";
+
+/**
+ * Sorts a failed backup decryption: a cipher or parse failure means the
+ * password is wrong (or the file damaged); anything else is a backup whose
+ * keys are invalid. Never echoes the error's own text to the user.
+ */
+export function classifyBackupRestoreError(
+	error: unknown,
+): BackupRestoreFailure {
+	const name = error instanceof Error ? error.name : "";
+	const message = error instanceof Error ? error.message : "";
+	return name === "OperationError" ||
+		name === "SyntaxError" ||
+		message.startsWith("Decryption failed")
+		? "wrong-password"
+		: "invalid-keys";
+}
+
+export function backupRestoreErrorMessage(
+	failure: BackupRestoreFailure,
+	requiresPassword: boolean,
+): string {
+	if (failure === "invalid-keys") {
+		return "This backup's keys are invalid or incomplete.";
+	}
+	return requiresPassword
+		? "Incorrect backup password, or the file is damaged."
+		: "This backup could not be decrypted. The file may be damaged.";
+}
