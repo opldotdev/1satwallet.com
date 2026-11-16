@@ -5,16 +5,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NetworkChoice } from "@/components/wallet/network-choice";
+import { OnboardingStep } from "@/components/wallet/onboarding-step";
 import type { Chain } from "@/lib/chain-endpoints";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
@@ -146,143 +140,128 @@ export default function ImportPassphrasePage() {
 		}
 	};
 
+	const passwordToMatch = mode === "encrypt" ? passphrase : localPassphrase;
+
 	return (
-		<section className="space-y-6">
-			<div className="flex items-center justify-between gap-3">
-				<h2 className="font-mono text-xl font-medium">
-					{mode === "encrypt" ? "Set Password" : "Unlock Backup"}
-				</h2>
+		<OnboardingStep
+			step={2}
+			total={2}
+			title={
+				mode === "encrypt"
+					? "Set a password"
+					: requiresPassword
+						? "Unlock your backup"
+						: "Set a wallet password"
+			}
+			description={
+				mode === "encrypt"
+					? "It encrypts the wallet on this device. You enter it to unlock."
+					: requiresPassword
+						? "Enter the backup's password, then choose a password for this device."
+						: "This older backup carries its own decryption key. Set a password to protect it on this device."
+			}
+			form={{ onSubmit: handleSubmit }}
+			actions={
+				<>
+					<Button variant="outline" onClick={() => router.back()} type="button">
+						Back
+					</Button>
+					<Button
+						type="submit"
+						disabled={
+							(mode === "encrypt"
+								? !passphrase || passphrase !== confirmPassphrase
+								: (requiresPassword && !passphrase) ||
+									!localPassphrase ||
+									localPassphrase !== confirmPassphrase) || isSaving
+						}
+					>
+						{isSaving && (
+							<Loader2 className="animate-spin" data-icon="inline-start" />
+						)}
+						{mode === "encrypt"
+							? "Encrypt & Save"
+							: requiresPassword
+								? "Decrypt & Import"
+								: "Encrypt & Restore"}
+					</Button>
+				</>
+			}
+		>
+			<div className="flex flex-col gap-4">
+				{(mode === "encrypt" || requiresPassword) && (
+					<div className="grid gap-2">
+						<Label htmlFor="passphrase">
+							{mode === "encrypt" ? "Password" : "Backup Password"}
+						</Label>
+						<Input
+							autoComplete={
+								mode === "encrypt" ? "new-password" : "current-password"
+							}
+							id="passphrase"
+							type="password"
+							value={passphrase}
+							onChange={(e) => setPassphrase(e.target.value)}
+							required
+							minLength={mode === "encrypt" ? 6 : 1}
+						/>
+					</div>
+				)}
+
+				{mode === "decrypt" && (
+					<div className="grid gap-2">
+						<Label htmlFor="local-passphrase">Wallet Password</Label>
+						<Input
+							autoComplete="new-password"
+							id="local-passphrase"
+							type="password"
+							value={localPassphrase}
+							onChange={(e) => setLocalPassphrase(e.target.value)}
+							required
+							minLength={6}
+						/>
+					</div>
+				)}
+
+				<div className="grid gap-2">
+					<Label htmlFor="confirm-passphrase">Confirm Password</Label>
+					<Input
+						autoComplete="new-password"
+						id="confirm-passphrase"
+						type="password"
+						value={confirmPassphrase}
+						onChange={(e) => setConfirmPassphrase(e.target.value)}
+						required
+						minLength={6}
+					/>
+					{passwordToMatch &&
+						confirmPassphrase &&
+						passwordToMatch !== confirmPassphrase && (
+							<p className="text-sm text-destructive">Passwords do not match</p>
+						)}
+				</div>
+
+				{fixedNetwork === "main" ? null : fixedNetwork ? (
+					<p className="text-xs text-muted-foreground">
+						Network: {CHAIN_NAME[fixedNetwork]}. Set by this backup.
+					</p>
+				) : (
+					<NetworkChoice
+						value={network}
+						onChange={(next) => {
+							setNetwork(next);
+							setNetworkNote(undefined);
+						}}
+						note={networkNote}
+					/>
+				)}
+
+				{error && (
+					<p className="text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
 			</div>
-			<div>
-				<Card>
-					<CardHeader>
-						<CardTitle>
-							{mode === "encrypt"
-								? "Set Password"
-								: requiresPassword
-									? "Enter Password"
-									: "Set Wallet Password"}
-						</CardTitle>
-						<CardDescription>
-							{mode === "encrypt"
-								? "Set a secure password to encrypt your wallet on this device."
-								: requiresPassword
-									? "Enter the backup password, then choose a password for this device."
-									: "This legacy backup contains its own decryption key. Set a password to protect it on this device."}
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<form onSubmit={handleSubmit} className="space-y-4">
-							{(mode === "encrypt" || requiresPassword) && (
-								<div className="grid gap-2">
-									<Label htmlFor="passphrase">
-										{mode === "encrypt" ? "Password" : "Backup Password"}
-									</Label>
-									<Input
-										autoComplete={
-											mode === "encrypt" ? "new-password" : "current-password"
-										}
-										id="passphrase"
-										type="password"
-										value={passphrase}
-										onChange={(e) => setPassphrase(e.target.value)}
-										required
-										minLength={mode === "encrypt" ? 6 : 1}
-									/>
-								</div>
-							)}
-
-							{mode === "decrypt" && (
-								<div className="grid gap-2">
-									<Label htmlFor="local-passphrase">Wallet Password</Label>
-									<Input
-										autoComplete="new-password"
-										id="local-passphrase"
-										type="password"
-										value={localPassphrase}
-										onChange={(e) => setLocalPassphrase(e.target.value)}
-										required
-										minLength={6}
-									/>
-								</div>
-							)}
-
-							<div className="grid gap-2">
-								<Label htmlFor="confirm-passphrase">Confirm Password</Label>
-								<Input
-									autoComplete="new-password"
-									id="confirm-passphrase"
-									type="password"
-									value={confirmPassphrase}
-									onChange={(e) => setConfirmPassphrase(e.target.value)}
-									required
-									minLength={6}
-								/>
-								{(mode === "encrypt" ? passphrase : localPassphrase) &&
-									confirmPassphrase &&
-									(mode === "encrypt" ? passphrase : localPassphrase) !==
-										confirmPassphrase && (
-										<p className="text-sm text-destructive">
-											Passwords do not match
-										</p>
-									)}
-							</div>
-
-							{fixedNetwork === "main" ? null : fixedNetwork ? (
-								<p className="text-xs text-muted-foreground">
-									Network: {CHAIN_NAME[fixedNetwork]}. Set by this backup.
-								</p>
-							) : (
-								<NetworkChoice
-									value={network}
-									onChange={(next) => {
-										setNetwork(next);
-										setNetworkNote(undefined);
-									}}
-									note={networkNote}
-								/>
-							)}
-
-							{error && (
-								<p className="text-sm text-destructive" role="alert">
-									{error}
-								</p>
-							)}
-
-							<div className="flex gap-2">
-								<Button
-									variant="outline"
-									onClick={() => router.back()}
-									type="button"
-								>
-									Back
-								</Button>
-								<Button
-									type="submit"
-									className="flex-1"
-									disabled={
-										(mode === "encrypt"
-											? !passphrase || passphrase !== confirmPassphrase
-											: (requiresPassword && !passphrase) ||
-												!localPassphrase ||
-												localPassphrase !== confirmPassphrase) || isSaving
-									}
-								>
-									{isSaving ? (
-										<Loader2 className="animate-spin" />
-									) : mode === "encrypt" ? (
-										"Encrypt & Save"
-									) : requiresPassword ? (
-										"Decrypt & Import"
-									) : (
-										"Encrypt & Restore"
-									)}
-								</Button>
-							</div>
-						</form>
-					</CardContent>
-				</Card>
-			</div>
-		</section>
+		</OnboardingStep>
 	);
 }

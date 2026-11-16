@@ -42,10 +42,20 @@ import type { CWIIndividualGrant } from "@/lib/cwi/types";
 import { useCWIBridge } from "@/lib/hooks/use-cwi-bridge";
 import { createStackServices } from "@/lib/stack";
 
+// Native controls in the prompts: 44px on phones, and 16px text there so
+// iOS does not zoom into the field.
+const nativeSelectClassName =
+	"w-full rounded-md border bg-background px-3 text-base max-md:min-h-11 md:h-9 md:text-sm";
+// A consent checkbox is a 20px box in a row at least 44px tall; the whole
+// row toggles it.
+const consentRowClassName =
+	"flex min-h-11 cursor-pointer items-start gap-3 py-2 text-sm";
+const consentCheckboxClassName = "mt-0.5 size-5 shrink-0 accent-primary";
+
 // Full-screen prompts (in a popup window or the top-level page) keep a 16px
 // gutter and clear the notch and home indicator (viewport-fit=cover).
 const centeredScreenClassName =
-	"min-h-screen flex items-center justify-center bg-background pt-[max(--spacing(4),env(safe-area-inset-top))] pr-[max(--spacing(4),env(safe-area-inset-right))] pb-[max(--spacing(4),env(safe-area-inset-bottom))] pl-[max(--spacing(4),env(safe-area-inset-left))]";
+	"min-h-dvh flex items-center justify-center bg-background pt-[max(--spacing(4),env(safe-area-inset-top))] pr-[max(--spacing(4),env(safe-area-inset-right))] pb-[max(--spacing(4),env(safe-area-inset-bottom))] pl-[max(--spacing(4),env(safe-area-inset-left))]";
 
 function AssetPermissionCard({
 	permission,
@@ -74,13 +84,19 @@ function AssetPermissionCard({
 				return;
 			}
 			onResponse(true);
+		} catch (error) {
+			console.error("[cwi] asset permission review failed", {
+				requestId: permission.requestID,
+				error,
+			});
+			setApprovalError("The assets could not be verified. Try again.");
 		} finally {
 			reviewingRef.current = false;
 		}
 	};
 
 	return (
-		<div className="min-h-screen overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
+		<div className="min-h-dvh overflow-y-auto bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
 			<OneSatPermissionPrompt
 				request={permission.request}
 				onApprove={() => void approve()}
@@ -246,7 +262,7 @@ function PermissionCard({
 					<label className="block text-sm space-y-1">
 						<span className="font-medium">Duration</span>
 						<select
-							className="w-full rounded-md border bg-background px-3 py-2"
+							className={nativeSelectClassName}
 							value={duration}
 							onChange={(event) =>
 								setDuration(
@@ -385,12 +401,12 @@ function GroupedPermissionCard({
 			</CardHeader>
 			<CardContent className="space-y-4">
 				{permissions ? (
-					<div className="bg-muted/50 rounded-lg p-3 space-y-2">
+					<div className="bg-muted/50 rounded-lg px-3 py-1">
 						{entries.map((entry) => (
-							<label key={entry.id} className="flex items-start gap-2 text-sm">
+							<label key={entry.id} className={consentRowClassName}>
 								<input
 									type="checkbox"
-									className="mt-1"
+									className={consentCheckboxClassName}
 									checked={selected.has(entry.id)}
 									onChange={() => toggle(entry.id)}
 								/>
@@ -426,7 +442,7 @@ function GroupedPermissionCard({
 							Protocol, basket, and certificate duration
 						</span>
 						<select
-							className="w-full rounded-md border bg-background px-3 py-2"
+							className={nativeSelectClassName}
 							value={duration}
 							onChange={(event) =>
 								setDuration(
@@ -525,18 +541,18 @@ function CounterpartyPermissionCard({
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				<div className="bg-muted/50 rounded-lg p-3 space-y-2">
-					<div className="text-sm">
+				<div className="bg-muted/50 rounded-lg px-3 py-1">
+					<div className="py-2 text-sm">
 						<span className="font-medium">Counterparty: </span>
 						<span className="text-muted-foreground break-all">
 							{permission.counterparty}
 						</span>
 					</div>
 					{entries.map((entry) => (
-						<label key={entry.id} className="flex items-start gap-2 text-sm">
+						<label key={entry.id} className={consentRowClassName}>
 							<input
 								type="checkbox"
-								className="mt-1"
+								className={consentCheckboxClassName}
 								checked={selected.has(entry.id)}
 								onChange={() => toggle(entry.id)}
 							/>
@@ -564,7 +580,7 @@ function CounterpartyPermissionCard({
 					<label className="block text-sm space-y-1">
 						<span className="font-medium">Trust duration</span>
 						<select
-							className="w-full rounded-md border bg-background px-3 py-2"
+							className={nativeSelectClassName}
 							value={duration}
 							onChange={(event) =>
 								setDuration(
@@ -741,5 +757,5 @@ export default function CWIPage() {
 
 	// All other states: transparent so the iframe is invisible over the host
 	// dApp. The bridge still relays postMessage regardless of UI state.
-	return <div className="min-h-screen" />;
+	return <div className="min-h-dvh" />;
 }

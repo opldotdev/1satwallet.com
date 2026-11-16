@@ -1,8 +1,11 @@
 import { Check, Copy, Loader2, RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import { Switch } from "@/components/ui/switch";
 import { bip39words } from "@/lib/bip39words";
 import {
@@ -46,7 +49,6 @@ export function MnemonicGrid({
 
 	const [processing, setProcessing] = useState(false);
 	const [useCustomPaths, setUseCustomPaths] = useState(false);
-	const [ready, setReady] = useState(false);
 	const [detectionFailed, setDetectionFailed] = useState(false);
 	const [pendingPaths, setPendingPaths] = useState<
 		| {
@@ -61,7 +63,16 @@ export function MnemonicGrid({
 	const [copied, setCopied] = useState(false);
 	const copyMnemonic = useCallback(async () => {
 		if (!mnemonic) return;
-		await navigator.clipboard.writeText(mnemonic);
+		try {
+			await navigator.clipboard.writeText(mnemonic);
+		} catch (error) {
+			// The error is logged without its message: it may quote the phrase.
+			console.error("[mnemonic] copy to clipboard failed", {
+				name: error instanceof Error ? error.name : typeof error,
+			});
+			toast.error("Couldn't copy the words. Write them down instead.");
+			return;
+		}
 		setCopied(true);
 		setTimeout(() => setCopied(false), 2000);
 	}, [mnemonic]);
@@ -143,6 +154,8 @@ export function MnemonicGrid({
 
 		if (words.length > 0) {
 			setDetectionFailed(false);
+			// Detected paths belong to the old words.
+			if (!useCustomPaths) setPendingPaths(undefined);
 			setInputMnemonic((prev) => {
 				const newMnemonic = [...prev];
 				words.forEach((word, i) => {
@@ -161,15 +174,21 @@ export function MnemonicGrid({
 		newMnemonic[index] = value.trim().toLowerCase();
 		setInputMnemonic(newMnemonic);
 		setDetectionFailed(false);
+		if (!useCustomPaths) setPendingPaths(undefined);
 	};
 
 	const toggleCustomPaths = () => {
 		setUseCustomPaths(!useCustomPaths);
-		setReady(!useCustomPaths);
 		setDetectionFailed(false);
 	};
 
-	// Effect to process mnemonic automatically if valid and not using custom paths (only in edit mode)
+	const hasWords = inputMnemonic.some((w) => w);
+	const isValid =
+		inputMnemonic.length === 12 &&
+		inputMnemonic.every((w) => bip39words.includes(w));
+
+	// Once all 12 words are valid BIP-39 words, search the wallet paths
+	// automatically (edit mode only), unless custom paths are on.
 	useEffect(() => {
 		const process = async () => {
 			const phrase = inputMnemonic.join(" ");
@@ -187,8 +206,12 @@ export function MnemonicGrid({
 				} else {
 					setDetectionFailed(true);
 				}
-			} catch {
+			} catch (error) {
 				setDetectionFailed(true);
+				// Logged without its message: it may quote the phrase.
+				console.error("[mnemonic] wallet path detection failed", {
+					name: error instanceof Error ? error.name : typeof error,
+				});
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
@@ -201,7 +224,8 @@ export function MnemonicGrid({
 		};
 
 		if (
-			ready &&
+			mode === "edit" &&
+			isValid &&
 			!useCustomPaths &&
 			!processing &&
 			!pendingPaths &&
@@ -212,16 +236,13 @@ export function MnemonicGrid({
 		}
 	}, [
 		inputMnemonic,
-		ready,
+		mode,
+		isValid,
 		useCustomPaths,
 		processing,
 		pendingPaths,
 		detectionFailed,
 	]);
-
-	const isValid =
-		inputMnemonic.every((w) => bip39words.includes(w)) &&
-		inputMnemonic.length === 12;
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -235,8 +256,8 @@ export function MnemonicGrid({
 							spotCheckInput[idx] !== undefined && spotCheckInput[idx] !== "";
 						return (
 							<div key={`spot-${idx}`} className="flex items-center gap-3">
-								<span className="text-sm text-muted-foreground w-24 shrink-0 text-right">
-									Word #{idx + 1}
+								<span className="w-16 shrink-0 text-sm text-muted-foreground">
+									Word {idx + 1}
 								</span>
 								<Input
 									aria-label={`Mnemonic word ${idx + 1}`}
@@ -248,7 +269,7 @@ export function MnemonicGrid({
 										}))
 									}
 									placeholder={`Enter word #${idx + 1}`}
-									className={`font-mono max-w-48 ${
+									className={`w-full font-mono ${
 										hasInput
 											? isCorrect
 												? "border-success focus-visible:ring-success/50"
@@ -258,9 +279,15 @@ export function MnemonicGrid({
 									autoComplete="off"
 									spellCheck={false}
 								/>
-								{hasInput && isCorrect && (
-									<Check className="h-4 w-4 text-success shrink-0" />
-								)}
+								{/* The slot is always there, so the field keeps its width. */}
+								<span className="flex size-4 shrink-0 items-center">
+									{hasInput && isCorrect && (
+										<Check
+											aria-label="Correct"
+											className="size-4 text-success"
+										/>
+									)}
+								</span>
 							</div>
 						);
 					})}
@@ -272,11 +299,11 @@ export function MnemonicGrid({
 							const word = proveInput[slot];
 							return (
 								<div key={`prove-slot-${slot}`} className="relative">
-									<span className="absolute left-2 top-2.5 text-xs text-muted-foreground select-none">
+									<span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-xs text-muted-foreground select-none">
 										{slot + 1}.
 									</span>
 									<div
-										className={`pl-8 font-mono h-10 flex items-center rounded-md border ${
+										className={`pl-8 font-mono h-11 md:h-9 flex items-center rounded-md border ${
 											word ? "bg-muted" : "bg-background border-dashed"
 										}`}
 									>
@@ -319,8 +346,8 @@ export function MnemonicGrid({
 						size="sm"
 						onClick={() => setProveInput(Array(12).fill(""))}
 					>
-						<RotateCcw className="h-4 w-4" data-icon="inline-start" />
-						Start Over
+						<RotateCcw data-icon="inline-start" />
+						Start over
 					</Button>
 				</>
 			) : (
@@ -329,7 +356,7 @@ export function MnemonicGrid({
 						const word = inputMnemonic[slot] ?? "";
 						return (
 							<div key={`word-input-${slot}`} className="relative">
-								<span className="absolute left-2 top-2.5 text-xs text-muted-foreground select-none">
+								<span className="pointer-events-none absolute inset-y-0 left-2 flex items-center text-xs text-muted-foreground select-none">
 									{slot + 1}.
 								</span>
 								<Input
@@ -359,9 +386,9 @@ export function MnemonicGrid({
 						onClick={copyMnemonic}
 					>
 						{copied ? (
-							<Check className="h-4 w-4" data-icon="inline-start" />
+							<Check data-icon="inline-start" />
 						) : (
-							<Copy className="h-4 w-4" data-icon="inline-start" />
+							<Copy data-icon="inline-start" />
 						)}
 						{copied ? "Copied" : "Copy to clipboard"}
 					</Button>
@@ -369,29 +396,31 @@ export function MnemonicGrid({
 			)}
 
 			{mode === "edit" && (
-				<div className="flex items-center justify-between my-4">
-					<div className="flex items-start flex-col gap-1">
-						{!useCustomPaths && (
-							<div className="text-sm text-muted-foreground font-mono">
-								Payment Path: m/0
-							</div>
-						)}
-						{!useCustomPaths && (
-							<div className="text-sm text-muted-foreground font-mono flex items-center">
-								Ordinals Path:{" "}
+				<div className="flex flex-col gap-3 rounded-lg border p-3">
+					{!useCustomPaths && (
+						<DetailList>
+							<DetailRow label="Payment path">m/0</DetailRow>
+							<DetailRow label="Ordinals path">
 								{processing ? (
-									<span role="status" className="flex items-center">
-										<Loader2 className="h-3 w-3 animate-spin ml-2" />
-										<span className="ml-2">Searching wallet paths…</span>
+									<span
+										role="status"
+										className="flex items-center gap-2 font-sans text-muted-foreground"
+									>
+										<Loader2 className="size-3 animate-spin" />
+										Searching wallet paths…
 									</span>
 								) : (
-									pendingPaths?.ordAddressPath
+									(pendingPaths?.ordAddressPath ?? (
+										<span className="font-sans text-muted-foreground">
+											Found once all 12 words are in
+										</span>
+									))
 								)}
-							</div>
-						)}
-					</div>
-					<div className="flex items-center gap-2">
-						<Label htmlFor="custom-deriv">Custom Derivation</Label>
+							</DetailRow>
+						</DetailList>
+					)}
+					<div className="flex min-h-11 items-center justify-between gap-3 md:min-h-9">
+						<Label htmlFor="custom-deriv">Custom derivation paths</Label>
 						<Switch
 							id="custom-deriv"
 							checked={useCustomPaths}
@@ -402,23 +431,22 @@ export function MnemonicGrid({
 			)}
 
 			{mode === "edit" && detectionFailed && !useCustomPaths && (
-				<div
-					role="alert"
-					className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm flex items-center justify-between gap-3"
-				>
-					<p>Automatic wallet-path detection failed.</p>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => setDetectionFailed(false)}
-					>
-						Try again
-					</Button>
-				</div>
+				<Notice role="alert" tone="danger">
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<p>Automatic wallet-path detection failed.</p>
+						<Button
+							variant="outline"
+							size="sm"
+							onClick={() => setDetectionFailed(false)}
+						>
+							Try again
+						</Button>
+					</div>
+				</Notice>
 			)}
 
 			{useCustomPaths && mode === "edit" && (
-				<div className="space-y-4">
+				<div className="flex flex-col gap-3">
 					<div className="flex flex-wrap gap-2">
 						<Button
 							variant="outline"
@@ -521,48 +549,48 @@ export function MnemonicGrid({
 				</div>
 			)}
 
-			{onSubmit && (
-				<div className="flex justify-end mt-4">
-					<Button
-						disabled={
-							!isValid || processing || (!pendingPaths && !useCustomPaths)
-						}
-						onClick={() => {
-							if (!onSubmit) return;
-							if (!pendingPaths) {
-								if (!useCustomPaths) setReady(true);
-								return;
+			{mode === "edit" && (onSubmit || hasWords) && (
+				<div
+					data-slot="mnemonic-actions"
+					className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center [&>*]:w-full sm:[&>*]:w-auto"
+				>
+					{hasWords && (
+						<Button
+							variant="ghost"
+							onClick={() => {
+								setInputMnemonic(Array(12).fill(""));
+								setPendingPaths(undefined);
+								setProcessing(false);
+								setDetectionFailed(false);
+							}}
+						>
+							<RotateCcw data-icon="inline-start" />
+							Start over
+						</Button>
+					)}
+					{onSubmit && (
+						<Button
+							className="sm:ml-auto"
+							disabled={
+								!isValid || processing || (!pendingPaths && !useCustomPaths)
 							}
-							const keys = getKeysFromMnemonicAndPaths(
-								inputMnemonic.join(" "),
-								{
-									changeAddressPath: pendingPaths.changeAddressPath,
-									ordAddressPath: pendingPaths.ordAddressPath,
-									identityAddressPath: pendingPaths.identityAddressPath,
-								},
-							);
-							onSubmit(keys);
-						}}
-					>
-						Next
-					</Button>
-				</div>
-			)}
-
-			{inputMnemonic.some((w) => w) && mode === "edit" && (
-				<div className="flex justify-center">
-					<Button
-						variant="ghost"
-						onClick={() => {
-							setInputMnemonic(Array(12).fill(""));
-							setPendingPaths(undefined);
-							setProcessing(false);
-							setDetectionFailed(false);
-						}}
-					>
-						<RotateCcw className="h-4 w-4" data-icon="inline-start" />
-						Start Over
-					</Button>
+							onClick={() => {
+								if (!onSubmit) return;
+								if (!pendingPaths) return;
+								const keys = getKeysFromMnemonicAndPaths(
+									inputMnemonic.join(" "),
+									{
+										changeAddressPath: pendingPaths.changeAddressPath,
+										ordAddressPath: pendingPaths.ordAddressPath,
+										identityAddressPath: pendingPaths.identityAddressPath,
+									},
+								);
+								onSubmit(keys);
+							}}
+						>
+							Next
+						</Button>
+					)}
 				</div>
 			)}
 		</div>

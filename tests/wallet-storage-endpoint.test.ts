@@ -47,6 +47,6 @@ describe("wallet storage endpoint", () => {
 		assert.doesNotMatch(provider, /https:\/\/wallet\.1sat\.app/);
 		const settings = read("components/wallet/wallet-settings-form.tsx");
 		assert.match(settings, /walletStorageHost\(chain\)/);
-		assert.match(settings, /Wallet Storage/);
+		assert.match(settings, /Wallet storage/);
 	});
 });

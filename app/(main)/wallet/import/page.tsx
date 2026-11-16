@@ -1,18 +1,34 @@
 "use client";
 
-import { FileUp, Key } from "lucide-react";
+import { ChevronRight, FileUp, KeyRound, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { SectionHeader } from "@/components/ui/section-header";
 import { useSound } from "@/hooks/use-sound";
 import { useWallet } from "@/providers/wallet-provider";
+
+const SOURCES: readonly {
+	href: string;
+	icon: LucideIcon;
+	title: string;
+	description: string;
+}[] = [
+	{
+		href: "/wallet/import/json",
+		icon: FileUp,
+		title: "Backup file",
+		description:
+			"Restore from an exported wallet backup (.json, .zip or .bep).",
+	},
+	{
+		href: "/wallet/import/mnemonic",
+		icon: KeyRound,
+		title: "Recovery phrase",
+		description: "Restore from your 12-word seed phrase.",
+	},
+];
 
 export default function ImportSelectPage() {
 	const router = useRouter();
@@ -24,48 +40,37 @@ export default function ImportSelectPage() {
 	}, [hasWallet, router]);
 
 	return (
-		<section className="space-y-6">
-			<div className="flex items-center justify-between gap-3">
-				<h2 className="font-mono text-xl font-medium">Import Wallet</h2>
-			</div>
-			<div className="grid gap-6 md:grid-cols-2">
-				<Link
-					href="/wallet/import/json"
-					className="block"
-					onClick={() => play("click")}
-				>
-					<Card className="cursor-pointer hover:bg-accent/50 transition-colors border-2 hover:border-primary/50 h-full">
-						<CardHeader className="text-center pb-2">
-							<div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-								<FileUp className="h-6 w-6 text-primary" />
+		<section className="mx-auto flex w-full max-w-2xl flex-col gap-4">
+			<SectionHeader
+				title="Choose what to restore from"
+				description="Pick what you saved when you set the wallet up."
+			/>
+			<div className="grid gap-3 md:grid-cols-2">
+				{SOURCES.map(({ href, icon: Icon, title, description }) => (
+					<Link
+						key={href}
+						href={href}
+						className="group rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+						onClick={() => play("click")}
+					>
+						<Card className="h-full flex-row items-center px-(--card-spacing) transition-colors group-hover:bg-accent/50">
+							<div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted">
+								<Icon
+									aria-hidden="true"
+									className="size-5 text-muted-foreground"
+								/>
 							</div>
-							<CardTitle>Backup JSON</CardTitle>
-							<CardDescription>Import from a file</CardDescription>
-						</CardHeader>
-						<CardContent className="text-center text-sm text-muted-foreground pb-6">
-							Upload your exported wallet backup file to restore your keys.
-						</CardContent>
-					</Card>
-				</Link>
-
-				<Link
-					href="/wallet/import/mnemonic"
-					className="block"
-					onClick={() => play("click")}
-				>
-					<Card className="cursor-pointer hover:bg-accent/50 transition-colors border-2 hover:border-primary/50 h-full">
-						<CardHeader className="text-center pb-2">
-							<div className="mx-auto w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-								<Key className="h-6 w-6 text-primary" />
+							<div className="flex min-w-0 flex-1 flex-col gap-1">
+								<p className="font-medium leading-tight">{title}</p>
+								<p className="text-muted-foreground text-sm">{description}</p>
 							</div>
-							<CardTitle>Mnemonic Phrase</CardTitle>
-							<CardDescription>Import from 12 words</CardDescription>
-						</CardHeader>
-						<CardContent className="text-center text-sm text-muted-foreground pb-6">
-							Enter your 12-word recovery phrase to restore your wallet.
-						</CardContent>
-					</Card>
-				</Link>
+							<ChevronRight
+								aria-hidden="true"
+								className="size-5 shrink-0 text-muted-foreground"
+							/>
+						</Card>
+					</Link>
+				))}
 			</div>
 		</section>
 	);

@@ -5,14 +5,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Notice } from "@/components/ui/notice";
+import { OnboardingStep } from "@/components/wallet/onboarding-step";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
+import { cn } from "@/lib/utils";
 import {
 	type DetectedWalletBackup,
 	detectWalletBackup,
@@ -76,130 +72,111 @@ export default function ImportJsonPage() {
 	};
 
 	return (
-		<section className="space-y-6">
-			<div className="flex items-center justify-between gap-3">
-				<h2 className="font-mono text-xl font-medium">Import Wallet</h2>
-			</div>
-			<div>
-				<Card>
-					<CardHeader>
-						<CardTitle>Upload Backup File</CardTitle>
-						<CardDescription>
-							Select your wallet backup JSON file.
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						{previewData ? (
-							<div className="w-full rounded-lg border p-6 space-y-6 bg-muted/10 animate-in fade-in duration-300">
-								<div className="flex items-center justify-between border-b pb-4">
-									<div className="flex items-center gap-3">
-										<div className="p-2 bg-primary/10 rounded-lg">
-											<FileArchive className="w-6 h-6 text-primary" />
-										</div>
-										<div>
-											<p className="font-medium">{previewData.fileName}</p>
-											<div className="flex items-center gap-2 mt-1">
-												<Badge variant="outline" className="text-[10px]">
-													{previewData.backup.label}
-												</Badge>
-												{previewData.backup.kind === "yours-keys" && (
-													<Badge variant="secondary" className="text-[10px]">
-														Yours Wallet
-													</Badge>
-												)}
-												{previewData.backup.network === "test" && (
-													<TestnetBadge className="text-[10px]" />
-												)}
-											</div>
-										</div>
-									</div>
-									<Button
-										aria-label="Remove selected backup"
-										variant="ghost"
-										size="icon"
-										onClick={() => setPreviewData(null)}
-										className="text-muted-foreground hover:text-destructive"
-									>
-										<X className="w-4 h-4" data-icon="icon-only" />
-									</Button>
-								</div>
-
-								<div className="rounded-md border border-dashed bg-muted/5 p-4 text-center text-xs text-muted-foreground">
-									{previewData.backup.requiresPassword
-										? "The file will be decrypted and validated before the wallet on this device is replaced."
-										: "This legacy file carries its own decryption key. It will still be validated before import."}
-								</div>
-
-								<div className="flex justify-end pt-2">
-									<Button onClick={handleContinue} className="w-full sm:w-auto">
-										<Check className="w-4 h-4" data-icon="inline-start" />
-										Continue
-									</Button>
+		<OnboardingStep
+			step={1}
+			total={2}
+			title="Choose a backup file"
+			description="Select the wallet backup you exported (.json, .zip or .bep)."
+			actions={
+				previewData && (
+					<Button onClick={handleContinue}>
+						<Check data-icon="inline-start" />
+						Continue
+					</Button>
+				)
+			}
+		>
+			<div className="flex flex-col gap-4">
+				{previewData ? (
+					<div className="flex flex-col gap-3 animate-in fade-in duration-300">
+						<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
+							<div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted">
+								<FileArchive
+									aria-hidden="true"
+									className="size-5 text-muted-foreground"
+								/>
+							</div>
+							<div className="flex min-w-0 flex-1 flex-col gap-1">
+								<p className="truncate font-medium">{previewData.fileName}</p>
+								<div className="flex flex-wrap items-center gap-2">
+									<Badge variant="outline">{previewData.backup.label}</Badge>
+									{previewData.backup.kind === "yours-keys" && (
+										<Badge variant="secondary">Yours Wallet</Badge>
+									)}
+									{previewData.backup.network === "test" && <TestnetBadge />}
 								</div>
 							</div>
-						) : (
 							<Button
-								variant="outline"
-								type="button"
-								onClick={() => fileInputRef.current?.click()}
-								onDragOver={(e) => {
-									e.preventDefault();
-									setIsDragging(true);
-								}}
-								onDragLeave={(e) => {
-									e.preventDefault();
-									setIsDragging(false);
-								}}
-								onDrop={handleDrop}
-								className={`
-                        w-full h-auto relative border-2 border-dashed rounded-lg p-8
-                        flex flex-col items-center justify-center gap-4
-                        cursor-pointer transition-all duration-200 hover:bg-muted/50
-                        ${isDragging ? "border-primary bg-primary/10" : "border-border"}
-                    `}
+								aria-label="Remove selected backup"
+								variant="ghost"
+								size="icon"
+								onClick={() => setPreviewData(null)}
+								className="shrink-0 text-muted-foreground hover:text-destructive"
 							>
-								<div
-									className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isDragging ? "bg-primary/20" : "bg-muted"}`}
-								>
-									{isDragging ? (
-										<FileArchive className="w-6 h-6 text-primary" />
-									) : (
-										<Upload className="w-6 h-6 text-muted-foreground" />
-									)}
-								</div>
-								<div className="text-center">
-									<p className="text-sm font-medium text-foreground">
-										{isDragging
-											? "Drop file here"
-											: "Drop your backup file here"}
-									</p>
-									<p className="text-xs text-muted-foreground mt-1">
-										or click to browse
-									</p>
-								</div>
-							</Button>
-						)}
-						{error && (
-							<p className="mt-4 text-sm text-destructive" role="alert">
-								{error}
-							</p>
-						)}
-						<input
-							aria-label="Wallet backup file"
-							ref={fileInputRef}
-							type="file"
-							className="sr-only"
-							accept=".json,.zip,.bep,application/json,application/zip,text/plain"
-							onChange={handleFileChange}
-						/>
-						<div className="mt-4 flex justify-start">
-							<Button variant="ghost" onClick={() => router.back()}>
-								Back
+								<X />
 							</Button>
 						</div>
-					</CardContent>
-				</Card>
+						<Notice>
+							{previewData.backup.requiresPassword
+								? "The file is decrypted and checked before the wallet on this device is replaced."
+								: "This older file carries its own decryption key. It is still checked before import."}
+						</Notice>
+					</div>
+				) : (
+					<Button
+						variant="outline"
+						type="button"
+						onClick={() => fileInputRef.current?.click()}
+						onDragOver={(e) => {
+							e.preventDefault();
+							setIsDragging(true);
+						}}
+						onDragLeave={(e) => {
+							e.preventDefault();
+							setIsDragging(false);
+						}}
+						onDrop={handleDrop}
+						className={cn(
+							"h-auto w-full flex-col gap-3 whitespace-normal rounded-lg border-dashed p-6 transition-colors",
+							isDragging && "border-primary bg-primary/10",
+						)}
+					>
+						<div
+							className={cn(
+								"flex size-12 items-center justify-center rounded-full transition-colors",
+								isDragging ? "bg-primary/20" : "bg-muted",
+							)}
+						>
+							{isDragging ? (
+								<FileArchive className="size-6 text-primary" />
+							) : (
+								<Upload className="size-6 text-muted-foreground" />
+							)}
+						</div>
+						<span className="flex flex-col gap-1 text-center">
+							<span className="text-sm font-medium text-foreground">
+								{isDragging ? "Drop the file here" : "Choose a backup file"}
+							</span>
+							<span className="text-muted-foreground text-xs font-normal">
+								or drop it here
+							</span>
+						</span>
+					</Button>
+				)}
+				{error && (
+					<p className="text-sm text-destructive" role="alert">
+						{error}
+					</p>
+				)}
+				<input
+					aria-label="Wallet backup file"
+					ref={fileInputRef}
+					type="file"
+					className="sr-only"
+					accept=".json,.zip,.bep,application/json,application/zip,text/plain"
+					onChange={handleFileChange}
+				/>
 			</div>
-		</section>
+		</OnboardingStep>
 	);
 }

@@ -34,7 +34,7 @@ export function NetworkChoice({
 			<button
 				aria-controls={panelId}
 				aria-expanded={open}
-				className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+				className="flex w-fit items-center gap-1 text-xs text-muted-foreground hover:text-foreground max-md:min-h-11"
 				onClick={() => setOpened((current) => !current)}
 				type="button"
 			>
@@ -46,7 +46,7 @@ export function NetworkChoice({
 			</button>
 			{open ? (
 				<div className="grid gap-2 rounded-lg bg-muted p-3" id={panelId}>
-					<div className="flex items-center justify-between gap-3">
+					<div className="flex items-center justify-between gap-3 max-md:min-h-11">
 						<Label className="text-sm" htmlFor={switchId}>
 							Use testnet
 						</Label>

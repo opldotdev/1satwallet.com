@@ -32,6 +32,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import {
 	Dialog,
 	DialogContent,
@@ -41,8 +42,12 @@ import {
 	DialogTitle,
 	DialogTrigger,
 } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionHeader } from "@/components/ui/section-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import {
 	buildSelectiveCertificateProof,
@@ -86,6 +91,7 @@ function AcquireCertificateDialog({
 			setOpen(false);
 			onAcquired();
 		} catch (reason) {
+			console.error("[certificates] acquisition failed", reason);
 			acquisitionFailure();
 			setError(
 				reason instanceof SyntaxError
@@ -206,7 +212,8 @@ function CertificateProofDialog({
 					2,
 				),
 			);
-		} catch {
+		} catch (reason) {
+			console.error("[certificates] proof failed", reason);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -238,7 +245,8 @@ function CertificateProofDialog({
 		try {
 			await navigator.clipboard.writeText(proof);
 			setCopied(true);
-		} catch {
+		} catch (reason) {
+			console.error("[certificates] copying the proof failed", reason);
 			setError(
 				"The browser could not copy the proof. Select the JSON manually.",
 			);
@@ -282,11 +290,12 @@ function CertificateProofDialog({
 						<div className="grid gap-2 sm:grid-cols-2">
 							{fields.map((field) => (
 								<label
-									className="flex items-center gap-2 rounded-md border p-3 text-sm"
+									className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm"
 									key={field}
 								>
 									<input
 										checked={selected.includes(field)}
+										className="size-5 shrink-0 accent-primary"
 										onChange={() => toggleField(field)}
 										type="checkbox"
 									/>
@@ -295,15 +304,16 @@ function CertificateProofDialog({
 							))}
 						</div>
 					</fieldset>
-					<div className="rounded-md border bg-muted/40 p-3 text-sm">
-						<p className="font-medium">Disclosure preview</p>
-						<p className="mt-1 break-all text-muted-foreground">
-							Verifier: {verifier || "not entered"}
-						</p>
-						<p className="mt-1 text-muted-foreground">
-							Fields:{" "}
-							{selected.length ? [...selected].sort().join(", ") : "none"}
-						</p>
+					<div className="flex flex-col gap-3 rounded-lg border bg-muted/40 p-3">
+						<p className="font-medium text-sm">Disclosure preview</p>
+						<DetailList>
+							<DetailRow label="Verifier" stack>
+								{verifier || "Not entered"}
+							</DetailRow>
+							<DetailRow label="Fields" stack>
+								{selected.length ? [...selected].sort().join(", ") : "None"}
+							</DetailRow>
+						</DetailList>
 					</div>
 					{error && (
 						<p className="text-destructive text-sm" role="alert">
@@ -374,7 +384,8 @@ function RelinquishCertificateDialog({
 			});
 			setOpen(false);
 			onRelinquished();
-		} catch {
+		} catch (reason) {
+			console.error("[certificates] relinquish failed", reason);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -403,12 +414,14 @@ function RelinquishCertificateDialog({
 						It does not revoke the issuer&apos;s certificate on-chain.
 					</AlertDialogDescription>
 				</AlertDialogHeader>
-				<div className="rounded-md border p-3 text-xs">
-					<p className="break-all font-mono">Type: {certificate.type}</p>
-					<p className="mt-1 break-all font-mono">
-						Serial: {certificate.serialNumber}
-					</p>
-				</div>
+				<DetailList className="rounded-lg border p-3 [&_dd]:text-xs">
+					<DetailRow label="Type" stack>
+						{certificate.type}
+					</DetailRow>
+					<DetailRow label="Serial" stack>
+						{certificate.serialNumber}
+					</DetailRow>
+				</DetailList>
 				{error && (
 					<p className="text-destructive text-sm" role="alert">
 						{error}
@@ -447,42 +460,48 @@ function CertificateCard({
 		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2 text-base">
-					<BadgeCheck className="size-5" /> Identity certificate
+					<BadgeCheck className="size-5 text-muted-foreground" /> Identity
+					certificate
 				</CardTitle>
 				<CardDescription className="break-all font-mono text-xs">
 					{certificate.serialNumber}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
-				<dl className="grid gap-3 text-sm sm:grid-cols-[7rem_1fr]">
-					<dt className="text-muted-foreground">Type</dt>
-					<dd className="break-all font-mono text-xs">{certificate.type}</dd>
-					<dt className="text-muted-foreground">Issuer</dt>
-					<dd className="break-all font-mono text-xs">
+				<DetailList>
+					<DetailRow className="[&_dd]:text-xs" label="Type" stack>
+						{certificate.type}
+					</DetailRow>
+					<DetailRow className="[&_dd]:text-xs" label="Issuer" stack>
 						{certificate.certifier}
-					</dd>
-					<dt className="text-muted-foreground">Verifier</dt>
-					<dd className="break-all font-mono text-xs">
+					</DetailRow>
+					<DetailRow
+						className="[&_dd]:text-xs"
+						label="Verifier"
+						mono={Boolean(certificate.verifier)}
+						stack
+					>
 						{certificate.verifier ?? "Not attached"}
-					</dd>
-					<dt className="text-muted-foreground">Fields</dt>
-					<dd className="flex flex-wrap gap-1.5">
+					</DetailRow>
+					<DetailRow label="Fields" mono={false} stack>
 						{fields.length ? (
-							fields.map((field) => (
-								<Badge key={field} variant="outline">
-									{field}
-								</Badge>
-							))
+							<span className="flex flex-wrap gap-1.5">
+								{fields.map((field) => (
+									<Badge key={field} variant="outline">
+										{field}
+									</Badge>
+								))}
+							</span>
 						) : (
 							<span className="text-muted-foreground">No fields</span>
 						)}
-					</dd>
-				</dl>
+					</DetailRow>
+				</DetailList>
 				<p className="text-muted-foreground text-xs">
 					Field names are visible; encrypted values and keyrings are never shown
 					in the inventory.
 				</p>
-				<div className="flex flex-wrap gap-2">
+				<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
 					<CertificateProofDialog certificate={certificate} wallet={wallet} />
 					<RelinquishCertificateDialog
 						certificate={certificate}
@@ -504,13 +523,11 @@ export function CertificateCenter() {
 	if (!wallet) {
 		return (
 			<Card>
-				<CardHeader className="text-center">
-					<ShieldAlert className="mx-auto size-10 text-muted-foreground" />
-					<CardTitle className="text-lg">Unlock or connect a wallet</CardTitle>
-					<CardDescription>
-						Certificates are read through the active BRC-100 wallet.
-					</CardDescription>
-				</CardHeader>
+				<EmptyState
+					icon={ShieldAlert}
+					title="Unlock or connect a wallet"
+					description="Certificates are read through the active BRC-100 wallet."
+				/>
 			</Card>
 		);
 	}
@@ -527,58 +544,60 @@ export function CertificateCenter() {
 
 	return (
 		<div className="space-y-5">
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<div>
-					<h2 className="font-semibold text-lg">Certificate inventory</h2>
-					<p className="text-muted-foreground text-sm">
-						BRC-52 certificates held by the active wallet.
-					</p>
-				</div>
-				<div className="flex gap-2">
-					<Button onClick={refresh} size="sm" variant="outline">
-						<RefreshCw data-icon="inline-start" /> Refresh
-					</Button>
-					<AcquireCertificateDialog
-						onAcquired={() => changed("Certificate acquired.")}
-						wallet={wallet}
-					/>
-				</div>
-			</div>
+			<SectionHeader
+				className="flex-wrap"
+				title="Certificate inventory"
+				description="BRC-52 certificates held by the active wallet."
+				action={
+					<>
+						<Button
+							aria-label="Refresh"
+							onClick={refresh}
+							size="icon"
+							variant="outline"
+						>
+							<RefreshCw />
+						</Button>
+						<AcquireCertificateDialog
+							onAcquired={() => changed("Certificate acquired.")}
+							wallet={wallet}
+						/>
+					</>
+				}
+			/>
 			{status && (
 				<p aria-live="polite" className="text-sm" role="status">
 					{status}
 				</p>
 			)}
 			{error ? (
-				<Card>
-					<CardContent className="flex flex-wrap items-center gap-3 text-destructive text-sm">
-						<span role="alert">{error}</span>
+				<Notice tone="danger">
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<span>{error}</span>
 						<Button onClick={refresh} size="sm" variant="outline">
 							Try again
 						</Button>
-					</CardContent>
-				</Card>
+					</div>
+				</Notice>
 			) : !isInitialized || certificates === null ? (
-				<div
-					aria-live="polite"
-					className="flex items-center gap-2 py-10 text-muted-foreground text-sm"
-					role="status"
-				>
-					<Loader2 className="size-4 animate-spin" /> Loading certificates…
+				<div aria-live="polite" className="grid gap-4" role="status">
+					<span className="sr-only">Loading certificates…</span>
+					<Skeleton className="h-48 rounded-xl" />
+					<Skeleton className="h-48 rounded-xl" />
 				</div>
 			) : certificates.length === 0 ? (
 				<Card>
-					<CardHeader className="text-center">
-						<BadgeCheck className="mx-auto size-10 text-muted-foreground" />
-						<CardTitle className="text-lg">
-							{page === 0 ? "No certificates" : "No certificates on this page"}
-						</CardTitle>
-						<CardDescription>
-							{page === 0
+					<EmptyState
+						icon={BadgeCheck}
+						title={
+							page === 0 ? "No certificates" : "No certificates on this page"
+						}
+						description={
+							page === 0
 								? "Acquire a certificate from a trusted issuer to see it here."
-								: "Return to the previous page or refresh the inventory."}
-						</CardDescription>
-					</CardHeader>
+								: "Return to the previous page or refresh the inventory."
+						}
+					/>
 				</Card>
 			) : (
 				<div className="grid gap-4">

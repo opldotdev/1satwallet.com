@@ -28,6 +28,7 @@ const SUITES = {
 			"./e2e/mainnet.e2e.ts",
 			"./e2e/create-wallet.e2e.ts",
 			"./e2e/mobile-layout.e2e.ts",
+			"./e2e/onboarding-layout.e2e.ts",
 		],
 	],
 } as const;
