@@ -18,7 +18,8 @@ import { sectionLink } from "./support/wallet";
 // Which wallet section you are in, as a first-time visitor on mainnet: the
 // wallet chrome (headline and tabs) renders without a wallet, so this runs on
 // every PR. The h1 is the current tab's label, exactly one tab is current and
-// it is scrolled into view; sub-pages show a back arrow and no tabs.
+// it is scrolled into view. Phones name every tab without icons; wider
+// screens add the icons. Sub-pages show a back arrow and no tabs.
 
 const SECTIONS = [
 	{ path: "/wallet", label: "Wallet" },
@@ -59,14 +60,14 @@ interface SectionChrome {
 		text: string;
 		left: number;
 		right: number;
-		/** The label beside the icon is shown, not only read out. */
-		labelShown: boolean;
 	}[];
 	links: {
 		name: string;
 		width: number;
 		height: number;
+		/** The name is drawn, not only read out (it may sit past the edge). */
 		labelShown: boolean;
+		iconShown: boolean;
 	}[];
 }
 
@@ -100,7 +101,6 @@ function readSectionChrome(browser: Browser): Promise<SectionChrome> {
 						text: clean(el.textContent),
 						left: round(rect.left),
 						right: round(rect.right),
-						labelShown: shown(el.querySelector("span")),
 					};
 				}),
 			links: links.map((el) => {
@@ -110,6 +110,7 @@ function readSectionChrome(browser: Browser): Promise<SectionChrome> {
 					width: round(rect.width),
 					height: round(rect.height),
 					labelShown: shown(el.querySelector("span")),
+					iconShown: shown(el.querySelector("svg")),
 				};
 			}),
 		};
@@ -186,11 +187,6 @@ function checkSection(
 			`${where}: the current tab is "${current.text}", expected "${label}" (the h1).`,
 		);
 	}
-	if (!current.labelShown) {
-		problems.add(
-			`${where}: the current tab "${current.text}" shows no label, expected its name beside the icon.`,
-		);
-	}
 	const left = Math.max(chrome.nav.left, 0);
 	const right = Math.min(chrome.nav.right, chrome.innerWidth);
 	if (current.left < left - TOLERANCE || current.right > right + TOLERANCE) {
@@ -205,12 +201,15 @@ function checkSection(
 				`${where}: tab "${link.name}" is ${link.width}x${link.height}px, expected at least ${MIN_TAP_TARGET}x${MIN_TAP_TARGET}px.`,
 			);
 		}
-		// Phones name only the current tab; wider screens name every tab.
-		const isCurrent = link.name === current.text;
-		const expectShown = !phone || isCurrent;
-		if (link.labelShown !== expectShown) {
+		// Every tab is named at every width; icons join the names from sm.
+		if (!link.labelShown) {
 			problems.add(
-				`${where}: tab "${link.name}" label is ${link.labelShown ? "shown" : "hidden"}, expected it ${expectShown ? "shown" : "hidden"}.`,
+				`${where}: tab "${link.name}" shows no name, expected every tab named.`,
+			);
+		}
+		if (link.iconShown === phone) {
+			problems.add(
+				`${where}: tab "${link.name}" icon is ${link.iconShown ? "shown" : "hidden"}, expected it ${phone ? "hidden on phones" : "shown from sm"}.`,
 			);
 		}
 	}
@@ -261,7 +260,7 @@ e2eTest(
 		const [viewport] = PHONE_VIEWPORTS;
 		await setViewport(browser, viewport);
 		await waitForChrome(browser, "/wallet", "Wallet", true);
-		// History is last: on the narrowest phone it starts at the faded edge.
+		// History is last: on the narrowest phone it starts past the edge.
 		for (const section of [SECTIONS[6], SECTIONS[4], SECTIONS[0]]) {
 			await browser.click(sectionLink(section.label));
 			const where = `${section.path} after a tap at ${describeViewport(viewport)}`;

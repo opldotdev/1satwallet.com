@@ -17,8 +17,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSound } from "@/hooks/use-sound";
 import { type WalletTabValue, walletTabsFor } from "@/lib/chain-surfaces";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
-import { cn } from "@/lib/utils";
-import { activeWalletTab, walletSubPageFor } from "@/lib/wallet-sections";
+import {
+	activeWalletTab,
+	normalizeWalletPath,
+	walletSubPageFor,
+} from "@/lib/wallet-sections";
 import styles from "./wallet-tabs.module.css";
 
 const icons: Record<WalletTabValue, LucideIcon> = {
@@ -33,12 +36,13 @@ const icons: Record<WalletTabValue, LucideIcon> = {
 };
 
 /**
- * The wallet's sections, one link each. On phones only the current one shows
- * its name beside its icon; from sm every tab is labelled. Sub-pages
- * (settings, create, a token's detail) show a back arrow instead.
+ * The wallet's sections, one link each, in a row that scrolls sideways when
+ * it is wider than the screen. Phones show the names alone; from sm each name
+ * has its icon. Every tab stays where it is and readable; the current one is
+ * underlined. Sub-pages (settings, create) show a back arrow instead.
  */
 export function WalletTabs() {
-	const pathname = usePathname();
+	const pathname = normalizeWalletPath(usePathname());
 	const { play } = useSound();
 	const tabs = walletTabsFor(useWalletChain());
 	const activeHref = activeWalletTab(pathname, tabs)?.href;
@@ -61,21 +65,23 @@ export function WalletTabs() {
 		return () => observer.disconnect();
 	}, [hidden, measure]);
 
-	// Bring the current tab into view whenever the section changes.
+	// Centre the current tab in the row whenever the section changes. Only the
+	// row scrolls, never the page.
 	useEffect(() => {
-		if (hidden || !activeHref) return;
-		const current = listRef.current?.querySelector<HTMLElement>(
-			'[aria-current="page"]',
-		);
+		const list = listRef.current;
+		if (hidden || !activeHref || !list) return;
+		const current = list.querySelector<HTMLElement>('[aria-current="page"]');
 		if (!current) return;
+		const box = list.getBoundingClientRect();
+		const tab = current.getBoundingClientRect();
 		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		current.scrollIntoView({
-			behavior: still ? "auto" : "smooth",
-			block: "nearest",
-			inline: "center",
+		list.scrollTo({
+			left:
+				list.scrollLeft +
+				(tab.left - box.left) -
+				(list.clientWidth - tab.width) / 2,
+			behavior: still ? "instant" : "smooth",
 		});
-		// The current tab's label changes the row's width; a smooth scroll
-		// measures again as it moves.
 		measure();
 	}, [hidden, activeHref, measure]);
 
@@ -102,12 +108,12 @@ export function WalletTabs() {
 									if (!current) play("click");
 								}}
 							>
-								<Icon aria-hidden="true" className="size-4 shrink-0" />
-								{/* Phones name only the current tab; the others keep
-								    their name for screen readers. */}
-								<span className={cn(!current && "max-sm:sr-only")}>
-									{tab.label}
-								</span>
+								{/* Names alone on phones; icon and name from sm. */}
+								<Icon
+									aria-hidden="true"
+									className="size-4 shrink-0 max-sm:hidden"
+								/>
+								<span>{tab.label}</span>
 							</Link>
 						</li>
 					);

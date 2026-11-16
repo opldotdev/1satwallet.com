@@ -77,7 +77,7 @@ export function WalletHeader() {
 					</div>
 					{chain === "test" && faucet && section.tab === "overview" ? (
 						<a
-							className="w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+							className="inline-flex w-fit items-center text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground max-md:min-h-11"
 							href={faucet}
 							rel="noopener noreferrer"
 							target="_blank"

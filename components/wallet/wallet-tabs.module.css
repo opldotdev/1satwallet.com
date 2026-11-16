@@ -1,5 +1,6 @@
-/* The wallet's section tabs: a quiet row of links. The current one is in the
-   foreground colour with a 2px brand underline; the others are muted. */
+/* The wallet's section tabs: a quiet row of links, names alone on phones and
+   with their icons from sm. The current one is in the foreground colour with
+   a 2px brand underline; the others are muted. */
 .list {
 	display: flex;
 	align-items: stretch;
@@ -46,7 +47,7 @@
 .link[aria-current="page"] {
 	color: var(--foreground);
 }
-/* The underline spans the icon and label, not the padding. */
+/* The underline spans the label (and icon), not the padding. */
 .link[aria-current="page"]::after {
 	content: "";
 	position: absolute;
@@ -61,12 +62,6 @@
 	outline: 2px solid var(--ring);
 	outline-offset: -2px;
 	border-radius: var(--radius-md);
-}
-/* Phones: the other tabs are icon only, a 44px square each. */
-@media (max-width: 639px) {
-	.link:not([aria-current="page"]) {
-		padding: 0;
-	}
 }
 @media (min-width: 768px) {
 	.link {

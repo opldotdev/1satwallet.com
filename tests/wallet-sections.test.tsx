@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NotOnTestnet, UnderPageHeading } from "../components/not-on-testnet";
 import { WALLET_TABS, walletTabsFor } from "../lib/chain-surfaces";
 import {
 	activeWalletTab,
+	normalizeWalletPath,
 	walletSectionFor,
 	walletSectionTitle,
 	walletSubPageFor,
+	walletSubPageTitle,
 } from "../lib/wallet-sections";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
@@ -32,6 +36,17 @@ describe("walletSectionFor", () => {
 			"ordinals",
 		);
 		assert.equal(walletSectionFor("/wallet/", "main").tab, "overview");
+	});
+
+	it("normalises one spelling per route for the tabs and the header", () => {
+		assert.equal(normalizeWalletPath("/wallet/"), "/wallet");
+		assert.equal(normalizeWalletPath("/wallet/history//"), "/wallet/history");
+		assert.equal(normalizeWalletPath("/"), "/");
+		assert.equal(
+			activeWalletTab(normalizeWalletPath("/wallet/"), walletTabsFor("main"))
+				?.value,
+			"overview",
+		);
 	});
 
 	it("names a section the chain lacks but marks no tab", () => {
@@ -106,7 +121,6 @@ describe("walletSectionFor", () => {
 				"Wallet settings",
 			],
 			["/wallet/migrate", "Wallet migration", "/wallet", "Wallet"],
-			["/wallet/1color/abc_0", "1Color token", "/wallet/1color", "1Color"],
 			["/wallet/bsv21/abc_0", "BSV21 token", "/wallet/bsv21", "BSV21"],
 		];
 		for (const [path, title, parentHref, parentTitle] of cases) {
@@ -129,14 +143,17 @@ describe("walletSectionFor", () => {
 		});
 	});
 
-	it("keeps the 1Color and BSV21 lists as sections, their tokens as sub-pages", () => {
+	it("keeps the 1Color list and its token pages in the 1Color section for now", () => {
+		// The token page has its own heading and back link until D6 moves it
+		// onto the shared detail layout.
 		assert.equal(walletSubPageFor("/wallet/1color"), null);
+		assert.equal(walletSubPageFor("/wallet/1color/abc_0"), null);
 		assert.equal(walletSubPageFor("/wallet/bsv21"), null);
-		assert.equal(walletSectionFor("/wallet/1color", "test").tab, "1color");
-		assert.equal(
-			walletSubPageFor("/wallet/1color/abc_0")?.title,
-			"1Color token",
-		);
+		assert.deepEqual(walletSectionFor("/wallet/1color/abc_0", "test"), {
+			title: "1Color",
+			showTabs: true,
+			tab: "1color",
+		});
 	});
 
 	it("titles each section's document with its tab label", () => {
@@ -145,6 +162,21 @@ describe("walletSectionFor", () => {
 		assert.throws(
 			() => walletSectionTitle("nope" as "history"),
 			/Unknown wallet section "nope"/,
+		);
+	});
+
+	it("titles a sub-page's document with its headline", () => {
+		assert.equal(
+			walletSubPageTitle("/wallet/settings"),
+			"Wallet settings - 1Sat",
+		);
+		assert.throws(
+			() => walletSubPageTitle("/wallet/history"),
+			/"\/wallet\/history" is not a wallet sub-page/,
+		);
+		assert.match(
+			read("app/(main)/wallet/settings/page.tsx"),
+			/title: walletSubPageTitle\("\/wallet\/settings"\)/,
 		);
 	});
 });
@@ -156,9 +188,15 @@ describe("wallet chrome", () => {
 		assert.match(tabs, /aria-current=\{current \? "page" : undefined\}/);
 		assert.match(tabs, /<Link/);
 		assert.doesNotMatch(tabs, /TabsTrigger|router\.push/);
-		// Phones label only the current tab; the rest stay named for readers.
-		assert.match(tabs, /!current && "max-sm:sr-only"/);
-		assert.match(tabs, /inline: "center"/);
+		// Every tab is named on phones, without its icon; icons from sm.
+		assert.match(tabs, /className="size-4 shrink-0 max-sm:hidden"/);
+		assert.match(tabs, /<span>\{tab\.label\}<\/span>/);
+		assert.doesNotMatch(tabs, /sr-only/);
+		// Only the row scrolls to the current tab, never the page.
+		assert.match(tabs, /list\.scrollTo\(\{/);
+		assert.match(tabs, /prefers-reduced-motion: reduce/);
+		assert.doesNotMatch(tabs, /scrollIntoView/);
+		assert.match(tabs, /normalizeWalletPath\(usePathname\(\)\)/);
 		assert.match(tabs, /if \(hidden\) return null;/);
 	});
 
@@ -228,5 +266,34 @@ describe("wallet chrome", () => {
 			/aria-label="Toggle wallet navigation"[\s\S]*<Wallet \/>/,
 		);
 		assert.doesNotMatch(shell, /SidebarTrigger/);
+	});
+});
+
+describe("one h1 per wallet page", () => {
+	it("heads the testnet notice with an h2 under the wallet header only", () => {
+		assert.match(
+			renderToStaticMarkup(<NotOnTestnet />),
+			/^<div[^>]*><h1[^>]*>Not available on testnet<\/h1>/,
+		);
+		assert.match(
+			renderToStaticMarkup(
+				<UnderPageHeading>
+					<NotOnTestnet />
+				</UnderPageHeading>,
+			),
+			/^<div[^>]*><h2[^>]*>Not available on testnet<\/h2>/,
+		);
+		assert.match(
+			read("app/(main)/wallet/layout.tsx"),
+			/<UnderPageHeading>\s*<div className="min-w-0 space-y-6">\{children\}<\/div>\s*<\/UnderPageHeading>/,
+		);
+	});
+
+	it("leaves the migration headline to the wallet header", () => {
+		assert.doesNotMatch(
+			read("app/(main)/wallet/migrate/page.tsx"),
+			/Wallet Migration/,
+		);
+		assert.doesNotMatch(read("components/wallet/migration-wizard.tsx"), /<h1/);
 	});
 });

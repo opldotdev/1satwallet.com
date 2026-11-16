@@ -87,12 +87,6 @@ const SUB_PAGES: readonly SubPage[] = [
 		parentTitle: "Wallet",
 	},
 	{
-		path: "/wallet/1color/",
-		title: "1Color token",
-		parentHref: "/wallet/1color",
-		parentTitle: "1Color",
-	},
-	{
 		path: "/wallet/bsv21/",
 		title: "BSV21 token",
 		parentHref: "/wallet/bsv21",
@@ -106,6 +100,14 @@ const under = (pathname: string, path: string) =>
 	path.endsWith("/")
 		? pathname.startsWith(path) && pathname.length > path.length
 		: pathname === path || pathname.startsWith(`${path}/`);
+
+/**
+ * One spelling per route: no trailing slash ("/wallet/" is "/wallet").
+ * Every lookup here expects a path normalised by this.
+ */
+export function normalizeWalletPath(pathname: string): string {
+	return pathname.replace(/\/+$/, "") || "/";
+}
 
 /** The sub-page `pathname` is on, or null on a section. */
 export function walletSubPageFor(pathname: string): SubPage | null {
@@ -132,7 +134,7 @@ export function walletSectionFor(
 	pathname: string,
 	chain: Chain,
 ): WalletSection {
-	const path = pathname.replace(/\/+$/, "") || "/";
+	const path = normalizeWalletPath(pathname);
 	const sub = walletSubPageFor(path);
 	if (sub) {
 		return {
@@ -158,4 +160,11 @@ export function walletSectionTitle(value: WalletTabValue): string {
 	const tab = WALLET_TABS.find((t) => t.value === value);
 	if (!tab) throw new Error(`Unknown wallet section "${value}"`);
 	return `${tab.label} - 1Sat`;
+}
+
+/** A sub-page's document title, from the same title as its headline. */
+export function walletSubPageTitle(path: string): string {
+	const page = walletSubPageFor(normalizeWalletPath(path));
+	if (!page) throw new Error(`"${path}" is not a wallet sub-page`);
+	return `${page.title} - 1Sat`;
 }
