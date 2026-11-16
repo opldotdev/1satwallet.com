@@ -9,8 +9,15 @@ import { HOSTS_KEY } from "./init-script";
 /** `bun run e2e --list` registers every test as skipped: no browser, no settings. */
 export const LIST_ONLY = process.env.E2E_LIST === "1";
 
-/** Covers a wallet sync plus a broadcast or two. */
+/** bun's limit per test: covers a wallet sync plus a broadcast or two. */
 const TEST_TIMEOUT = 300_000;
+
+/**
+ * Waits give up after this, leaving a minute of bun's limit to clear the
+ * page, take the failure screenshot, close the browser and remove the init
+ * script.
+ */
+const BODY_BUDGET = 240_000;
 
 export interface Session {
 	/** First page to open. */
@@ -64,10 +71,9 @@ export function e2eTest(
 	}
 	test(name, { timeout: TEST_TIMEOUT }, async (t) => {
 		const session = await start();
-		const browser = new Browser(session.secrets);
+		const browser = new Browser(session.secrets, Date.now() + BODY_BUDGET);
 		const dir = await mkdtemp(path.join(os.tmpdir(), "1sat-e2e-"));
 		const scriptPath = path.join(dir, "init.js");
-		await writeFile(scriptPath, session.initScript, { mode: 0o600 });
 
 		const errors: unknown[] = [];
 		const attempt = async (step: () => Promise<void>) => {
@@ -80,6 +86,7 @@ export function e2eTest(
 
 		let launched = false;
 		await attempt(async () => {
+			await writeFile(scriptPath, session.initScript, { mode: 0o600 });
 			await browser.launch(session.url, scriptPath);
 			launched = true;
 			await browser.setViewport(1440, 900);

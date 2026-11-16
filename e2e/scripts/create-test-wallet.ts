@@ -1,9 +1,9 @@
 /**
- * Creates the two throwaway testnet wallets the e2e tests use and writes
- * their encrypted backups and passphrase to .env.e2e.local (gitignored).
- * Prints only public data: deposit addresses and identity keys.
+ * Creates the throwaway testnet wallet the e2e tests use (wallet A) and
+ * writes its encrypted backup and passphrase to .env.e2e.local (gitignored).
+ * Prints only public data: its deposit address and identity key.
  *
- *   bun run e2e:wallets:create
+ *   bun run e2e:wallet:create
  */
 import { writeFile } from "node:fs/promises";
 import { PrivateKey, ProtoWallet } from "@bsv/sdk";
@@ -68,18 +68,16 @@ async function createWallet(
 
 const passphrase = randomPassphrase();
 const walletA = await createWallet(passphrase, "wallet A");
-const walletB = await createWallet(passphrase, "wallet B");
 
 const lines = [
-	"# Throwaway testnet wallets for the 1satwallet.com e2e tests.",
-	"# Created by `bun run e2e:wallets:create`. Never commit or share this file.",
+	"# Throwaway testnet wallet for the 1satwallet.com e2e tests.",
+	"# Created by `bun run e2e:wallet:create`. Never commit or share this file.",
 	`E2E_WALLET_A_BACKUP='${walletA.backup}'`,
-	`E2E_WALLET_B_BACKUP='${walletB.backup}'`,
 	`E2E_WALLET_PASSPHRASE=${passphrase}`,
 ];
 
 try {
-	// "wx": never overwrite an existing file, which may hold funded wallets.
+	// "wx": never overwrite an existing file, which may hold a funded wallet.
 	await writeFile(ENV_FILE, `${lines.join("\n")}\n`, {
 		flag: "wx",
 		mode: 0o600,
@@ -87,7 +85,7 @@ try {
 } catch (error) {
 	if ((error as NodeJS.ErrnoException).code === "EEXIST") {
 		console.error(
-			`${ENV_FILE} already exists; nothing was written. It may hold funded test wallets: move it away first if you really want new ones.`,
+			`${ENV_FILE} already exists; nothing was written. It may hold a funded test wallet: move it away first if you really want a new one.`,
 		);
 		process.exit(1);
 	}
@@ -95,14 +93,7 @@ try {
 }
 
 console.log(`Wrote ${ENV_FILE}\n`);
-for (const [name, wallet] of [
-	["A", walletA],
-	["B", walletB],
-] as const) {
-	console.log(`Wallet ${name}`);
-	console.log(`  testnet deposit address: ${wallet.depositAddress}`);
-	console.log(`  identity key:            ${wallet.identityKey}`);
-}
-console.log(
-	`\nFund both from ${TESTNET_FAUCET_URL}: about 0.01 tBSV to A and 0.001 tBSV to B.`,
-);
+console.log("Wallet A");
+console.log(`  testnet deposit address: ${walletA.depositAddress}`);
+console.log(`  identity key:            ${walletA.identityKey}`);
+console.log(`\nFund it from ${TESTNET_FAUCET_URL}: about 0.01 tBSV.`);

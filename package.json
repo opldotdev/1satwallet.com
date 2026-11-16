@@ -13,7 +13,7 @@
 		"test:live": "bun test ./tests/integration/endpoints.live.ts",
 		"e2e": "bun e2e/run.ts",
 		"e2e:mainnet": "bun e2e/run.ts --suite mainnet",
-		"e2e:wallets:create": "bun e2e/scripts/create-test-wallets.ts"
+		"e2e:wallet:create": "bun e2e/scripts/create-test-wallet.ts"
 	},
 	"dependencies": {
 		"@1sat/actions": "0.1.6",

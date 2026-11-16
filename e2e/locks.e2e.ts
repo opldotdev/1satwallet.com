@@ -20,6 +20,13 @@ const maturedCoin: Locator = {
 
 async function loadedLocks(browser: Browser) {
 	await browser.waitUntil(
+		"the Locks section",
+		locks,
+		undefined,
+		undefined,
+		CHAIN_TIMEOUT,
+	);
+	await browser.waitUntil(
 		"the Locks section to load",
 		{ role: "any", text: pattern(/Loading locks…/), within: locks },
 		(result) => result.count === 0,
@@ -55,27 +62,64 @@ async function alertText(browser: Browser, dialog: Locator) {
 	return (await browser.query(alert)).text;
 }
 
-// Runs first: a lock from an earlier run whose block has passed is unlocked
+/**
+ * Nightly (E2E_REQUIRE_UNLOCK=1) the last run's one-block lock must be
+ * unlocked. The one excuse is testnet mining no block since that run: its
+ * lock is then still pending, at most MAX_PENDING_BLOCKS from unlocking.
+ */
+const MAX_PENDING_BLOCKS = 1;
+
+/** Current height and the unlock block of each pending (not matured) lock. */
+function readLockHeights(browser: Browser) {
+	return browser.evaluate(() => {
+		const section = document.querySelector(
+			'section[aria-labelledby="wallet-locks-heading"]',
+		);
+		const number = (text: string | undefined) =>
+			text ? Number(text.replaceAll(",", "")) : null;
+		const current = number(
+			section?.textContent?.match(/· block ([\d,]+)/)?.[1],
+		);
+		const pending = Array.from(section?.querySelectorAll("li") ?? [])
+			.filter((li) => /blocks? left/.test(li.textContent ?? ""))
+			.map((li) => number(li.textContent?.match(/Unlock block ([\d,]+)/)?.[1]))
+			.filter((until): until is number => until !== null);
+		return { current, pending };
+	}, null);
+}
+
+// Runs first: locks from earlier runs whose block has passed are unlocked
 // before this run adds its own one-block lock.
-walletTest("unlocks a matured lock from an earlier run", async (browser, t) => {
+walletTest("unlocks matured locks from earlier runs", async (browser, t) => {
 	await loadedLocks(browser);
 	const { count } = await browser.query(maturedCoin);
 	if (count === 0) {
-		if (process.env.E2E_REQUIRE_UNLOCK === "1") {
+		const { current, pending } = await readLockHeights(browser);
+		const soonest = pending.length > 0 ? Math.min(...pending) : null;
+		const waiting =
+			current !== null &&
+			soonest !== null &&
+			soonest - current <= MAX_PENDING_BLOCKS;
+		if (process.env.E2E_REQUIRE_UNLOCK === "1" && !waiting) {
 			throw new Error(
-				"No matured lock to unlock, and E2E_REQUIRE_UNLOCK=1. The previous runs' one-block locks should have matured by now.",
+				`No matured lock to unlock, and E2E_REQUIRE_UNLOCK=1. Current block ${current}; pending locks unlock at ${pending.join(", ") || "none"}. The last run's one-block lock should have matured or be at most ${MAX_PENDING_BLOCKS} block away.`,
 			);
 		}
-		t.skip("no matured lock; this run created one");
+		t.skip(
+			waiting
+				? `no matured lock yet; the newest unlocks at block ${soonest}, current ${current}`
+				: "no matured lock; this run created one",
+		);
 		return;
 	}
 
 	const before = await readBalanceSats(browser);
-	await browser.click({
-		role: "button",
-		name: "Unlock",
-		within: { ...maturedCoin, index: 0 },
-	});
+	// The app offers "Unlock all (n)" once more than one coin is ready.
+	await browser.click(
+		count > 1
+			? { role: "button", name: `Unlock all (${count})`, within: locks }
+			: { role: "button", name: "Unlock", within: maturedCoin },
+	);
 	await browser.waitUntil(
 		"the unlock transaction",
 		{
@@ -88,10 +132,10 @@ walletTest("unlocks a matured lock from an earlier run", async (browser, t) => {
 		CHAIN_TIMEOUT,
 	);
 	await browser.waitUntil(
-		"the unlocked coin to leave the list",
+		"the unlocked coins to leave the list",
 		maturedCoin,
-		(result, expected) => result.count === expected,
-		count - 1,
+		(result) => result.count === 0,
+		undefined,
 		CHAIN_TIMEOUT,
 	);
 	await waitForBalanceAbove(browser, before);
@@ -162,13 +206,10 @@ walletTest("locks 0.00001 BSV for one block", async (browser) => {
 		within: locks,
 		text: pattern(new RegExp(`Unlock block ${until}\\b`)),
 	};
+	// The list refreshes itself after a lock; Refresh is only clicked after a
+	// wait comes up empty, and only once it is enabled again.
 	const deadline = Date.now() + CHAIN_TIMEOUT;
 	for (;;) {
-		await browser.click({
-			role: "button",
-			name: "Refresh locks",
-			within: locks,
-		});
 		try {
 			await browser.waitUntil(
 				`the coin unlocking at block ${until}`,
@@ -179,7 +220,13 @@ walletTest("locks 0.00001 BSV for one block", async (browser) => {
 			);
 			return;
 		} catch (error) {
-			if (Date.now() >= deadline) throw error;
+			const notYet =
+				error instanceof Error && error.message.startsWith("Timed out");
+			if (!notYet || Date.now() >= deadline) throw error;
+			await browser.click(
+				{ role: "button", name: "Refresh locks", within: locks },
+				CHAIN_TIMEOUT,
+			);
 		}
 	}
 });

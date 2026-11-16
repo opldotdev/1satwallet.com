@@ -1,8 +1,9 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { openTestnetBackup } from "./test-network";
 
-/** Local secrets written by `bun run e2e:wallets:create` (gitignored). */
+/** Local secrets written by `bun run e2e:wallet:create` (gitignored). */
 export const ENV_FILE = path.join(__dirname, "..", "..", ".env.e2e.local");
 
 /** Failure screenshots, taken only after the passphrase field is cleared. */
@@ -31,20 +32,39 @@ export const E2E_INSTALLATION_ID =
 	"1sat-web-6f0c2a4e-3b1d-4c8e-9a72-5d1e0b7c4f36";
 
 const SETUP_HINT =
-	'E2E_BASE_URL is the site under test, e.g. http://localhost:3000 after "bun run build && bun run start". For the wallet settings, run "bun run e2e:wallets:create" locally (writes .env.e2e.local); in CI they are secrets of the GitHub environment "e2e-testnet".';
+	'E2E_BASE_URL is the site under test, e.g. http://localhost:3000 after "bun run build && bun run start". For the wallet settings, run "bun run e2e:wallet:create" locally (writes .env.e2e.local); in CI they are secrets of the GitHub environment "e2e-testnet".';
+
+/**
+ * The wallet settings `bun run e2e` hands to bun test in a mode 600 file
+ * named by E2E_SECRETS_FILE, so they are not in the environment of any
+ * process the tests start.
+ */
+let secretsFile: Record<string, string> | undefined;
+
+function setting(name: string): string | undefined {
+	const file = process.env.E2E_SECRETS_FILE;
+	if (file) {
+		secretsFile ??= JSON.parse(readFileSync(file, "utf8")) as Record<
+			string,
+			string
+		>;
+		if (secretsFile[name]) return secretsFile[name].trim();
+	}
+	return process.env[name]?.trim() || undefined;
+}
 
 /** Reads the named settings, failing once with every missing name. */
 export function requireEnv<const Name extends string>(
 	names: readonly Name[],
 ): Record<Name, string> {
-	const missing = names.filter((name) => !process.env[name]?.trim());
+	const missing = names.filter((name) => !setting(name));
 	if (missing.length > 0) {
 		throw new Error(
 			`Missing e2e settings: ${missing.join(", ")}. ${SETUP_HINT}`,
 		);
 	}
 	return Object.fromEntries(
-		names.map((name) => [name, process.env[name]?.trim() ?? ""]),
+		names.map((name) => [name, setting(name) ?? ""]),
 	) as Record<Name, string>;
 }
 

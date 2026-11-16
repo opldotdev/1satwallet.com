@@ -8,11 +8,17 @@ import { type Chain, endpointsOf } from "@/lib/chain-endpoints";
 
 const TIMEOUT_MS = 15_000;
 
+/**
+ * The backends the wallet can't work without. The faucet, handle
+ * registration and color overlay are optional, so their outages don't gate.
+ */
 function originsOf(chain: Chain): string[] {
-	const urls = Object.values(endpointsOf(chain)).filter(
-		(url): url is string => typeof url === "string",
-	);
-	return [...new Set(urls.map((url) => new URL(url).origin))];
+	const { services, storage, messagebox } = endpointsOf(chain);
+	return [
+		...new Set(
+			[services, storage, messagebox].map((url) => new URL(url).origin),
+		),
+	];
 }
 
 async function expectAnswers(origin: string) {

@@ -37,13 +37,24 @@ export async function openTestnetBackup(
 	passphrase: string,
 	label: string,
 ): Promise<OpenedTestnetBackup> {
+	// No `cause` on these two: a JSON.parse error quotes the text it read,
+	// which here is the backup itself.
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(serialized);
+	} catch {
+		throw new Error(
+			`${label} is not JSON. It should be the whole saved backup envelope.`,
+		);
+	}
 	let envelope: EncryptedBackupJson;
 	try {
-		envelope = parseEncryptedBackupJson(JSON.parse(serialized));
+		envelope = parseEncryptedBackupJson(parsed);
 	} catch (error) {
-		throw new Error(`${label} is not a 1Sat web wallet backup envelope.`, {
-			cause: error,
-		});
+		const reason = error instanceof Error ? error.message : "unreadable";
+		throw new Error(
+			`${label} is not a 1Sat web wallet backup envelope (${reason}).`,
+		);
 	}
 	if (envelope.network !== "test") {
 		throw new Error(

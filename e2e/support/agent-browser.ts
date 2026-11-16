@@ -29,6 +29,43 @@ interface CliResponse {
 
 let sessionCount = 0;
 
+/** A failed agent-browser command, with the CLI's own error text. */
+export class AgentBrowserError extends Error {
+	constructor(
+		message: string,
+		readonly cliError: string,
+	) {
+		super(message);
+		this.name = "AgentBrowserError";
+	}
+}
+
+/** agent-browser's wait reports "Wait timed out after …" when it gives up. */
+const isWaitTimeout = (error: unknown) =>
+	error instanceof AgentBrowserError && /timed? ?out/i.test(error.cliError);
+
+/** Long arguments (wait --fn expressions) shortened for error messages. */
+const shorten = (arg: string) =>
+	arg.length > 120 ? `${arg.slice(0, 117)}…` : arg;
+
+/**
+ * The environment for agent-browser, its daemon and Chrome: without the e2e
+ * wallet settings, so they can't reach those processes even by accident.
+ */
+export function cliEnv(): NodeJS.ProcessEnv {
+	const env: NodeJS.ProcessEnv = {
+		...process.env,
+		AGENT_BROWSER_DEFAULT_TIMEOUT: String(ACTION_TIMEOUT),
+		AGENT_BROWSER_NO_VERSION_CHECK: "1",
+	};
+	for (const key of Object.keys(env)) {
+		if (key.startsWith("E2E_WALLET_") || key === "E2E_SECRETS_FILE") {
+			delete env[key];
+		}
+	}
+	return env;
+}
+
 /** "button "Unlock" in dialog "Unlock wallet"", for error messages. */
 export function describe(locator: Locator): string {
 	const self = [
@@ -52,7 +89,16 @@ export class Browser {
 	readonly session = `e2e-${process.pid}-${++sessionCount}`;
 	private marks = 0;
 
-	constructor(private readonly secrets: readonly string[] = []) {}
+	/**
+	 * @param secrets redacted from every error message
+	 * @param budgetEnd waits give up at this time (ms since epoch), so a
+	 *   test fails with a clear message and still closes its browser before
+	 *   bun's own test timeout
+	 */
+	constructor(
+		private readonly secrets: readonly string[] = [],
+		private readonly budgetEnd = Number.POSITIVE_INFINITY,
+	) {}
 
 	redact(text: string): string {
 		return this.secrets
@@ -62,7 +108,7 @@ export class Browser {
 
 	/** Runs one command; throws with the CLI's own error when it fails. */
 	async run(args: readonly string[], stdin?: string): Promise<unknown> {
-		const label = `agent-browser ${args.join(" ")}`;
+		const label = `agent-browser ${args.map(shorten).join(" ")}`;
 		if (args[0] === "wait" && /^\d+$/.test(args[1] ?? "")) {
 			throw new Error(
 				`${label}: fixed sleeps are banned in e2e tests; wait on app state.`,
@@ -77,11 +123,7 @@ export class Browser {
 				AGENT_BROWSER,
 				["--session", this.session, "--json", ...args],
 				{
-					env: {
-						...process.env,
-						AGENT_BROWSER_DEFAULT_TIMEOUT: String(ACTION_TIMEOUT),
-						AGENT_BROWSER_NO_VERSION_CHECK: "1",
-					},
+					env: cliEnv(),
 					stdio: ["pipe", "pipe", "pipe"],
 				},
 			);
@@ -119,10 +161,12 @@ export class Browser {
 			);
 		}
 		if (!response.success || code !== 0) {
-			throw new Error(
+			const cliError = this.redact(response.error ?? `exit ${code}`);
+			throw new AgentBrowserError(
 				this.redact(
-					`${label} failed: ${response.error ?? `exit ${code}`}${stderr.trim() ? ` (${stderr.trim()})` : ""}`,
+					`${label} failed: ${cliError}${stderr.trim() ? ` (${stderr.trim()})` : ""}`,
 				),
+				cliError,
 			);
 		}
 		return response.data;
@@ -179,12 +223,19 @@ export class Browser {
 		expression: string,
 		timeout: number,
 	) {
-		const deadline = Date.now() + timeout;
+		const deadline = Math.min(Date.now() + timeout, this.budgetEnd);
 		for (;;) {
+			if (Date.now() >= this.budgetEnd) {
+				throw new Error(
+					`The test ran out of time while waiting for ${description}.`,
+				);
+			}
 			try {
 				await this.run(["wait", "--fn", expression]);
 				return;
 			} catch (error) {
+				// Only agent-browser's own wait timeout means "not yet".
+				if (!isWaitTimeout(error)) throw error;
 				if (Date.now() >= deadline) {
 					throw new Error(`Timed out after ${timeout} ms: ${description}`, {
 						cause: error,
@@ -223,10 +274,19 @@ export class Browser {
 		);
 	}
 
-	/** Waits for exactly the element `locator` finds, then marks it. */
-	private async mark(locator: Locator): Promise<string> {
+	/**
+	 * Waits until the element `locator` finds is on the page and enabled,
+	 * then marks it for agent-browser to act on.
+	 */
+	private async mark(locator: Locator, timeout?: number): Promise<string> {
 		const mark = `t${++this.marks}`;
-		await this.waitUntil(`${describe(locator)} to be on the page`, locator);
+		await this.waitUntil(
+			`${describe(locator)} to be on the page and enabled`,
+			locator,
+			(result) => result.count > 0 && result.disabled !== true,
+			undefined,
+			timeout,
+		);
 		const found = await this.evaluate(pageQuery, {
 			locator: toPageLocator(locator),
 			mark,
@@ -243,8 +303,8 @@ export class Browser {
 	}
 
 	/** Clicks the element `locator` finds, with agent-browser's own click. */
-	async click(locator: Locator) {
-		await this.run(["click", await this.mark(locator)]);
+	async click(locator: Locator, timeout?: number) {
+		await this.run(["click", await this.mark(locator, timeout)]);
 	}
 
 	/** Fills the field `locator` finds. Never use this for a secret. */

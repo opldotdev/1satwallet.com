@@ -52,4 +52,16 @@ describe("e2e test wallet guard", () => {
 			/E2E_WALLET_A_BACKUP could not be decrypted/,
 		);
 	});
+
+	test("never quotes a malformed backup in its error", async () => {
+		const marker = "not-json-backup-text";
+		const error = await openTestnetBackup(marker, passphrase, "BACKUP").then(
+			() => assert.fail("a malformed backup was accepted"),
+			(caught: unknown) => caught,
+		);
+		assert.ok(error instanceof Error);
+		assert.match(error.message, /BACKUP is not JSON/);
+		assert.equal(error.cause, undefined);
+		assert.equal(String(error.stack).includes(marker), false);
+	});
 });

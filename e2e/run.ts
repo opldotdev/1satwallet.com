@@ -8,7 +8,7 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { baseUrl, ENV_FILE, testWalletA } from "./support/env";
@@ -102,11 +102,32 @@ async function main() {
 		console.log(`Testnet wallet A, identity key ${wallet.identityKey}`);
 	}
 
-	for (const files of SUITES[suite]) {
-		const code = await bunTest(files, { ...process.env });
-		if (code !== 0) return code;
+	// The wallet settings go to bun test in a mode 600 file, not in its
+	// environment, so no process the tests start can inherit them.
+	const dir = await mkdtemp(path.join(os.tmpdir(), "1sat-e2e-run-"));
+	try {
+		const env: NodeJS.ProcessEnv = { ...process.env };
+		const secrets: Record<string, string> = {};
+		for (const key of Object.keys(env)) {
+			if (key.startsWith("E2E_WALLET_")) {
+				secrets[key] = env[key] ?? "";
+				delete env[key];
+			}
+		}
+		if (Object.keys(secrets).length > 0) {
+			env.E2E_SECRETS_FILE = path.join(dir, "secrets.json");
+			await writeFile(env.E2E_SECRETS_FILE, JSON.stringify(secrets), {
+				mode: 0o600,
+			});
+		}
+		for (const files of SUITES[suite]) {
+			const code = await bunTest(files, env);
+			if (code !== 0) return code;
+		}
+		return 0;
+	} finally {
+		await rm(dir, { recursive: true, force: true });
 	}
-	return 0;
 }
 
 main().then(
