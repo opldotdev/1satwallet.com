@@ -61,7 +61,6 @@ import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
-	adminOnlyTokenAccess,
 	createColorContext,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
@@ -73,6 +72,7 @@ import {
 } from "@/lib/wallet/connection-options";
 import { externalNetworkMismatch } from "@/lib/wallet/external-network";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
+import { guardModuleIdentifiers } from "@/lib/wallet/module-identifier-guard";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -301,6 +301,12 @@ export function WalletToolboxProvider({
 		useState<WalletConnectionStatus>("no-wallet");
 	const [providerType, setProviderType] = useState<string | null>(null);
 	const walletResultRef = useRef<WebWalletResult | null>(null);
+	// The built-in wallet's manager and overlay, kept beside walletResultRef so
+	// switching back from an external wallet restores them.
+	const localPermissionsRef = useRef<{
+		manager: WalletPermissionsManager;
+		colorOverlay: ColorOverlay | null;
+	} | null>(null);
 	const walletSessionRef = useRef<WalletSession | null>(null);
 	const walletSessionCleanupRef = useRef<() => void>(() => {});
 	const externalServicesRef = useRef<OneSatServices | null>(null);
@@ -616,6 +622,7 @@ export function WalletToolboxProvider({
 			const webWallet = destroyLocal ? walletResultRef.current : null;
 			if (destroyLocal) {
 				walletResultRef.current = null;
+				localPermissionsRef.current = null;
 				for (const module of assetPermissionModulesRef.current)
 					module.dispose();
 				assetPermissionModulesRef.current = [];
@@ -883,19 +890,19 @@ export function WalletToolboxProvider({
 				const color = createWalletColorModule({
 					wallet: result.wallet,
 					chain,
-					requestTokenAccess: adminOnlyTokenAccess(ADMIN_ORIGINATOR),
+					adminOriginator: ADMIN_ORIGINATOR,
 				});
 				const permissionModules = color
-					? { ...assetPermissionModules, color: color.module }
+					? { ...assetPermissionModules, color: color.permissionModule }
 					: assetPermissionModules;
 				pendingPermissionModules = Object.values(permissionModules);
-				const wpm = new WalletPermissionsManager(
-					result.wallet,
-					ADMIN_ORIGINATOR,
-					{
+				// Apps reach the wallet only through this manager (CWI relay and
+				// redirect authorize), so the guard covers every app-originated call.
+				const wpm = guardModuleIdentifiers(
+					new WalletPermissionsManager(result.wallet, ADMIN_ORIGINATOR, {
 						...PERMISSIONS_CONFIG,
 						permissionModules,
-					},
+					}),
 				);
 				const loadedState = loadReceiveAddressState(
 					{ chain, identityKey: newIdentityKey },
@@ -927,6 +934,10 @@ export function WalletToolboxProvider({
 
 				pendingResult = null;
 				walletResultRef.current = result;
+				localPermissionsRef.current = {
+					manager: wpm,
+					colorOverlay: color?.overlay ?? null,
+				};
 				assetPermissionModulesRef.current = pendingPermissionModules;
 				pendingPermissionModules = [];
 				setWallet(result.wallet);
@@ -1007,7 +1018,8 @@ export function WalletToolboxProvider({
 		async (option: WalletConnectionOption): Promise<boolean> => {
 			if (option === "embedded") {
 				const local = walletResultRef.current;
-				if (!local) {
+				const localPermissions = localPermissionsRef.current;
+				if (!local || !localPermissions) {
 					setInitError(
 						"Create or import a built-in wallet before switching back. The current wallet is unchanged.",
 					);
@@ -1023,6 +1035,8 @@ export function WalletToolboxProvider({
 				externalServicesRef.current = null;
 				setWallet(local.wallet);
 				setServices(local.services);
+				setPermissionsManager(localPermissions.manager);
+				setColorOverlay(localPermissions.colorOverlay);
 				setConnectionMode("built-in");
 				setProviderType("1sat-web");
 				setConnectionStatus("ready");

@@ -40,10 +40,10 @@ const managerFor = (chain: Chain) => {
 	const color = createWalletColorModule({
 		wallet: raw.wallet,
 		chain,
-		requestTokenAccess: adminOnlyTokenAccess(ADMIN),
+		adminOriginator: ADMIN,
 	});
 	const manager = new WalletPermissionsManager(raw.wallet, ADMIN, {
-		permissionModules: color ? { color: color.module } : {},
+		permissionModules: color ? { color: color.permissionModule } : {},
 	});
 	return { raw, color, manager };
 };
@@ -139,11 +139,11 @@ describe("wallet provider color wiring", () => {
 	it("registers color with the asset modules and tracks it for dispose", () => {
 		assert.match(
 			init,
-			/createWalletColorModule\(\{[\s\S]*chain,[\s\S]*adminOnlyTokenAccess\(ADMIN_ORIGINATOR\)/,
+			/createWalletColorModule\(\{[\s\S]*chain,[\s\S]*adminOriginator: ADMIN_ORIGINATOR/,
 		);
 		assert.match(
 			init,
-			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.module \}\s*:\s*assetPermissionModules/,
+			/color\s*\?\s*\{ \.\.\.assetPermissionModules, color: color\.permissionModule \}\s*:\s*assetPermissionModules/,
 		);
 		assert.match(
 			init,
@@ -178,6 +178,44 @@ describe("wallet provider color wiring", () => {
 		);
 		assert.match(source, /setColorOverlay\(color\?\.overlay \?\? null\)/);
 		assert.match(source, /colorOverlay: colorContext \? colorOverlay : null/);
+	});
+
+	it("restores the built-in manager and overlay when switching back from an external wallet", () => {
+		assert.match(
+			init,
+			/localPermissionsRef\.current = \{\s*manager: wpm,\s*colorOverlay: color\?\.overlay \?\? null,\s*\}/,
+		);
+		const embedded = source.slice(
+			source.indexOf("const switchWallet"),
+			source.indexOf(
+				"setIsInitializing(true);",
+				source.indexOf("const switchWallet"),
+			),
+		);
+		assert.match(
+			embedded,
+			/const localPermissions = localPermissionsRef\.current;\s*if \(!local \|\| !localPermissions\)/,
+		);
+		assert.match(
+			embedded,
+			/setPermissionsManager\(localPermissions\.manager\);\s*setColorOverlay\(localPermissions\.colorOverlay\);\s*setConnectionMode\("built-in"\)/,
+		);
+		const teardown = source.slice(
+			source.indexOf("const teardownWallet"),
+			source.indexOf("const teardown = (async"),
+		);
+		assert.match(
+			teardown,
+			/walletResultRef\.current = null;\s*localPermissionsRef\.current = null;/,
+		);
+	});
+
+	it("guards the manager it exposes to apps against misrouted p names", () => {
+		assert.match(
+			init,
+			/const wpm = guardModuleIdentifiers\(\s*new WalletPermissionsManager\(result\.wallet, ADMIN_ORIGINATOR,/,
+		);
+		assert.doesNotMatch(source, /setPermissionsManager\(new /);
 	});
 
 	it("dispose clears the module's in-memory state", () => {

@@ -7,11 +7,17 @@
 import { createContext, type OneSatContext } from "@1sat/actions";
 import type { OneSatServices } from "@1sat/client";
 import {
+	ColorConsentDeclinedError,
 	type ColorPermissionModule,
 	type ColorTokenAccessHandler,
 	createColorModule,
 } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
+import type {
+	PermissionsModule,
+	PermissionsModuleNext,
+	PermissionsModuleRequest,
+} from "@bsv/wallet-toolbox-client";
 import {
 	type Chain,
 	endpointsOf,
@@ -21,9 +27,14 @@ import { type ColorOverlay, createColorOverlayProvider } from "./color-overlay";
 import { withOriginator } from "./with-originator";
 
 export interface WalletColorModule {
+	/** The module itself, for host-only calls such as `markSettled`. */
 	module: ColorPermissionModule;
+	/** What the permissions manager registers under `color`: admin only. */
+	permissionModule: AdminOnlyColorModule;
 	overlay: ColorOverlay;
 }
+
+export type AdminOnlyColorModule = PermissionsModule & { dispose: () => void };
 
 /**
  * Consent for `p color` requests until app consent ships: the wallet itself
@@ -36,14 +47,50 @@ export const adminOnlyTokenAccess =
 		app === adminOriginator;
 
 /**
+ * The color module as the permissions manager sees it, refusing every
+ * originator but the wallet itself before the module runs. The module's own
+ * consent only covers some requests (reads, signatures, relinquish, sign):
+ * `getPublicKey` and `verifySignature` under a `p color` protocol pass
+ * straight through, `internalizeAction` into a `p color` basket asks nothing,
+ * and `createAction` with a `p color plan` label funds before it asks. This
+ * gate covers every routed method, so no app reaches 1Color until app consent
+ * ships.
+ */
+export function adminOnlyColorModule(
+	module: ColorPermissionModule,
+	adminOriginator: string,
+): AdminOnlyColorModule {
+	const allow = (req: PermissionsModuleRequest) => {
+		if (req.originator !== adminOriginator)
+			throw new ColorConsentDeclinedError(req.method);
+	};
+	return {
+		capabilities: module.capabilities,
+		handleRequest: async (
+			req: PermissionsModuleRequest,
+			next: PermissionsModuleNext,
+		) => {
+			allow(req);
+			return await module.handleRequest(req, next);
+		},
+		onRequest: async (req: PermissionsModuleRequest) => {
+			allow(req);
+			return await module.onRequest(req);
+		},
+		onResponse: (res, context) => module.onResponse(res, context),
+		dispose: () => module.dispose(),
+	};
+}
+
+/**
  * The color module and its overlay, or null when the chain has no color
  * overlay (mainnet). `wallet` is the raw wallet the permissions manager wraps,
- * never the manager itself.
+ * never the manager itself. Only `adminOriginator` may use it.
  */
 export function createWalletColorModule(options: {
 	wallet: WalletInterface;
 	chain: Chain;
-	requestTokenAccess: ColorTokenAccessHandler;
+	adminOriginator: string;
 }): WalletColorModule | null {
 	if (!isOneColorAvailable(options.chain)) return null;
 	const overlay = createColorOverlayProvider({
@@ -53,9 +100,13 @@ export function createWalletColorModule(options: {
 	const module = createColorModule({
 		wallet: options.wallet,
 		provider: overlay,
-		requestTokenAccess: options.requestTokenAccess,
+		requestTokenAccess: adminOnlyTokenAccess(options.adminOriginator),
 	});
-	return { module, overlay };
+	return {
+		module,
+		permissionModule: adminOnlyColorModule(module, options.adminOriginator),
+		overlay,
+	};
 }
 
 /**
