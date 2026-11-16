@@ -11,6 +11,7 @@ describe("chain endpoints", () => {
 			services: "https://api.1sat.app",
 			storage: "https://wallet.1sat.app",
 			messagebox: "https://messagebox.1sat.app",
+			extraMessageboxes: ["https://messagebox.bsvblockchain.tech"],
 			handleRegistration: "https://accounts.1sat.app",
 		});
 	});
@@ -20,6 +21,7 @@ describe("chain endpoints", () => {
 			services: "https://testnet.api.1sat.app",
 			storage: "https://testnet.wallet.1sat.app",
 			messagebox: "https://testnet.messagebox.1sat.app",
+			extraMessageboxes: [],
 			handleRegistration: "https://accounts.testnet.1sat.app/",
 			colorOverlay: "https://testnet.openex.dev",
 			faucet: "https://faucet.bananablocks.com",

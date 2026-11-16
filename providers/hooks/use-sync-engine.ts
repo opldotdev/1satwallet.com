@@ -11,6 +11,10 @@ import type { WalletInterface } from "@bsv/sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { RECEIVE_ADDRESS_PREFIX } from "@/lib/receive-address-manager";
+import {
+	combineInboxResults,
+	syncAccountPeerPayInbox,
+} from "@/lib/wallet/peerpay-inbox";
 
 export type SyncTaskName = "addresses" | "payments" | "cosignDeliveries";
 export type SyncTaskStatus =
@@ -217,7 +221,16 @@ export function useSyncEngine({
 					prefix: RECEIVE_ADDRESS_PREFIX,
 					count,
 				}),
-			payments: () => syncMessages.execute(ctx, { messageboxUrl }),
+			// PeerPay on every read box first, then paymail on the own box.
+			payments: async () => {
+				const peerPay = await syncAccountPeerPayInbox(
+					wallet,
+					chain,
+					identityKey,
+				);
+				const paymail = await syncMessages.execute(ctx, { messageboxUrl });
+				return combineInboxResults(peerPay, paymail);
+			},
 			cosignDeliveries: () =>
 				syncCosignDeliveries.execute(ctx, { messageboxUrl }),
 		});
