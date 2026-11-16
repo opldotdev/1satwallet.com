@@ -39,6 +39,7 @@ import {
 	parseAssetBasket,
 	parseBalanceSelector,
 } from "@bsv/color-permission-module";
+import { PrivateKey } from "@bsv/sdk";
 import type { Chain } from "@/lib/chain-endpoints";
 import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 
@@ -506,55 +507,174 @@ export function colorPermissionStore(
 	return store;
 }
 
-const deleteDatabase = (name: string): Promise<void> =>
-	new Promise((resolve, reject) => {
-		const request = indexedDB.deleteDatabase(name);
-		request.onsuccess = () => resolve();
-		request.onerror = () =>
-			reject(request.error ?? new Error(`Could not delete ${name}`));
-	});
+/** How long one store's delete is waited for before it is reported stalled. */
+export const COLOR_STORE_DELETE_TIMEOUT_MS = 5000;
 
 /**
- * Delete the color grant stores when the wallet is removed: `current` (the
- * removed wallet's store, when its identity key is known) and, where the
- * browser lists its databases, every other color grant store, since a browser
- * holds one built-in wallet at a time. Failures are logged and thrown after
- * every store was tried.
+ * Delete one database. A delete that another connection blocks is logged and
+ * still finishes once that connection closes; it is waited for at most
+ * `timeoutMs`, so one blocked store never holds up the others.
+ */
+const deleteDatabase = (name: string, timeoutMs: number): Promise<void> =>
+	new Promise((resolve, reject) => {
+		const scope = name.slice(PERMISSION_DATABASE.length + 1);
+		const timer = setTimeout(
+			() =>
+				reject(
+					new Error(
+						`Deleting ${name} did not finish within ${timeoutMs} ms; it completes once the connection holding it closes.`,
+					),
+				),
+			timeoutMs,
+		);
+		const request = indexedDB.deleteDatabase(name);
+		request.onsuccess = () => {
+			clearTimeout(timer);
+			resolve();
+		};
+		request.onerror = () => {
+			clearTimeout(timer);
+			reject(request.error ?? new Error(`Could not delete ${name}`));
+		};
+		request.onblocked = () => {
+			const event = reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "wallet.color-consent.store.delete-blocked",
+				recoverable: true,
+				context: { provider: "permissions-manager" },
+			});
+			console.warn(
+				"[wallet] 1Color grant store: delete blocked by an open connection",
+				{ correlationId: event.correlationId, scope },
+			);
+		};
+	});
+
+/** Close the cached store for `name`, if any, then delete its database. */
+const deleteStore = async (name: string, timeoutMs: number): Promise<void> => {
+	const scope = name.slice(PERMISSION_DATABASE.length + 1);
+	const store = stores.get(scope);
+	stores.delete(scope);
+	try {
+		// An open connection would hold the delete until it closes.
+		await store?.close();
+		await deleteDatabase(name, timeoutMs);
+	} catch (error) {
+		logStoreFailure("delete", { scope }, error);
+		throw error;
+	}
+	console.info("[wallet] 1Color grant store: deleted", { scope });
+};
+
+/** The color grant databases the browser lists; [] where it lists none. */
+const listedColorDatabases = async (): Promise<string[]> => {
+	if (typeof indexedDB.databases !== "function") return [];
+	try {
+		return (await indexedDB.databases()).flatMap(({ name }) =>
+			name?.startsWith(`${PERMISSION_DATABASE}:${COLOR_SCOPE_PREFIX}`)
+				? [name]
+				: [],
+		);
+	} catch (error) {
+		logStoreFailure("list databases", {}, error);
+		return [];
+	}
+};
+
+/** Whether the browser can list its databases, so every store can be swept. */
+export const canListColorStores = (): boolean =>
+	typeof indexedDB !== "undefined" && typeof indexedDB.databases === "function";
+
+/**
+ * Delete the color grant stores when the wallet is removed: first `current`
+ * (the removed wallet's store, when its identity key is known), then, where
+ * the browser lists its databases, every other color grant store, in
+ * parallel, since a browser holds one built-in wallet at a time. A listing
+ * that fails is logged and skipped. Every delete is logged; failed or stalled
+ * ones are thrown together once all were tried.
  */
 export async function deleteColorPermissionStores(
 	current: { chain: Chain; identityKey: string } | null,
+	timeoutMs = COLOR_STORE_DELETE_TIMEOUT_MS,
 ): Promise<void> {
-	const names = new Set<string>();
-	if (current)
-		names.add(
-			`${PERMISSION_DATABASE}:${colorScope(current.chain, current.identityKey)}`,
-		);
-	if (typeof indexedDB.databases === "function") {
-		const listed = await indexedDB.databases();
-		for (const { name } of listed)
-			if (name?.startsWith(`${PERMISSION_DATABASE}:${COLOR_SCOPE_PREFIX}`))
-				names.add(name);
-	}
 	const failures: unknown[] = [];
-	for (const name of names) {
-		const scope = name.slice(PERMISSION_DATABASE.length + 1);
-		const store = stores.get(scope);
-		stores.delete(scope);
+	const own = current
+		? `${PERMISSION_DATABASE}:${colorScope(current.chain, current.identityKey)}`
+		: null;
+	if (own) {
 		try {
-			// An open connection would hold the delete until it closes.
-			await store?.close();
-			await deleteDatabase(name);
+			await deleteStore(own, timeoutMs);
 		} catch (error) {
-			logStoreFailure("delete", { scope }, error);
 			failures.push(error);
 		}
 	}
+	const others = (await listedColorDatabases()).filter((name) => name !== own);
+	const results = await Promise.allSettled(
+		others.map((name) => deleteStore(name, timeoutMs)),
+	);
+	for (const result of results)
+		if (result.status === "rejected") failures.push(result.reason);
 	if (failures.length > 0)
 		throw new AggregateError(
 			failures,
 			"Could not delete saved 1Color permissions.",
 		);
 }
+
+const reportColorGrantFailure = (operation: string, error: unknown) => {
+	const event = reportDiagnostic({
+		category: "action",
+		code: "action.failed",
+		operation: `wallet.delete.color-grants.${operation}`,
+		recoverable: true,
+	});
+	console.error(`[wallet] removing 1Color grants: ${operation} failed`, {
+		correlationId: event.correlationId,
+		error,
+	});
+};
+
+/**
+ * Delete the removed wallet's 1Color grant stores (see
+ * `deleteColorPermissionStores`). The built-in wallet's identity key is the
+ * identity key's public key, or the pay key's for a legacy wallet without
+ * one. Runs in the background: the wallet is removed either way, and a
+ * failure is logged.
+ */
+export const removeWalletColorGrants = (
+	chain: Chain | null,
+	keys: { identityPk?: string; payPk?: string } | null,
+): void => {
+	let identityKey: string | null = null;
+	const rootWif = keys?.identityPk || keys?.payPk;
+	if (rootWif) {
+		try {
+			identityKey = PrivateKey.fromWif(rootWif).toPublicKey().toString();
+		} catch (error) {
+			reportColorGrantFailure("identity", error);
+		}
+	}
+	const current = chain && identityKey ? { chain, identityKey } : null;
+	if (!current && !canListColorStores()) {
+		// Locked (or unreadable) and the browser cannot list its databases:
+		// no store can be named, so the grants stay until cleared by hand.
+		const event = reportDiagnostic({
+			category: "action",
+			code: "action.failed",
+			operation: "wallet.delete.color-grants.skipped",
+			recoverable: true,
+		});
+		console.warn(
+			"[wallet] removing 1Color grants: skipped. The wallet's identity key is unknown (locked or unreadable) and this browser cannot list its IndexedDB databases, so its 1Color grant store was not deleted.",
+			{ correlationId: event.correlationId },
+		);
+		return;
+	}
+	deleteColorPermissionStores(current).catch((error: unknown) =>
+		reportColorGrantFailure("delete", error),
+	);
+};
 
 export interface ColorTokenAccessOptions {
 	promptHandler: PromptHandler;

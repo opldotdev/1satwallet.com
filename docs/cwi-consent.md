@@ -48,7 +48,12 @@ Basket grants live only in IndexedDB, one store per wallet and chain
 `IndexedDbPermissionStore` from `@1sat/wallet-browser`), not as on-chain
 permission tokens like the rest of the manager's grants, so a grant one wallet
 gave never answers for another wallet in the same browser. Removing the wallet
-deletes its store (and any other color grant store the browser lists).
+deletes its own store first, then any other color grant store the browser
+lists, in parallel. Each delete is logged; one blocked by an open connection is
+logged, waited for at most 5 seconds, and finishes once that connection
+closes. A failed database listing is logged and skipped. When the wallet is
+locked (its identity key unknown) and the browser cannot list databases,
+nothing can be deleted and a warning is logged.
 `/wallet/permissions` lists the current wallet's grants under "1Color token
 access" with revoke, and reloads them whenever the page is seen again. If the
 store cannot be read, the request fails with "Could not read saved 1Color
@@ -90,6 +95,13 @@ next one asks again.
   own gets the manager's normal identity-key prompt. Other `p color`
   `getPublicKey` and `verifySignature` calls go to the module without a prompt
   (this wallet reveals public keys without asking).
+- **Apps never read custody records.** A `p color` output's
+  `customInstructions` is its custody record, whose `senderIdentityKey` is the
+  wallet's identity key, and a saved basket grant answers a basket read with no
+  prompt. So the module-identifier guard strips `customInstructions` from an
+  app's `listOutputs` of a `p color` basket, and from every output of a
+  `p color` action an app lists (outputs in `p color` baskets are already
+  hidden). The wallet's own reads keep them.
 - **Receipts are accepted without a prompt.** An app's `internalizeAction`
   into a `p color` value or authority basket goes to the module, which has no
   receive message type and asks nobody, as in Yours (1color branch) and the

@@ -74,7 +74,10 @@ type RawCall = { method: string; originator: unknown; args: unknown };
  * A raw wallet that records every call and answers the few the manager needs;
  * a prompt of any kind is recorded and granted, so a test sees both.
  */
-type Listed = { actions: Record<string, unknown>[] };
+type Listed = {
+	actions: Record<string, unknown>[];
+	outputs?: Record<string, unknown>[];
+};
 
 /** The wallet's listActions over `listed`: paged, labels only when asked. */
 const listFrom = (listed: Listed, args: unknown) => {
@@ -107,7 +110,11 @@ const setup = (listed: Listed = { actions: [] }, approve = false) => {
 				(_target, prop: string) =>
 				async (args: unknown, originator: unknown) => {
 					calls.push({ method: prop, originator, args });
-					if (prop === "listOutputs") return { totalOutputs: 0, outputs: [] };
+					if (prop === "listOutputs")
+						return {
+							totalOutputs: listed.outputs?.length ?? 0,
+							outputs: structuredClone(listed.outputs ?? []),
+						};
 					if (prop === "listActions") return listFrom(listed, args);
 					if (prop === "revealSpecificKeyLinkage")
 						return { encryptedLinkage: [1], encryptedLinkageProof: [1] };
@@ -1147,5 +1154,90 @@ describe("apps may not reveal key linkage for reserved protocols", () => {
 				.map((call) => call.originator),
 			[APP, ADMIN],
 		);
+	});
+});
+
+describe("apps never read 1Color custody records", () => {
+	// A p color output's custody names the wallet's identity key.
+	const custody = JSON.stringify({
+		version: 1,
+		assetId: ASSET,
+		derivationPrefix: "cHJlZml4",
+		derivationSuffix: "c3VmZml4",
+		senderIdentityKey: PUBKEY,
+	});
+	const listed: Listed = {
+		outputs: [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				customInstructions: custody,
+				tags: ["p color tag"],
+			},
+		],
+		actions: [
+			{
+				txid: "a",
+				labels: ["p color plan 0 1 ab"],
+				outputs: [
+					{ outputIndex: 0, customInstructions: custody },
+					{ outputIndex: 1, basket: BASKET, customInstructions: custody },
+				],
+			},
+			{
+				txid: "b",
+				labels: ["payments"],
+				outputs: [
+					{ outputIndex: 0, basket: "tokens", customInstructions: "mine" },
+				],
+			},
+		],
+	};
+	const basketRead = { basket: BASKET, includeCustomInstructions: true };
+
+	it("strips custom instructions from an app's p color basket read, granted or not", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		for (let read = 0; read < 2; read++) {
+			const result = await manager.listOutputs(basketRead, APP);
+			assert.equal(result.outputs.length, 1);
+			assert.ok(!("customInstructions" in result.outputs[0]));
+			assert.deepEqual(result.outputs[0].tags, ["p color tag"]);
+		}
+		// The second read was answered by the saved grant, without a prompt.
+		assert.equal(colorPrompts.length, 1);
+	});
+
+	it("strips them from the outputs of p color actions an app lists, and keeps other actions'", async () => {
+		const { manager } = setup(listed, true);
+		const result = await manager.listActions(
+			{
+				labels: ["p color plan 0 1 ab", "payments"],
+				includeOutputs: true,
+				includeLabels: true,
+			},
+			APP,
+		);
+		assert.deepEqual(
+			result.actions.map((action) => [action.txid, action.outputs]),
+			[
+				["a", [{ outputIndex: 0 }]],
+				[
+					"b",
+					[{ outputIndex: 0, basket: "tokens", customInstructions: "mine" }],
+				],
+			],
+		);
+	});
+
+	it("leaves the wallet's own reads untouched", async () => {
+		const { manager } = setup(listed, true);
+		const outputs = await manager.listOutputs(basketRead, ADMIN);
+		assert.equal(outputs.outputs[0].customInstructions, custody);
+		const actions = await manager.listActions(
+			{ labels: ["p color plan 0 1 ab"], includeOutputs: true },
+			ADMIN,
+		);
+		assert.equal(actions.actions[0].outputs?.[0].customInstructions, custody);
 	});
 });

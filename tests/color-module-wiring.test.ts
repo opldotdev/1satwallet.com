@@ -311,10 +311,11 @@ describe("wallet provider color wiring", () => {
 		);
 		// Read before the stored wallet goes.
 		assert.ok(
-			remove.indexOf("removeColorGrants(storedAccountNetwork(), walletKeys)") <
-				remove.indexOf("localStorage.removeItem(WALLET_STORAGE_KEY)"),
+			remove.indexOf(
+				"removeWalletColorGrants(storedAccountNetwork(), walletKeys)",
+			) < remove.indexOf("localStorage.removeItem(WALLET_STORAGE_KEY)"),
 		);
-		assert.ok(remove.includes("removeColorGrants("));
+		assert.ok(remove.includes("removeWalletColorGrants("));
 		const card = readFileSync(
 			join(process.cwd(), "components/wallet/color-app-grants.tsx"),
 			"utf8",

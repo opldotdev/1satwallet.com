@@ -314,18 +314,57 @@ const isHiddenAction = (
 	);
 };
 
-/** An action as the app sees it: consent-only outputs and unasked labels gone. */
+/**
+ * An output without `customInstructions`. A `p color` output's instructions
+ * are its custody record, whose `senderIdentityKey` is the wallet's identity
+ * key, so an app reading them would learn the identity key without the
+ * identity-key prompt (a saved basket grant answers the read silently).
+ */
+const withoutCustody = (output: unknown): unknown => {
+	const fields = record(output);
+	if (!fields || !("customInstructions" in fields)) return output;
+	const { customInstructions: _custody, ...rest } = fields;
+	return rest;
+};
+
+/**
+ * An action as the app sees it: consent-only outputs and unasked labels gone,
+ * and, on an action with a consent-only label, no output's custom
+ * instructions.
+ */
 const forApp = (
 	action: ListedAction,
 	args: Record<string, unknown>,
 ): ListedAction => {
 	const next = { ...action };
-	if (Array.isArray(action.outputs))
-		next.outputs = action.outputs.filter(
+	const consentOnly =
+		Array.isArray(action.labels) && action.labels.some(isConsentOnlyName);
+	if (Array.isArray(action.outputs)) {
+		const outputs = action.outputs.filter(
 			(output) => !isConsentOnlyName(record(output)?.basket),
 		);
+		next.outputs = consentOnly ? outputs.map(withoutCustody) : outputs;
+	}
 	if (args.includeLabels !== true) delete next.labels;
 	return next;
+};
+
+/**
+ * An app's `listOutputs` of a consent-only basket (e.g. a `p color` asset
+ * basket) without the outputs' custom instructions; see `withoutCustody`.
+ */
+export const listOutputsForApp = (
+	args: Record<string, unknown> | null,
+	result: unknown,
+): unknown => {
+	const listing = record(result);
+	if (
+		!isConsentOnlyName(args?.basket) ||
+		!listing ||
+		!Array.isArray(listing.outputs)
+	)
+		return result;
+	return { ...listing, outputs: listing.outputs.map(withoutCustody) };
 };
 
 /**
@@ -525,7 +564,8 @@ export async function listActionsForApp(
  * reserved name. Every BRC-100 call is checked before it reaches the manager;
  * calls from any originator but `adminOriginator` (exact match, the same test
  * the 1Color consent uses) are held to the app rules too, and an app's
- * `listActions` result is filtered. A refusal is reported in full and the
+ * `listActions` result, and its `listOutputs` of a consent-only basket, are
+ * filtered. A refusal is reported in full and the
  * caller gets `MisroutedModuleIdentifierError`. The manager's own methods
  * (callbacks, grants, token listings) pass through, bound to the manager.
  */
@@ -553,6 +593,10 @@ export function guardModuleIdentifiers<T extends object>(
 							listArgs ?? {},
 							args[1],
 							scans,
+						);
+					if (isApp && method === "listOutputs")
+						return Promise.resolve(value.apply(target, args)).then(
+							(result: unknown) => listOutputsForApp(listArgs, result),
 						);
 					return value.apply(target, args);
 				}
