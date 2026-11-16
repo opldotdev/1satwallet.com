@@ -35,17 +35,22 @@ import {
 
 /**
  * One listing window: TS `PeerPayClient` bounds (pages of 100, at most 1000
- * messages), asking for one more so a fuller box is noticed. `maxPages` only
- * guards against a server that never ends: in message-box-client the limit
- * stops the read at the top of the next page, so `maxPages` must exceed the
- * pages the limit needs (11) or a full box throws instead.
+ * messages). A box is read window after window by offset, so messages that
+ * are never acknowledged (paymail, unreadable tokens) can't hide later
+ * payments. `maxPages` only guards one window against a server that never
+ * ends: in message-box-client the limit stops the read at the top of the next
+ * page, so `maxPages` must exceed the pages the limit needs (11) or a full
+ * window throws instead. 1000 is also message-box-client's cap on the IDs one
+ * acknowledgement may carry.
  */
 const WINDOW = 1000;
 export const PEERPAY_LISTING = {
-	limit: WINDOW + 1,
+	limit: WINDOW,
 	pageSize: 100,
 	maxPages: 100,
 } as const;
+/** Windows read from one box per sync at most, against a box that never ends. */
+export const MAX_WINDOWS = 10;
 
 /** `Brc29RemittanceModule` `boundedDerivation`: a key ID must fit the wallet. */
 const MAX_DERIVATION_LENGTH = 399;
@@ -60,6 +65,7 @@ export const UNREADABLE_REASON = {
 	amount: "The amount doesn't match the transaction.",
 	recipient: "The payment isn't addressed to this wallet.",
 	refused: "The wallet refused this payment's transaction.",
+	remittance: "The wallet found the payment isn't locked to its key.",
 } as const;
 export const RETRY_REASON = {
 	key: "The wallet couldn't derive this payment's key. It will be retried.",
@@ -89,6 +95,7 @@ export interface InboxClient {
 	listMessages(args: {
 		messageBox: string;
 		host: string;
+		offset: number;
 		limit: number;
 		pageSize: number;
 		maxPages: number;
@@ -110,6 +117,8 @@ export interface PeerPayInboxDeps {
 	clientFor: (host: string) => InboxClient;
 	wallet: InboxWallet;
 	record: (outcome: InboxSyncOutcome) => void;
+	/** The account synced; it scopes what is logged only once. */
+	account: { chain: Chain; identityKey: string };
 	now?: () => number;
 }
 
@@ -119,9 +128,9 @@ export interface PeerPayInboxResult {
 	failed: number;
 	/**
 	 * PeerPay messages still in the own box, which `syncMessages` also counts
-	 * as failed. Exact while the own box holds at most 1000 messages; past
-	 * that `syncMessages` reads the whole box and this only the first window,
-	 * so PeerPay messages beyond it read as paymail failures until it drains.
+	 * as failed. Exact up to `MAX_WINDOWS` windows; past that `syncMessages`
+	 * reads the whole box and this does not, so PeerPay messages beyond it read
+	 * as paymail failures until the box drains.
 	 */
 	leftOnOwnHost: number;
 	/** Boxes that could not be read this time. */
@@ -321,36 +330,47 @@ type Settlement =
 	  };
 
 /**
- * Payments that can't be accepted, already logged, so each is logged once
- * while it waits in its box. Capped: past the cap it starts over.
+ * Things already logged for an account, so a message that waits in its box is
+ * logged once, not every sync. Capped: past the cap the oldest is forgotten.
  */
-const loggedUnreadable = new Set<string>();
-const LOGGED_UNREADABLE_CAP = 500;
+const loggedOnce = new Set<string>();
+const LOGGED_ONCE_CAP = 500;
+
+/** Whether `key` is new; remembers it either way. */
+function firstTime(key: string): boolean {
+	if (loggedOnce.has(key)) return false;
+	if (loggedOnce.size >= LOGGED_ONCE_CAP) {
+		const oldest = loggedOnce.values().next();
+		if (!oldest.done) loggedOnce.delete(oldest.value);
+	}
+	loggedOnce.add(key);
+	return true;
+}
 
 function logUnreadableOnce(key: string, detail: Record<string, unknown>) {
-	if (loggedUnreadable.has(key)) return;
-	if (loggedUnreadable.size >= LOGGED_UNREADABLE_CAP) loggedUnreadable.clear();
-	loggedUnreadable.add(key);
+	if (!firstTime(`unreadable:${key}`)) return;
 	console.warn("[peerpay] payment can't be accepted; left in the box", {
 		key,
 		...detail,
 	});
 }
 
-const REFUSED_PARAMETERS = new Set(["tx", "paymentRemittance"]);
-
 /**
- * Whether `internalizeAction` refused the payment for good, judged by the
- * error's shape so the SDK's and wallet-toolbox's classes (local or
- * rehydrated from remote storage) both match:
- * - `WERR_INVALID_PARAMETER` on `tx` (not valid Atomic BEEF; an existing
- *   transaction in a status such as failed, "has invalid status") or on
- *   `paymentRemittance` (not the BRC-29 script). "Undergoing active changes"
- *   is the one `tx` refusal that passes, so it stays retryable.
+ * The short reason when `internalizeAction` refused the payment for good,
+ * else null (retryable). Judged by the error's shape so the SDK's and
+ * wallet-toolbox's classes (local or rehydrated from remote storage) both
+ * match:
+ * - `WERR_INVALID_PARAMETER` on `paymentRemittance`: the output is not the
+ *   wallet's BRC-29 script.
+ * - `WERR_INVALID_PARAMETER` on `tx` only when the wallet already holds the
+ *   transaction in a status such as failed ("has invalid status"). "valid
+ *   AtomicBEEF" is also what the toolbox throws when `Beef.verify` against
+ *   the chain tracker returns false, which a tracker that is down or behind
+ *   does too, so it stays retryable, as does "undergoing active changes".
  * - `WERR_REVIEW_ACTIONS` whose results include `doubleSpend` or `invalidTx`.
  */
-export function isPermanentRefusal(error: unknown): boolean {
-	if (error === null || typeof error !== "object") return false;
+export function permanentRefusalOf(error: unknown): string | null {
+	if (error === null || typeof error !== "object") return null;
 	const e = error as {
 		name?: unknown;
 		code?: unknown;
@@ -358,26 +378,30 @@ export function isPermanentRefusal(error: unknown): boolean {
 		message?: unknown;
 		reviewActionResults?: unknown;
 	};
-	if (
-		(e.name === "WERR_INVALID_PARAMETER" || e.code === 6) &&
-		typeof e.parameter === "string" &&
-		REFUSED_PARAMETERS.has(e.parameter)
-	) {
-		return !(
+	if (e.name === "WERR_INVALID_PARAMETER" || e.code === 6) {
+		if (e.parameter === "paymentRemittance") {
+			return UNREADABLE_REASON.remittance;
+		}
+		if (
+			e.parameter === "tx" &&
 			typeof e.message === "string" &&
-			/undergoing active changes/.test(e.message)
-		);
+			/has invalid status/.test(e.message)
+		) {
+			return UNREADABLE_REASON.refused;
+		}
+		return null;
 	}
 	if (
 		(e.name === "WERR_REVIEW_ACTIONS" || e.code === 5) &&
-		Array.isArray(e.reviewActionResults)
-	) {
-		return e.reviewActionResults.some(
+		Array.isArray(e.reviewActionResults) &&
+		e.reviewActionResults.some(
 			(r: { status?: unknown } | null) =>
 				r?.status === "doubleSpend" || r?.status === "invalidTx",
-		);
+		)
+	) {
+		return UNREADABLE_REASON.refused;
 	}
-	return false;
+	return null;
 }
 
 /**
@@ -446,13 +470,10 @@ async function settle(
 				throw new Error("internalizeAction did not accept the payment");
 			}
 		} catch (error) {
-			if (isPermanentRefusal(error)) {
+			const refusal = permanentRefusalOf(error);
+			if (refusal) {
 				logUnreadableOnce(key, { ...paymentDetail(payment), error });
-				return {
-					status: "unreadable",
-					payment,
-					reason: UNREADABLE_REASON.refused,
-				};
+				return { status: "unreadable", payment, reason: refusal };
 			}
 			logFailure("internalize", paymentDetail(payment), error);
 			return { status: "failed", payment, reason: RETRY_REASON.wallet };
@@ -462,6 +483,43 @@ async function settle(
 	const first = unreadable ?? { payment: copies[0], reason: "" };
 	logUnreadableOnce(key, { reason: first.reason, copies: problems });
 	return { status: "unreadable", ...first };
+}
+
+/**
+ * Reads a whole box, window after window, up to `MAX_WINDOWS`. A window short
+ * of `WINDOW` is the end. A message listed twice (the box shifted between
+ * windows) is kept once; one shifted past a window is read next sync.
+ */
+async function listBox(client: InboxClient, host: string) {
+	const messages = new Map<string, PeerMessage>();
+	for (let index = 0; index < MAX_WINDOWS; index += 1) {
+		const page = await client.listMessages({
+			messageBox: STANDARD_PAYMENT_MESSAGEBOX,
+			host,
+			offset: index * WINDOW,
+			...PEERPAY_LISTING,
+		});
+		for (const m of page) {
+			if (!messages.has(m.messageId)) messages.set(m.messageId, m);
+		}
+		if (page.length < WINDOW) return [...messages.values()];
+	}
+	reportDiagnostic({
+		category: "action",
+		code: "action.failed",
+		operation: "wallet.peerpay.list-bound",
+		recoverable: true,
+	});
+	console.error(
+		`[peerpay] ${host} still has messages after ${MAX_WINDOWS} windows; the rest are not read this sync`,
+		{
+			host,
+			windows: MAX_WINDOWS,
+			windowSize: WINDOW,
+			messagesRead: messages.size,
+		},
+	);
+	return [...messages.values()];
 }
 
 /**
@@ -477,6 +535,7 @@ export async function syncPeerPayInbox(
 ): Promise<PeerPayInboxResult> {
 	const now = deps.now ?? Date.now;
 	const [ownHost] = deps.hosts;
+	const account = `${deps.account.chain}:${deps.account.identityKey}`;
 	const clients = new Map<string, InboxClient>();
 	let processed = 0;
 	let failed = 0;
@@ -486,18 +545,8 @@ export async function syncPeerPayInbox(
 			// Inside the try: a client that can't be built is an unreadable box.
 			const client = deps.clientFor(host);
 			clients.set(host, client);
-			const messages = await client.listMessages({
-				messageBox: STANDARD_PAYMENT_MESSAGEBOX,
-				host,
-				...PEERPAY_LISTING,
-			});
-			if (messages.length > WINDOW) {
-				console.warn(
-					`[peerpay] ${host} holds more than ${WINDOW} messages; the rest are read on a later sync`,
-				);
-			}
-			const payments = messages.flatMap((m) => peerPayPaymentOf(m, host) ?? []);
-			return { payments: payments.slice(0, WINDOW), total: payments.length };
+			const messages = await listBox(client, host);
+			return messages.flatMap((m) => peerPayPaymentOf(m, host) ?? []);
 		}),
 	);
 
@@ -515,8 +564,8 @@ export async function syncPeerPayInbox(
 			return;
 		}
 		listedHosts.push(host);
-		if (host === ownHost) ownPeerPay = listing.value.total;
-		for (const payment of listing.value.payments) {
+		if (host === ownHost) ownPeerPay = listing.value.length;
+		for (const payment of listing.value) {
 			const key = paymentKeyOf(payment);
 			groups.set(key, [...(groups.get(key) ?? []), payment]);
 		}
@@ -525,7 +574,7 @@ export async function syncPeerPayInbox(
 	const acks = new Map<string, string[]>();
 	const updates: IncomingPaymentUpdate[] = [];
 	for (const [key, copies] of groups) {
-		const settled = await settle(key, copies, deps.wallet);
+		const settled = await settle(`${account}:${key}`, copies, deps.wallet);
 		const { payment } = settled;
 		updates.push({
 			key,
@@ -544,8 +593,18 @@ export async function syncPeerPayInbox(
 		for (const copy of copies) {
 			if (copy.deliveryFeeFailed) {
 				// The fee attached to the message is still owed: listing it again
-				// retries the fee; the payment itself merges.
-				logFailure("delivery-fee", paymentDetail(copy), null);
+				// retries the fee; the payment itself merges. Logged once a message.
+				if (
+					firstTime(`${account}:delivery-fee:${copy.host}:${copy.messageId}`)
+				) {
+					logFailure(
+						"delivery-fee",
+						paymentDetail(copy),
+						new Error(
+							"The message's delivery fee failed to internalize; left unacknowledged so it is retried",
+						),
+					);
+				}
 				continue;
 			}
 			acks.set(copy.host, [...(acks.get(copy.host) ?? []), copy.messageId]);
@@ -553,14 +612,18 @@ export async function syncPeerPayInbox(
 	}
 
 	let ownAcknowledged = 0;
-	for (const [host, messageIds] of acks) {
-		try {
-			await clients.get(host)?.acknowledgeMessage({ messageIds, host });
-			if (host === ownHost) ownAcknowledged = messageIds.length;
-		} catch (error) {
-			// In the wallet already: the next sync merges it and acknowledges again.
-			logFailure("acknowledge", { host, messageIds }, error);
-			failed += 1;
+	for (const [host, ids] of acks) {
+		// message-box-client takes at most `WINDOW` IDs per acknowledgement.
+		for (let start = 0; start < ids.length; start += WINDOW) {
+			const messageIds = ids.slice(start, start + WINDOW);
+			try {
+				await clients.get(host)?.acknowledgeMessage({ messageIds, host });
+				if (host === ownHost) ownAcknowledged += messageIds.length;
+			} catch (error) {
+				// In the wallet already: the next sync merges it and acknowledges again.
+				logFailure("acknowledge", { host, messageIds }, error);
+				failed += 1;
+			}
 		}
 	}
 
@@ -609,6 +672,7 @@ export function syncAccountPeerPayInbox(
 		clientFor: (host) => messageBoxClientFor(wallet, chain, host),
 		wallet,
 		record: (outcome) => saveInboxSync({ chain, identityKey }, outcome),
+		account: { chain, identityKey },
 	});
 }
 

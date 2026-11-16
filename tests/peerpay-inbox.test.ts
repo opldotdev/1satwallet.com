@@ -12,7 +12,7 @@ import {
 	WERR_REVIEW_ACTIONS,
 } from "@bsv/sdk";
 import { sdk as toolbox } from "@bsv/wallet-toolbox-client";
-import { messageboxReadHostsOf } from "@/lib/chain-endpoints";
+import { type Chain, messageboxReadHostsOf } from "@/lib/chain-endpoints";
 import {
 	type InboxSyncOutcome,
 	loadIncomingPayments,
@@ -22,10 +22,11 @@ import {
 	combineInboxResults,
 	type InboxClient,
 	type InboxWallet,
-	isPermanentRefusal,
+	MAX_WINDOWS,
 	PEERPAY_LISTING,
 	paymentKeyOf,
 	peerPayPaymentOf,
+	permanentRefusalOf,
 	RETRY_REASON,
 	syncPeerPayInbox,
 	UNREADABLE_REASON,
@@ -38,6 +39,10 @@ const sender = senderKey.toPublicKey().toString();
 const senderWallet = new ProtoWallet(senderKey);
 const recipientKey = PrivateKey.fromRandom();
 const recipient = new ProtoWallet(recipientKey);
+const ACCOUNT = {
+	chain: "main" as Chain,
+	identityKey: recipientKey.toPublicKey().toString(),
+};
 const PREFIX = "cHJl";
 const SUFFIX = "c3Vm";
 
@@ -100,7 +105,7 @@ function fakeBoxes(boxes: Record<string, PeerMessage[] | Error>) {
 			listings.push(args);
 			const box = boxes[host];
 			if (box instanceof Error) throw box;
-			return box ?? [];
+			return (box ?? []).slice(args.offset, args.offset + args.limit);
 		},
 		async acknowledgeMessage({ messageIds, host: ackHost }) {
 			acknowledged.push({ host: ackHost, messageIds });
@@ -150,6 +155,7 @@ async function sync(
 	boxes: Record<string, PeerMessage[] | Error>,
 	wallet: InboxWallet,
 	hosts = [OWN, EXTRA],
+	account = ACCOUNT,
 ) {
 	const fake = fakeBoxes(boxes);
 	const outcomes: InboxSyncOutcome[] = [];
@@ -159,6 +165,7 @@ async function sync(
 			clientFor: fake.clientFor,
 			wallet,
 			record: (outcome) => outcomes.push(outcome),
+			account,
 			now: () => 1,
 		}),
 	);
@@ -361,41 +368,93 @@ describe("PeerPay inbox", () => {
 		assert.equal(ownDown.result.failed, 1);
 	});
 
-	it("takes one window of a full box without throwing", async () => {
-		const tx = await paidTx();
-		const messages = Array.from({ length: 1001 }, (_, i) =>
-			message(`m${i}`, tx, { prefix: "not base64!" }),
+	it("reads past a full window, so messages never acknowledged don't hide a later payment", async () => {
+		const junk = Array.from({ length: 1000 }, (_, i) => ({
+			...paymailMessage,
+			messageId: `junk-${i}`,
+		}));
+		const { wallet, internalized } = fakeWallet();
+		const run = await sync(
+			{ [OWN]: [...junk, message("late", await paidTx())] },
+			wallet,
+			[OWN],
 		);
-		const { wallet } = fakeWallet();
-		const run = await sync({ [OWN]: messages }, wallet, [OWN]);
+		assert.deepEqual(
+			run.listings.map((l) => l.offset),
+			[0, 1000],
+		);
 		assert.deepEqual(run.listings[0], {
 			messageBox: "payment_inbox",
 			host: OWN,
+			offset: 0,
 			...PEERPAY_LISTING,
 		});
-		assert.ok(
-			peerpayLogs(run.logged).some(([label]) =>
-				String(label).includes("more than 1000"),
-			),
-		);
-		assert.equal(run.result.leftOnOwnHost, 1001);
+		assert.equal(internalized.length, 1);
+		assert.deepEqual(run.acknowledged, [{ host: OWN, messageIds: ["late"] }]);
+		assert.equal(run.result.leftOnOwnHost, 0);
 	});
 
-	it("reads a box of 1002+ messages through the real client without throwing", async () => {
-		const stored = Array.from({ length: 1500 }, (_, i) => ({
+	it("stops at the window bound on a box that never ends, and logs the counts", async () => {
+		const listings: number[] = [];
+		const { wallet } = fakeWallet();
+		const run = await quietConsole(() =>
+			syncPeerPayInbox({
+				hosts: [OWN],
+				clientFor: () => ({
+					async listMessages({ offset, limit }) {
+						listings.push(offset);
+						return Array.from({ length: limit }, (_, i) => ({
+							...paymailMessage,
+							messageId: `w${offset + i}`,
+						}));
+					},
+					async acknowledgeMessage() {
+						return "success";
+					},
+				}),
+				wallet,
+				record: () => undefined,
+				account: ACCOUNT,
+			}),
+		);
+		assert.equal(listings.length, MAX_WINDOWS);
+		assert.deepEqual(run.result.unreachableHosts, []);
+		const log = peerpayLogs(run.logged).find(([label]) =>
+			String(label).includes(`after ${MAX_WINDOWS} windows`),
+		);
+		assert.ok(log, "the bound is logged");
+		assert.deepEqual(log[1], {
+			host: OWN,
+			windows: MAX_WINDOWS,
+			windowSize: 1000,
+			messagesRead: MAX_WINDOWS * 1000,
+		});
+	});
+
+	it("reads a box of 1500 messages through the real client, window by window", async () => {
+		const stored: PeerMessage[] = Array.from({ length: 1500 }, (_, i) => ({
 			messageId: `p${i}`,
 			sender,
 			created_at: "2026-11-16T10:00:00.000Z",
 			updated_at: "2026-11-16T10:00:00.000Z",
 			body: JSON.stringify({ beef: "00", outputIndex: 0, alias: "alice" }),
 		}));
+		stored[1200] = message("late", await paidTx());
 		const client = new MessageBoxClient({
 			walletClient: recipient as unknown as WalletInterface,
 			host: OWN,
 		});
 		let pages = 0;
+		const acknowledged: string[][] = [];
 		Object.assign(client, {
-			authenticatedFetch: async (_url: string, config: { body: string }) => {
+			authenticatedFetch: async (url: string, config: { body: string }) => {
+				if (url.endsWith("/acknowledgeMessage")) {
+					const { messageIds } = JSON.parse(config.body) as {
+						messageIds: string[];
+					};
+					acknowledged.push(messageIds);
+					return { ok: true, json: async () => ({ status: "success" }) };
+				}
 				pages += 1;
 				const { offset, limit } = JSON.parse(config.body) as {
 					offset: number;
@@ -415,27 +474,29 @@ describe("PeerPay inbox", () => {
 		const listed = await client.listMessages({
 			messageBox: "payment_inbox",
 			host: OWN,
+			offset: 0,
 			...PEERPAY_LISTING,
 		});
-		assert.equal(listed.length, 1001);
-		assert.equal(pages, 11);
+		assert.equal(listed.length, 1000);
+		assert.equal(pages, 10);
 
-		const { wallet } = fakeWallet();
+		pages = 0;
+		const { wallet, internalized } = fakeWallet();
 		const run = await quietConsole(() =>
 			syncPeerPayInbox({
 				hosts: [OWN],
 				clientFor: () => client,
 				wallet,
 				record: () => undefined,
+				account: ACCOUNT,
 			}),
 		);
+		assert.equal(pages, 15);
 		assert.deepEqual(run.result.unreachableHosts, []);
 		assert.equal(run.result.failed, 0);
-		assert.ok(
-			peerpayLogs(run.logged).some(([label]) =>
-				String(label).includes("more than 1000"),
-			),
-		);
+		assert.equal(run.result.processed, 1);
+		assert.equal(internalized.length, 1);
+		assert.deepEqual(acknowledged, [["late"]]);
 	});
 
 	it("rejects an over-long derivation value locally, before the wallet's key lookup", async () => {
@@ -463,28 +524,52 @@ describe("PeerPay inbox", () => {
 			message:
 				"The tx parameter must be target transaction of internalizeAction has invalid status failed.",
 		});
-		const permanent = [
-			new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF"),
-			new WERR_INVALID_PARAMETER(
-				"paymentRemittance",
-				"locked by script conforming to BRC-29",
-			),
-			invalidStatus,
-			new toolbox.WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF"),
-			new WERR_REVIEW_ACTIONS(
-				[{ txid: "a".repeat(64), status: "doubleSpend" }],
-				[],
-			),
-			new toolbox.WERR_REVIEW_ACTIONS(
-				[{ txid: "a".repeat(64), status: "invalidTx" }],
-				[],
-			),
+		const permanent: [Error, string][] = [
+			[
+				new WERR_INVALID_PARAMETER(
+					"paymentRemittance",
+					"locked by script conforming to BRC-29",
+				),
+				UNREADABLE_REASON.remittance,
+			],
+			[
+				new toolbox.WERR_INVALID_PARAMETER(
+					"paymentRemittance",
+					"locked by script conforming to BRC-29",
+				),
+				UNREADABLE_REASON.remittance,
+			],
+			[invalidStatus, UNREADABLE_REASON.refused],
+			[
+				new toolbox.WERR_INVALID_PARAMETER(
+					"tx",
+					"target transaction of internalizeAction has invalid status failed.",
+				),
+				UNREADABLE_REASON.refused,
+			],
+			[
+				new WERR_REVIEW_ACTIONS(
+					[{ txid: "a".repeat(64), status: "doubleSpend" }],
+					[],
+				),
+				UNREADABLE_REASON.refused,
+			],
+			[
+				new toolbox.WERR_REVIEW_ACTIONS(
+					[{ txid: "a".repeat(64), status: "invalidTx" }],
+					[],
+				),
+				UNREADABLE_REASON.refused,
+			],
 		];
-		for (const error of permanent) {
-			assert.equal(isPermanentRefusal(error), true, String(error));
+		for (const [error, reason] of permanent) {
+			assert.equal(permanentRefusalOf(error), reason, String(error));
 		}
 		const retryable = [
 			new Error("fetch failed"),
+			// Also what a chain tracker that is down or behind produces.
+			new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF"),
+			new toolbox.WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF"),
 			new toolbox.WERR_INVALID_PARAMETER(
 				"tx",
 				"target transaction of internalizeAction is undergoing active changes.",
@@ -497,46 +582,93 @@ describe("PeerPay inbox", () => {
 			new toolbox.WERR_INTERNAL("storage down"),
 		];
 		for (const error of retryable) {
-			assert.equal(isPermanentRefusal(error), false, String(error));
+			assert.equal(permanentRefusalOf(error), null, String(error));
 		}
 	});
 
-	it("leaves a payment the wallet refused for good in the box, once, not as a failure", async () => {
+	it("leaves a payment the wallet refused for good in the box, logged once per account, not as a failure", async () => {
 		const { wallet } = fakeWallet({
 			internalize: async () => {
 				throw (toolbox.WalletErrorFromJson as (json: unknown) => Error)({
 					name: "WERR_INVALID_PARAMETER",
 					parameter: "tx",
-					message: "The tx parameter must be valid AtomicBEEF.",
+					message:
+						"The tx parameter must be target transaction of internalizeAction has invalid status failed.",
 				});
 			},
 		});
-		const run = await sync(
-			{ [OWN]: [message("refused", await paidTx())] },
-			wallet,
-			[OWN],
-		);
+		const boxes = {
+			[OWN]: [
+				message("refused", await paidTx(1000, "cmVm"), { suffix: "cmVm" }),
+			],
+		};
+		const refusedLogs = (logged: unknown[][]) =>
+			peerpayLogs(logged).filter(([label]) =>
+				String(label).includes("can't be accepted"),
+			).length;
+		const run = await sync(boxes, wallet, [OWN]);
 		assert.deepEqual(run.acknowledged, []);
 		assert.equal(run.result.failed, 0);
 		assert.equal(run.outcome.updates[0]?.status, "unreadable");
 		assert.equal(run.outcome.updates[0]?.reason, UNREADABLE_REASON.refused);
+		assert.equal(refusedLogs(run.logged), 1);
+		const again = await sync(boxes, wallet, [OWN]);
+		assert.equal(refusedLogs(again.logged), 0);
+		const otherChain = await sync(boxes, wallet, [OWN], {
+			...ACCOUNT,
+			chain: "test",
+		});
+		assert.equal(refusedLogs(otherChain.logged), 1);
 	});
 
-	it("does not acknowledge a copy whose delivery fee failed", async () => {
+	it("retries a payment whose BEEF the wallet couldn't verify, counted and logged in full", async () => {
+		const { wallet } = fakeWallet({
+			internalize: async () => {
+				throw new toolbox.WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
+			},
+		});
+		const run = await sync(
+			{ [OWN]: [message("unverified", await paidTx())] },
+			wallet,
+			[OWN],
+		);
+		assert.deepEqual(run.acknowledged, []);
+		assert.equal(run.result.failed, 1);
+		assert.equal(run.outcome.updates[0]?.status, "failed");
+		assert.equal(run.outcome.updates[0]?.reason, RETRY_REASON.wallet);
+		const log = peerpayLogs(run.logged).find(([label]) =>
+			String(label).includes("internalize failed"),
+		);
+		assert.ok(log, "the failure is logged");
+		assert.match(
+			String((log[1] as { error: unknown }).error),
+			/valid AtomicBEEF/,
+		);
+	});
+
+	it("does not acknowledge a copy whose delivery fee failed, and logs it once", async () => {
 		const tx = await paidTx();
 		const { wallet, internalized } = fakeWallet();
-		const run = await sync(
-			{
-				[OWN]: [{ ...message("own-1", tx), paymentOutcome: "failed" }],
-				[EXTRA]: [message("extra-1", tx)],
-			},
-			wallet,
-		);
+		const boxes = {
+			[OWN]: [{ ...message("fee-1", tx), paymentOutcome: "failed" as const }],
+			[EXTRA]: [message("extra-1", tx)],
+		};
+		const feeLogs = (logged: unknown[][]) =>
+			peerpayLogs(logged).filter(([label]) =>
+				String(label).includes("delivery-fee"),
+			).length;
+		const run = await sync(boxes, wallet);
 		assert.equal(internalized.length, 1);
 		assert.deepEqual(run.acknowledged, [
 			{ host: EXTRA, messageIds: ["extra-1"] },
 		]);
 		assert.equal(run.result.leftOnOwnHost, 1);
+		assert.equal(feeLogs(run.logged), 1);
+		const again = await sync(boxes, wallet);
+		assert.deepEqual(again.acknowledged, [
+			{ host: EXTRA, messageIds: ["extra-1"] },
+		]);
+		assert.equal(feeLogs(again.logged), 0);
 	});
 
 	it("treats a box whose client can't be built as unreadable", async () => {
@@ -549,6 +681,7 @@ describe("PeerPay inbox", () => {
 				},
 				wallet,
 				record: () => undefined,
+				account: ACCOUNT,
 			}),
 		);
 		assert.deepEqual(run.result.unreachableHosts, [OWN]);
