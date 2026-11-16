@@ -23,9 +23,6 @@ export const DESKTOP_VIEWPORT: Viewport = { width: 1280, height: 800 };
 /** The smallest tap target on a phone (Apple HIG, WCAG 2.5.5). */
 export const MIN_TAP_TARGET = 44;
 
-/** A default-size button (shadcn `h-9`) on desktop. */
-export const DESKTOP_DEFAULT_BUTTON_HEIGHT = 36;
-
 /** A bottom sheet leaves this much of the page showing above it. */
 export const SHEET_TOP_GAP = 48;
 
@@ -174,6 +171,9 @@ export async function checkTapTargets(
 			for (const el of Array.from(document.querySelectorAll(selector))) {
 				if (el.getClientRects().length === 0) continue;
 				if (getComputedStyle(el).visibility === "hidden") continue;
+				// Inert or hidden subtrees (the connect carousel's scaled-down side
+				// cards) can't be tapped, so they are not tap targets.
+				if (el.closest('[inert], [aria-hidden="true"]')) continue;
 				const rect = el.getBoundingClientRect();
 				if (rect.width <= 1 && rect.height <= 1) continue;
 				if (rect.height >= args.min) continue;
@@ -201,10 +201,12 @@ export async function checkTapTargets(
 }
 
 /**
- * Desktop type and density: every default-size button is 36px tall and no
- * h1 is set in JetBrains Mono. Returns how many default-size buttons it
- * measured. A default-size button carries the size variant's `h-9 px-4 py-2`
- * (components/ui/button.tsx); a className height override removes `h-9`.
+ * Desktop type and density: the phone-only 44px minimum does not reach
+ * desktop (every default-size button has no min-height), and no h1 is set in
+ * JetBrains Mono. Returns how many default-size buttons it measured. A
+ * default-size button carries the size variant's `h-9 px-4 py-2`
+ * (components/ui/button.tsx). Its rendered height is not checked: a screen's
+ * own CSS may size it (the connect carousel's actions are 44px on purpose).
  */
 export async function checkDesktopDensity(
 	browser: Browser,
@@ -221,13 +223,14 @@ export async function checkDesktopDensity(
 				(el) =>
 					el.getClientRects().length > 0 &&
 					getComputedStyle(el).visibility !== "hidden" &&
+					!el.closest('[inert], [aria-hidden="true"]') &&
 					["h-9", "px-4", "py-2"].every((token) =>
 						el.classList.contains(token),
 					),
 			)
 			.map((el) => ({
 				label: el.getAttribute("aria-label") ?? clean(el.textContent),
-				height: Math.round(el.getBoundingClientRect().height * 10) / 10,
+				minHeight: getComputedStyle(el).minHeight,
 			}));
 		const headings = Array.from(document.querySelectorAll("h1"), (el) => ({
 			text: clean(el.textContent),
@@ -237,9 +240,9 @@ export async function checkDesktopDensity(
 	}, null);
 
 	for (const button of buttons) {
-		if (Math.abs(button.height - DESKTOP_DEFAULT_BUTTON_HEIGHT) > TOLERANCE) {
+		if (button.minHeight !== "0px" && button.minHeight !== "auto") {
 			problems.add(
-				`${where}: default-size button "${button.label}" is ${button.height}px tall, expected ${DESKTOP_DEFAULT_BUTTON_HEIGHT}px.`,
+				`${where}: default-size button "${button.label}" has min-height ${button.minHeight}, expected none on desktop (the 44px minimum is for phones only).`,
 			);
 		}
 	}
