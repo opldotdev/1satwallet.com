@@ -3,7 +3,7 @@
 import { Coins, KeyRound, Loader2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { type ReactNode, useSyncExternalStore } from "react";
 import { useOneColorBalances } from "@/hooks/use-one-color-balances";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
@@ -74,11 +74,32 @@ function Notice({ children }: { children: ReactNode }) {
 	);
 }
 
+function Loading({ label }: { label: string }) {
+	return (
+		<div className="flex items-center justify-center py-12">
+			<Loader2 className="size-8 animate-spin text-muted-foreground" />
+			<span className="ml-3 text-muted-foreground">{label}</span>
+		</div>
+	);
+}
+
+const noSubscription = () => () => {};
+
 /** 1Color (BRC-162) tokens held by the wallet. Read-only. */
 export default function OneColorGrid() {
 	const { chain, connectionMode, isInitialized, isInitializing } =
 		useWalletToolbox();
 	const query = useOneColorBalances();
+	// The page prerenders as mainnet, so nothing chain-specific renders until
+	// the client knows the saved network: a testnet wallet never flashes the
+	// "testnet only" notice and hydration never mismatches.
+	const mounted = useSyncExternalStore(
+		noSubscription,
+		() => true,
+		() => false,
+	);
+
+	if (!mounted) return <Loading label="Loading wallet…" />;
 
 	if (!isOneColorAvailable(chain)) {
 		return (
@@ -94,14 +115,7 @@ export default function OneColorGrid() {
 		);
 	}
 
-	if (isInitializing) {
-		return (
-			<div className="flex items-center justify-center py-12">
-				<Loader2 className="size-8 animate-spin text-muted-foreground" />
-				<span className="ml-3 text-muted-foreground">Loading wallet…</span>
-			</div>
-		);
-	}
+	if (isInitializing) return <Loading label="Loading wallet…" />;
 
 	if (!isInitialized) {
 		return (
@@ -124,16 +138,7 @@ export default function OneColorGrid() {
 		);
 	}
 
-	if (query.isPending) {
-		return (
-			<div className="flex items-center justify-center py-12">
-				<Loader2 className="size-8 animate-spin text-muted-foreground" />
-				<span className="ml-3 text-muted-foreground">
-					Loading 1Color tokens…
-				</span>
-			</div>
-		);
-	}
+	if (query.isPending) return <Loading label="Loading 1Color tokens…" />;
 
 	if (query.isError) {
 		return (
