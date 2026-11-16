@@ -3,6 +3,7 @@
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -13,13 +14,25 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { decryptWalletBackup } from "@/lib/wallet-backup";
+import { NetworkChoice } from "@/components/wallet/network-choice";
+import type { Chain } from "@/lib/chain-endpoints";
+import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import {
+	backupRestoreErrorMessage,
+	classifyBackupRestoreError,
+	decryptWalletBackup,
+	keysNetworkHint,
+} from "@/lib/wallet-backup";
 import { useWallet } from "@/providers/wallet-provider";
 import { useImportWallet } from "../provider";
 
+const TESTNET_HINT =
+	"These keys are encoded for testnet, so Testnet is selected.";
+const CHAIN_NAME: Record<Chain, string> = { main: "Mainnet", test: "Testnet" };
+
 export default function ImportPassphrasePage() {
 	const router = useRouter();
-	const { importWallet } = useWallet();
+	const { hasWallet, importWallet } = useWallet();
 	const { walletKeys, setWalletKeys, encryptedBackup } = useImportWallet();
 	const [passphrase, setPassphrase] = useState("");
 	const [localPassphrase, setLocalPassphrase] = useState("");
@@ -29,14 +42,34 @@ export default function ImportPassphrasePage() {
 
 	const mode = encryptedBackup ? "decrypt" : "encrypt";
 	const requiresPassword = encryptedBackup?.requiresPassword ?? true;
+	// A backup that names its network decides it; otherwise the person does,
+	// with Testnet preselected only when every visible key is testnet-encoded.
+	const fixedNetwork = encryptedBackup?.network ?? null;
+	const visibleHint =
+		encryptedBackup?.hintedNetwork ??
+		(walletKeys && !encryptedBackup ? keysNetworkHint(walletKeys) : null);
+	const [network, setNetwork] = useState<Chain>(
+		visibleHint === "test" ? "test" : "main",
+	);
+	const [networkNote, setNetworkNote] = useState<string | undefined>(
+		visibleHint === "test" ? TESTNET_HINT : undefined,
+	);
+	const [hintShown, setHintShown] = useState(visibleHint === "test");
 
+	// Once a wallet is saved, this flow is over: an import onto the other
+	// network remounts this page with empty import state, which must lead to
+	// the wallet, not back to the start of the import.
 	useEffect(() => {
+		if (hasWallet) {
+			router.replace("/wallet");
+			return;
+		}
 		if (!walletKeys && !encryptedBackup) {
 			router.replace("/wallet/import");
 		}
-	}, [walletKeys, encryptedBackup, router]);
+	}, [hasWallet, walletKeys, encryptedBackup, router]);
 
-	if (!walletKeys && !encryptedBackup) return null;
+	if (hasWallet || (!walletKeys && !encryptedBackup)) return null;
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -47,11 +80,11 @@ export default function ImportPassphrasePage() {
 				return;
 
 			setIsSaving(true);
-			const success = await importWallet(walletKeys, passphrase);
+			const success = await importWallet(walletKeys, passphrase, network);
 			setIsSaving(false);
 
 			if (!success) {
-				setError("Failed to save wallet");
+				setError("Could not save the wallet in this browser. Try again.");
 			}
 		} else {
 			if (
@@ -64,21 +97,49 @@ export default function ImportPassphrasePage() {
 			setIsSaving(true);
 
 			try {
-				const keys = await decryptWalletBackup(
+				const decrypted = await decryptWalletBackup(
 					encryptedBackup,
 					requiresPassword ? passphrase : "",
 				);
-				setWalletKeys(keys);
-				const success = await importWallet(keys, localPassphrase);
+				// Keys seen only after decryption can still hint at testnet: select
+				// it and let the person confirm before anything is saved.
+				if (
+					decrypted.network === null &&
+					decrypted.hintedNetwork === "test" &&
+					network === "main" &&
+					!hintShown
+				) {
+					setNetwork("test");
+					setNetworkNote(TESTNET_HINT);
+					setHintShown(true);
+					setError("Check the network, then import again.");
+					return;
+				}
+				const finalNetwork = decrypted.network ?? network;
+				setWalletKeys(decrypted.keys);
+				const success = await importWallet(
+					decrypted.keys,
+					localPassphrase,
+					finalNetwork,
+				);
 				if (!success) {
-					throw new Error("Failed to save wallet");
+					// importWallet reported the cause.
+					setError("Could not save the wallet in this browser. Try again.");
+					return;
+				}
+				if (fixedNetwork === null && finalNetwork !== network) {
+					toast("Imported as a testnet account, as the backup says.");
 				}
 			} catch (err) {
-				setError(
-					err instanceof Error
-						? err.message
-						: "Incorrect password or invalid backup format",
-				);
+				const failure = classifyBackupRestoreError(err);
+				reportDiagnostic({
+					category: "action",
+					code: "action.failed",
+					operation: "wallet.import.restore",
+					recoverable: true,
+					context: { status: failure, retryable: true },
+				});
+				setError(backupRestoreErrorMessage(failure, requiresPassword));
 			} finally {
 				setIsSaving(false);
 			}
@@ -167,7 +228,26 @@ export default function ImportPassphrasePage() {
 									)}
 							</div>
 
-							{error && <p className="text-sm text-destructive">{error}</p>}
+							{fixedNetwork ? (
+								<p className="text-xs text-muted-foreground">
+									Network: {CHAIN_NAME[fixedNetwork]}. Set by this backup.
+								</p>
+							) : (
+								<NetworkChoice
+									value={network}
+									onChange={(next) => {
+										setNetwork(next);
+										setNetworkNote(undefined);
+									}}
+									note={networkNote}
+								/>
+							)}
+
+							{error && (
+								<p className="text-sm text-destructive" role="alert">
+									{error}
+								</p>
+							)}
 
 							<div className="flex gap-2">
 								<Button

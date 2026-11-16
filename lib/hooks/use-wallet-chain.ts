@@ -7,8 +7,8 @@ import { readWalletChain, subscribeWalletChain } from "@/lib/wallet-chain";
 const serverChain = (): Chain => "main";
 
 /**
- * The saved network, for rendering. Mainnet during server render and
- * hydration, then the saved value, so markup never mismatches.
+ * The active account's network, for rendering. Mainnet during server render
+ * and hydration, then the account's network, so markup never mismatches.
  */
 export function useWalletChain(): Chain {
 	return useSyncExternalStore(
