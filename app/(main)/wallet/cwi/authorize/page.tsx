@@ -12,7 +12,8 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { isValidRedirectMethod } from "@/lib/cwi/redirect-utils";
-import { toCWIErrorFields } from "@/lib/cwi/types";
+import { redirectOriginator, toCWIErrorFields } from "@/lib/cwi/types";
+import { clipForLog } from "@/lib/runtime-diagnostics";
 import { useWallet, WalletSaveError } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -155,6 +156,18 @@ function AuthorizeContent() {
 		if (!permissionsManager) {
 			throw new Error("wallet_permissions_manager_not_ready");
 		}
+		// The app's hostname, as the relay passes it; never the wallet's own.
+		const originator = redirectOriginator(
+			requestData.origin,
+			window.location.host,
+		);
+		if (!originator) {
+			console.error("[cwi] refused a redirect request from a non-app origin", {
+				requestId: requestData.requestId,
+				origin: clipForLog(requestData.origin),
+			});
+			throw new Error("origin_not_an_app");
+		}
 
 		const permissionsRecord = permissionsManager as unknown as Record<
 			string,
@@ -167,7 +180,7 @@ function AuthorizeContent() {
 
 		return await (
 			method as (args: unknown, originator: string) => Promise<unknown>
-		).call(permissionsManager, requestData.args ?? {}, requestData.origin);
+		).call(permissionsManager, requestData.args ?? {}, originator);
 	}, [requestData, permissionsManager]);
 
 	const redirectToCallback = useCallback((redirectUrl: string) => {

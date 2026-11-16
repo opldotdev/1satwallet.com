@@ -54,6 +54,7 @@ function makeRelay(wallet: WalletPermissionsManager) {
 	return new CWIRelay({
 		getWallet: () => wallet,
 		getStatus: () => "unlocked",
+		walletHost: "1satwallet.com",
 	});
 }
 
@@ -139,6 +140,76 @@ describe("hosted CWI session security", () => {
 				},
 			],
 		);
+		relay.stop();
+	});
+
+	test("refuses sessions from the wallet's own hostname on any port", async () => {
+		const calls: string[] = [];
+		const wallet = {
+			getVersion: async (_args: unknown, originator: string) => {
+				calls.push(originator);
+				return { version: originator };
+			},
+		} as unknown as WalletPermissionsManager;
+		const relay = makeRelay(wallet);
+		relay.start();
+		await tick();
+		const channel = FakeBroadcastChannel.current;
+		const logged: unknown[][] = [];
+		const originalError = console.error;
+		console.error = (...args: unknown[]) => {
+			logged.push(args);
+		};
+		try {
+			for (const [sessionId, browserOrigin] of [
+				["own", "https://1satwallet.com"],
+				["own-port", "https://1satwallet.com:8443"],
+			]) {
+				const parsed = parseBrowserOrigin(browserOrigin);
+				assert.ok(parsed);
+				const session = {
+					sessionId,
+					sessionToken: `${sessionId}-`.padEnd(43, "x"),
+					browserOrigin: parsed.browserOrigin,
+					originator: parsed.originator,
+				};
+				channel.emit({
+					...createSessionBase(session),
+					type: "cwi-session-open",
+				});
+				channel.emit({
+					...createSessionEnvelope({ ...session, leaderId: "any" }),
+					type: "cwi-request",
+					id: `${sessionId}-1`,
+					call: "getVersion",
+					args: {},
+				});
+			}
+			await tick();
+			await tick();
+		} finally {
+			console.error = originalError;
+		}
+		assert.deepEqual(calls, []);
+		assert.equal(
+			channel.sent.some(
+				(message) =>
+					(message as { type?: string }).type === "cwi-session-accept",
+			),
+			false,
+		);
+		const refusals = logged.filter(
+			(args) =>
+				args[0] === "[cwi] refused a session from the wallet's own site",
+		);
+		assert.deepEqual(
+			refusals.map(
+				(args) => (args[1] as { browserOrigin: string }).browserOrigin,
+			),
+			["https://1satwallet.com", "https://1satwallet.com:8443"],
+		);
+		const app = openSession(channel, "app", "https://app.example");
+		assert.equal(app.originator, "app.example");
 		relay.stop();
 	});
 

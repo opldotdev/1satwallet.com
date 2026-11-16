@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { NextRequest } from "next/server";
+import { POST as authorizeInit } from "../app/api/cwi/authorize/init/route";
 import {
 	handleCorsPreflightRequest,
 	hasMatchingOrigin,
@@ -114,6 +115,51 @@ describe("deployment response contract", () => {
 				new URL("https://other.example/callback"),
 			),
 			false,
+		);
+	});
+});
+
+describe("redirect authorize contract", () => {
+	test("refuses requests from the wallet's own hostname", async () => {
+		for (const [url, origin] of [
+			[
+				"https://1satwallet.com/api/cwi/authorize/init",
+				"https://1satwallet.com",
+			],
+			[
+				"https://1satwallet.com/api/cwi/authorize/init",
+				"https://1satwallet.com:8443",
+			],
+			["http://localhost:8255/api/cwi/authorize/init", "http://localhost:3333"],
+		]) {
+			const response = await authorizeInit(
+				new NextRequest(url, {
+					method: "POST",
+					headers: { origin, "content-type": "application/json" },
+					body: JSON.stringify({}),
+				}),
+			);
+			assert.equal(response.status, 400);
+			assert.deepEqual(await response.json(), { error: "origin_not_an_app" });
+		}
+	});
+
+	test("runs the approved call as the app's host, never the wallet's", () => {
+		const page = readFileSync(
+			new URL("../app/(main)/wallet/cwi/authorize/page.tsx", import.meta.url),
+			"utf8",
+		);
+		assert.match(
+			page,
+			/const originator = redirectOriginator\(\s*requestData\.origin,\s*window\.location\.host,\s*\);\s*if \(!originator\) \{[\s\S]*?throw new Error\("origin_not_an_app"\);/,
+		);
+		assert.match(
+			page,
+			/\.call\(permissionsManager, requestData\.args \?\? \{\}, originator\);/,
+		);
+		assert.doesNotMatch(
+			page,
+			/requestData\.args \?\? \{\}, requestData\.origin/,
 		);
 	});
 });

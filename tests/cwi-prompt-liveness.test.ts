@@ -126,6 +126,7 @@ function startRelay(config: {
 	const relay = new CWIRelay({
 		getWallet: config.getWallet,
 		getStatus: config.getStatus ?? (() => "unlocked"),
+		walletHost: "1satwallet.com",
 	});
 	relay.start();
 	return { relay, channel: FakeBroadcastChannel.current };
@@ -582,7 +583,7 @@ describe("BRC-219 prompt liveness", () => {
 		const previousWindow = globalThis.window;
 		Object.defineProperty(globalThis, "window", {
 			configurable: true,
-			value: { parent },
+			value: { parent, location: { host: "1satwallet.com" } },
 		});
 		try {
 			const bridge = new CWIBridge({
