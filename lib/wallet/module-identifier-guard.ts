@@ -3,7 +3,7 @@ import { isCWIStandardMethod } from "@/lib/cwi/types";
 import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 
 /**
- * The permissions manager (wallet-toolbox-client 2.16.0) checks reserved
+ * The permissions manager (wallet-toolbox-client 2.17.0) checks reserved
  * names on the raw string: a basket, label or protocol goes to a permission
  * module only when it starts with lowercase `p `, counts as the wallet's own
  * (`admin`) only when it starts with lowercase `admin`, and the baskets
