@@ -18,6 +18,8 @@ import {
 	findMisroutedModuleIdentifier,
 	findRefusedAppName,
 	guardModuleIdentifiers,
+	LIST_SCAN_MAX,
+	LIST_SCAN_PAGE,
 	listActionsForApp,
 	MisroutedModuleIdentifierError,
 } from "@/lib/wallet/module-identifier-guard";
@@ -63,7 +65,31 @@ type RawCall = { method: string; originator: unknown; args: unknown };
  * A raw wallet that records every call and answers the few the manager needs;
  * a prompt of any kind is recorded and granted, so a test sees both.
  */
-const setup = (listed: unknown = { totalActions: 0, actions: [] }) => {
+type Listed = { actions: Record<string, unknown>[] };
+
+/** The wallet's listActions over `listed`: paged, labels only when asked. */
+const listFrom = (listed: Listed, args: unknown) => {
+	const {
+		offset = 0,
+		limit = 10,
+		includeLabels,
+	} = args as {
+		offset?: number;
+		limit?: number;
+		includeLabels?: boolean;
+	};
+	return {
+		totalActions: listed.actions.length,
+		actions: structuredClone(listed.actions.slice(offset, offset + limit)).map(
+			(action) => {
+				if (!includeLabels) delete action.labels;
+				return action;
+			},
+		),
+	};
+};
+
+const setup = (listed: Listed = { actions: [] }) => {
 	const calls: RawCall[] = [];
 	const wallet = new Proxy(
 		{},
@@ -73,7 +99,7 @@ const setup = (listed: unknown = { totalActions: 0, actions: [] }) => {
 				async (args: unknown, originator: unknown) => {
 					calls.push({ method: prop, originator, args });
 					if (prop === "listOutputs") return { totalOutputs: 0, outputs: [] };
-					if (prop === "listActions") return structuredClone(listed);
+					if (prop === "listActions") return listFrom(listed, args);
 					if (prop === "revealSpecificKeyLinkage")
 						return { encryptedLinkage: [1], encryptedLinkageProof: [1] };
 					if (prop === "getPublicKey") return { publicKey: PUBKEY };
@@ -198,10 +224,25 @@ describe("findMisroutedModuleIdentifier", () => {
 			{ basket: "Default", labels: ["Payments"], tags: [" pcolor"] },
 			{ protocolID: [2] },
 			{ outputs: [{ protocol: "wallet payment" }] },
-			"P color",
+			Object.assign(Object.create(null), { basket: "tokens" }),
 			undefined,
 		]) {
 			assert.equal(findMisroutedModuleIdentifier(args), null);
+		}
+	});
+
+	it("refuses args that are not a plain object", () => {
+		for (const [args, value] of [
+			[Object.assign([], { basket: " default" }), "an array"],
+			["P color", "string"],
+			[null, "null"],
+			[new Map([["basket", "x"]]), "an object (Map)"],
+		] as const) {
+			assert.deepEqual(findMisroutedModuleIdentifier(args), {
+				field: "args",
+				value,
+				reason: "not-an-object",
+			});
 		}
 	});
 
@@ -679,9 +720,8 @@ describe("apps may only send canonical names", () => {
 	});
 });
 
-describe("apps never see 1Sat module actions or outputs in listActions", () => {
-	const listed = {
-		totalActions: 5,
+describe("apps never see admin-only module actions or outputs in listActions", () => {
+	const listed: Listed = {
 		actions: [
 			{
 				txid: "a",
@@ -697,31 +737,30 @@ describe("apps never see 1Sat module actions or outputs in listActions", () => {
 					{ outputIndex: 2, basket: "p 1sat ordinals" },
 				],
 			},
-			{ txid: "c", labels: [" P 1sat bsv21"], outputs: [] },
+			{ txid: "c", labels: ["p color"], outputs: [] },
 			{
 				txid: "d",
-				labels: [],
+				labels: ["p nosend expiry never"],
 				outputs: [{ outputIndex: 0, basket: "tokens" }],
 			},
 		],
 	};
 
-	it("drops p-labelled actions and strips p-basket outputs for an app", async () => {
-		const { manager, calls } = setup(listed);
+	it("hides p color actions and outputs but keeps app-usable p modules", async () => {
+		const { manager } = setup(listed);
 		const result = await manager.listActions(
 			{ labels: [], includeOutputs: true },
 			APP,
 		);
-		assert.equal(
-			(calls[0].args as { includeLabels?: boolean }).includeLabels,
-			true,
-		);
 		assert.deepEqual(result, {
-			totalActions: 3,
+			totalActions: 2,
 			actions: [
 				{
 					txid: "b",
-					outputs: [{ outputIndex: 0, basket: "default" }],
+					outputs: [
+						{ outputIndex: 0, basket: "default" },
+						{ outputIndex: 2, basket: "p 1sat ordinals" },
+					],
 				},
 				{
 					txid: "d",
@@ -734,36 +773,70 @@ describe("apps never see 1Sat module actions or outputs in listActions", () => {
 	it("keeps labels when the app asked for them", async () => {
 		const { manager } = setup(listed);
 		const result = await manager.listActions(
-			{ labels: ["payments"], includeLabels: true, includeOutputs: true },
+			{ labels: [], includeLabels: true },
 			APP,
 		);
 		assert.deepEqual(
 			result.actions.map((action) => [action.txid, action.labels]),
 			[
 				["b", ["payments"]],
-				["d", []],
+				["d", ["p nosend expiry never"]],
 			],
 		);
+	});
+
+	it("pages and counts visible actions only", async () => {
+		const { manager } = setup(listed);
+		const page = async (offset: number, limit: number) => {
+			const result = await manager.listActions(
+				{ labels: [], offset, limit },
+				APP,
+			);
+			return [result.totalActions, result.actions.map((action) => action.txid)];
+		};
+		assert.deepEqual(await page(0, 1), [2, ["b"]]);
+		assert.deepEqual(await page(1, 1), [2, ["d"]]);
+		assert.deepEqual(await page(2, 1), [2, []]);
+		assert.deepEqual(await page(0, 10), [2, ["b", "d"]]);
 	});
 
 	it("leaves the wallet's own listing untouched", async () => {
 		const { manager, calls } = setup(listed);
 		const result = await manager.listActions({ labels: [] }, ADMIN);
-		assert.equal(result.totalActions, 5);
+		assert.equal(result.totalActions, 4);
 		assert.equal(result.actions.length, 4);
-		assert.equal(
-			(calls[0].args as { includeLabels?: boolean }).includeLabels,
-			undefined,
+		assert.deepEqual(methods(calls), ["listActions"]);
+	});
+
+	it("stops scanning at the cap and counts the rest as an upper bound", async () => {
+		const actions = Array.from({ length: LIST_SCAN_MAX + 5 }, (_, index) => ({
+			txid: String(index),
+			labels: index % 2 === 0 ? ["p color plan"] : [],
+		}));
+		let scanned = 0;
+		const result = await listActionsForApp(
+			async (args) => {
+				const page = listFrom({ actions }, args);
+				if (args.limit === LIST_SCAN_PAGE) scanned += page.actions.length;
+				return page;
+			},
+			{ labels: [], limit: 2 },
+			APP,
+		);
+		assert.equal(scanned, LIST_SCAN_MAX);
+		assert.equal(result.totalActions, LIST_SCAN_MAX / 2 + 5);
+		assert.deepEqual(
+			result.actions.map((action) => action.txid),
+			["1", "3"],
 		);
 	});
 
-	it("never reports a negative total", async () => {
-		const result = await listActionsForApp(
-			async () => structuredClone({ ...listed, totalActions: 1 }),
-			{ labels: [] },
-			APP,
-		);
-		assert.equal(result.totalActions, 0);
+	it("rejects a bad window with the wallet's own error", async () => {
+		const { manager, calls } = setup(listed);
+		await assert.rejects(manager.listActions({ labels: [], limit: 0 }, APP), {
+			name: "WERR_INVALID_PARAMETER",
+		});
+		assert.deepEqual(calls, []);
 	});
 });
 

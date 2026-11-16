@@ -54,7 +54,9 @@ afterEach(() => {
 });
 
 let databases = 0;
-const realWallet = async () => {
+const realWallet = async () => (await realWalletWithStorage()).wallet;
+
+const realWalletWithStorage = async () => {
 	const keyDeriver = new KeyDeriver(PrivateKey.fromRandom());
 	const local = new StorageIdb(
 		StorageProvider.createStorageBaseOptions("test"),
@@ -66,12 +68,101 @@ const realWallet = async () => {
 	await local.makeAvailable();
 	const storage = new WalletStorageManager(keyDeriver.identityKey, local);
 	await storage.makeAvailable();
-	return new Wallet({ chain: "test", keyDeriver, storage });
+	const wallet = new Wallet({ chain: "test", keyDeriver, storage });
+	return { wallet, local, identityKey: keyDeriver.identityKey };
+};
+
+/**
+ * Write completed actions straight into the wallet's storage: each with its
+ * labels and one output per basket, as the wallet would list them.
+ */
+const seedActions = async (
+	local: StorageIdb,
+	identityKey: string,
+	actions: { labels: string[]; baskets: string[] }[],
+) => {
+	const { user } = await local.findOrInsertUser(identityKey);
+	const now = new Date();
+	const stamp = { created_at: now, updated_at: now };
+	const baskets = new Map<string, number>();
+	const labels = new Map<string, number>();
+	const basketId = async (name: string) => {
+		const known = baskets.get(name);
+		if (known !== undefined) return known;
+		const id = await local.insertOutputBasket({
+			...stamp,
+			basketId: 0,
+			userId: user.userId,
+			name,
+			numberOfDesiredUTXOs: 0,
+			minimumDesiredUTXOValue: 0,
+			isDeleted: false,
+		});
+		baskets.set(name, id);
+		return id;
+	};
+	const labelId = async (label: string) => {
+		const known = labels.get(label);
+		if (known !== undefined) return known;
+		const id = await local.insertTxLabel({
+			...stamp,
+			txLabelId: 0,
+			userId: user.userId,
+			label,
+			isDeleted: false,
+		});
+		labels.set(label, id);
+		return id;
+	};
+	const txids: string[] = [];
+	for (const [index, action] of actions.entries()) {
+		const txid = (index + 1).toString(16).padStart(64, "0");
+		txids.push(txid);
+		const transactionId = await local.insertTransaction({
+			...stamp,
+			transactionId: 0,
+			userId: user.userId,
+			status: "completed",
+			reference: `ref-${index}`,
+			isOutgoing: true,
+			satoshis: 1,
+			description: `action ${index}`,
+			txid,
+			version: 1,
+			lockTime: 0,
+		});
+		for (const label of action.labels)
+			await local.insertTxLabelMap({
+				...stamp,
+				txLabelId: await labelId(label),
+				transactionId,
+				isDeleted: false,
+			});
+		for (const [vout, basket] of action.baskets.entries())
+			await local.insertOutput({
+				...stamp,
+				outputId: 0,
+				userId: user.userId,
+				transactionId,
+				basketId: await basketId(basket),
+				spendable: true,
+				change: false,
+				outputDescription: "out",
+				vout,
+				satoshis: 1,
+				providedBy: "you",
+				purpose: "",
+				type: "custom",
+				txid,
+				lockingScript: [0x51],
+			});
+	}
+	return txids;
 };
 
 /** The provider's wiring: color module, manager, guard, all on `admin`. */
 const setup = async (admin = ADMIN) => {
-	const wallet = await realWallet();
+	const { wallet, local, identityKey } = await realWalletWithStorage();
 	const color = createWalletColorModule({
 		wallet,
 		chain: "test",
@@ -95,7 +186,7 @@ const setup = async (admin = ADMIN) => {
 			await manager.denyPermission(request.requestID);
 		});
 	}
-	return { wallet, manager, prompts };
+	return { wallet, manager, prompts, local, identityKey };
 };
 
 describe("the admin originator against a real wallet", () => {
@@ -239,5 +330,107 @@ describe("redirect requests run as the app's host", () => {
 		assert.ok(originator);
 		const listed = await wallet.listOutputs({ basket: "tokens" }, originator);
 		assert.equal(listed.totalOutputs, 0);
+	});
+});
+
+describe("args that are not a plain object against a real wallet", () => {
+	it("refuses array-shaped args before the manager reads them", async () => {
+		const { manager, prompts } = await setup();
+		const counterparty = PrivateKey.fromRandom().toPublicKey().toString();
+		const misrouted = `P${PROTOCOL[1].slice(1)}`;
+		for (const call of [
+			manager.listOutputs(
+				Object.assign([], { basket: " default" }) as never,
+				APP,
+			),
+			manager.listOutputs(
+				Object.assign([], { basket: `P${BASKET.slice(1)}` }) as never,
+				APP,
+			),
+			manager.getPublicKey(
+				Object.assign([], {
+					protocolID: [PROTOCOL[0], misrouted],
+					keyID: "color",
+					counterparty: "self",
+				}) as never,
+				APP,
+			),
+			manager.revealSpecificKeyLinkage(
+				Object.assign([], {
+					counterparty,
+					verifier: counterparty,
+					protocolID: PROTOCOL,
+					keyID: "color",
+				}) as never,
+				APP,
+			),
+			manager.listActions(
+				Object.assign([], { labels: [], includeLabels: true }) as never,
+				APP,
+			),
+		]) {
+			await assert.rejects(call, {
+				name: "MisroutedModuleIdentifierError",
+				reason: "not-an-object",
+				field: "args",
+			});
+		}
+		assert.deepEqual(prompts, []);
+	});
+});
+
+describe("an app's listActions against a real wallet", () => {
+	it("hides 1Color, keeps p nosend, and pages over visible actions", async () => {
+		const { manager, local, identityKey } = await setup();
+		const txids = await seedActions(local, identityKey, [
+			{ labels: ["p color plan x"], baskets: [BASKET] },
+			{ labels: ["mylabel"], baskets: ["tokens"] },
+			{ labels: ["mylabel"], baskets: ["tokens", BASKET] },
+			{ labels: ["mylabel", "p color plan x"], baskets: ["tokens"] },
+			{ labels: ["p nosend expiry never", "mylabel"], baskets: ["tokens"] },
+			{ labels: [], baskets: [BASKET] },
+		]);
+		const own = await manager.listActions({ labels: [] }, ADMIN);
+		assert.equal(own.totalActions, 6);
+
+		const all = await manager.listActions(
+			{ labels: [], includeLabels: true, includeOutputs: true },
+			APP,
+		);
+		assert.equal(all.totalActions, 4);
+		assert.deepEqual(
+			all.actions.map((action) => [
+				action.txid,
+				// The wallet adds a "reference …" label of its own.
+				action.labels?.filter((label) => !label.startsWith("reference ")),
+				action.outputs?.map((output) => output.basket),
+			]),
+			[
+				[txids[1], ["mylabel"], ["tokens"]],
+				[txids[2], ["mylabel"], ["tokens"]],
+				[txids[4], ["mylabel", "p nosend expiry never"], ["tokens"]],
+				[txids[5], [], []],
+			],
+		);
+
+		const pages: string[][] = [];
+		for (let offset = 0; offset < 5; offset++) {
+			const page = await manager.listActions(
+				{ labels: [], offset, limit: 1 },
+				APP,
+			);
+			assert.equal(page.totalActions, 4);
+			pages.push(page.actions.map((action) => action.txid));
+		}
+		assert.deepEqual(pages, [
+			[txids[1]],
+			[txids[2]],
+			[txids[4]],
+			[txids[5]],
+			[],
+		]);
+		const byLabel = await manager.listActions({ labels: ["mylabel"] }, APP);
+		assert.equal(byLabel.totalActions, 3);
+		assert.equal(byLabel.actions[0].labels, undefined);
 	});
 });

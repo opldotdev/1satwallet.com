@@ -3,6 +3,7 @@ import type {
 	CounterpartyPermissions,
 	GroupedPermissions,
 } from "@bsv/wallet-toolbox-client";
+import { clipForLog, reportDiagnostic } from "../runtime-diagnostics";
 import {
 	CWI_CHANNEL_NAME,
 	CWI_MAX_PENDING_PER_SESSION,
@@ -25,6 +26,7 @@ import {
 	isCWIStandardMethod,
 	isSessionBaseMessage,
 	isSessionEnvelope,
+	isWalletOriginator,
 	isWithinCWIPayloadLimit,
 	parseBrowserOrigin,
 } from "./types";
@@ -52,6 +54,18 @@ const LEADER_LEASE_MS = 10_000;
 
 type HandshakeState = "idle" | "probing" | "connected" | "fallback-required";
 
+/** The wallet's own site is the admin; it never connects as an app. */
+const WALLET_SITE_REFUSED = "The wallet's own site cannot connect as an app.";
+
+/** An app's identity from its origin: null when invalid or the wallet's own. */
+const appIdentity = (origin: string) => {
+	const identity = parseBrowserOrigin(origin);
+	return identity &&
+		!isWalletOriginator(identity.originator, window.location.host)
+		? identity
+		: null;
+};
+
 export const getCWIClient = (): {
 	window: WindowProxy;
 	identity: ReturnType<typeof parseBrowserOrigin>;
@@ -69,7 +83,7 @@ export const getCWIClient = (): {
 					document.referrer;
 	return {
 		window: clientWindow,
-		identity: declaredOrigin ? parseBrowserOrigin(declaredOrigin) : null,
+		identity: declaredOrigin ? appIdentity(declaredOrigin) : null,
 	};
 };
 
@@ -414,6 +428,10 @@ export class CWIBridge {
 			return;
 		const identity = parseBrowserOrigin(event.origin);
 		if (!identity) return;
+		if (isWalletOriginator(identity.originator, window.location.host)) {
+			this.refuseWalletSite(event);
+			return;
+		}
 		if (!this.browserOrigin) {
 			this.browserOrigin = identity.browserOrigin;
 			this.originator = identity.originator;
@@ -700,6 +718,36 @@ export class CWIBridge {
 			this.respondError(pending.source, pending.origin, id, 1, description);
 		}
 		this.pendingRequests.clear();
+	}
+
+	private refuseWalletSite(event: MessageEvent): void {
+		const diagnostic = reportDiagnostic({
+			category: "action",
+			code: "action.failed",
+			operation: "cwi.bridge.session-open",
+			recoverable: false,
+			context: { provider: "cwi-bridge" },
+		});
+		console.error("[cwi] refused a connection from the wallet's own site", {
+			correlationId: diagnostic.correlationId,
+			origin: clipForLog(event.origin),
+		});
+		const data = event.data;
+		if (
+			isObjectRecord(data) &&
+			data.type === "CWI" &&
+			data.isInvocation === true &&
+			typeof data.id === "string" &&
+			data.id.length > 0 &&
+			data.id.length <= 128
+		)
+			this.respondError(
+				event.source as WindowProxy,
+				event.origin,
+				data.id,
+				1,
+				WALLET_SITE_REFUSED,
+			);
 	}
 
 	private respondError(

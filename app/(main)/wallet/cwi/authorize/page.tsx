@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { isValidRedirectMethod } from "@/lib/cwi/redirect-utils";
 import { redirectOriginator, toCWIErrorFields } from "@/lib/cwi/types";
+import { clipForLog } from "@/lib/runtime-diagnostics";
 import { useWallet } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -163,7 +164,7 @@ function AuthorizeContent() {
 		if (!originator) {
 			console.error("[cwi] refused a redirect request from a non-app origin", {
 				requestId: requestData.requestId,
-				origin: requestData.origin,
+				origin: clipForLog(requestData.origin),
 			});
 			throw new Error("origin_not_an_app");
 		}

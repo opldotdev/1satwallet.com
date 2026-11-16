@@ -302,12 +302,22 @@ export const redirectOriginator = (
 	walletHost: string,
 ): string | null => {
 	const identity = parseBrowserOrigin(origin);
-	if (!identity) return null;
-	const wallet = parseBrowserOrigin(`https://${walletHost}`);
-	return identity.originator === wallet?.originator
-		? null
-		: identity.originator;
+	if (!identity || isWalletOriginator(identity.originator, walletHost))
+		return null;
+	return identity.originator;
 };
+
+/**
+ * Whether an app originator (a hostname) is the wallet's own hostname. The
+ * toolbox scopes originators to the hostname, and the wallet's admin is its
+ * host, so such an origin on any port would act as the wallet itself. Relay,
+ * bridge and redirect sessions all refuse it.
+ */
+export const isWalletOriginator = (
+	originator: string,
+	walletHost: string,
+): boolean =>
+	originator === parseBrowserOrigin(`https://${walletHost}`)?.originator;
 
 /** Conservative structured-clone size guard; stops once the limit is crossed. */
 export const isWithinCWIPayloadLimit = (

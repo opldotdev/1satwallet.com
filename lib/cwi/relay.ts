@@ -5,7 +5,7 @@ import type {
 	PermissionRequest,
 	WalletPermissionsManager,
 } from "@bsv/wallet-toolbox-client";
-import { reportDiagnostic } from "../runtime-diagnostics";
+import { clipForLog, reportDiagnostic } from "../runtime-diagnostics";
 import {
 	CWI_CHANNEL_NAME,
 	CWI_MAX_PENDING_GLOBAL,
@@ -26,6 +26,7 @@ import {
 	isCWIStandardMethod,
 	isSessionBaseMessage,
 	isSessionEnvelope,
+	isWalletOriginator,
 	isWithinCWIPayloadLimit,
 	parseBrowserOrigin,
 	toCWIErrorFields,
@@ -34,6 +35,8 @@ import {
 export interface CWIRelayConfig {
 	getWallet: () => WalletPermissionsManager | null;
 	getStatus: () => "locked" | "unlocked" | "no-wallet";
+	/** The wallet's own host (`window.location.host`); never an app. */
+	walletHost: string;
 }
 
 interface RelaySession {
@@ -136,6 +139,7 @@ export class CWIRelay {
 	private handler: ((event: MessageEvent) => void) | null = null;
 	private readonly getWallet: () => WalletPermissionsManager | null;
 	private readonly getStatus: () => "locked" | "unlocked" | "no-wallet";
+	private readonly walletHost: string;
 	private readonly relayId = crypto.randomUUID();
 	private readonly sessions = new Map<string, RelaySession>();
 	private readonly pendingDecisions = new Map<string, PendingDecision>();
@@ -153,6 +157,7 @@ export class CWIRelay {
 	constructor(config: CWIRelayConfig) {
 		this.getWallet = config.getWallet;
 		this.getStatus = config.getStatus;
+		this.walletHost = config.walletHost;
 		if (typeof BroadcastChannel !== "undefined") {
 			this.channel = new BroadcastChannel(CWI_CHANNEL_NAME);
 		}
@@ -405,6 +410,20 @@ export class CWIRelay {
 			message.sessionToken.length < 32
 		)
 			return;
+		if (isWalletOriginator(identity.originator, this.walletHost)) {
+			const event = reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "cwi.relay.session-open",
+				recoverable: false,
+				context: { provider: "cwi-relay" },
+			});
+			console.error("[cwi] refused a session from the wallet's own site", {
+				correlationId: event.correlationId,
+				browserOrigin: clipForLog(message.browserOrigin),
+			});
+			return;
+		}
 		const existing = this.sessions.get(message.sessionId);
 		if (existing && !this.sameSession(existing, message)) return;
 		const session = existing ?? {

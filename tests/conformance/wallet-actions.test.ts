@@ -139,6 +139,7 @@ const relayInvoke = async (
 	const relay = new CWIRelay({
 		getWallet: () => wallet as unknown as WalletPermissionsManager,
 		getStatus: () => "unlocked",
+		walletHost: "1satwallet.com",
 	});
 	relay.start();
 	const channel = FakeBroadcastChannel.current;

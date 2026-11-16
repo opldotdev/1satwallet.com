@@ -22,7 +22,7 @@ import {
 	endpointsOf,
 	isOneColorAvailable,
 } from "@/lib/chain-endpoints";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { type ColorOverlay, createColorOverlayProvider } from "./color-overlay";
 import { withOriginator } from "./with-originator";
 
@@ -84,7 +84,10 @@ export function adminOnlyColorModule(
 		console.error("[wallet] refused a 1Color request from an app", {
 			correlationId: event.correlationId,
 			method: req.method,
-			originator: req.originator,
+			originator:
+				typeof req.originator === "string"
+					? clipForLog(req.originator)
+					: typeof req.originator,
 		});
 		throw new ColorUnavailableToAppsError(req.method);
 	};

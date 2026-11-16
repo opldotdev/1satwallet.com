@@ -33,6 +33,7 @@ function createRelay() {
 	return new CWIRelay({
 		getWallet: () => null,
 		getStatus: () => "unlocked",
+		walletHost: "1satwallet.com",
 	});
 }
 

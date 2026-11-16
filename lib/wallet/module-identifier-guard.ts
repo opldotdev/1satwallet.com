@@ -1,5 +1,6 @@
+import { type ListActionsArgs, Validation } from "@bsv/sdk";
 import { isCWIStandardMethod } from "@/lib/cwi/types";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 
 /**
  * The permissions manager (wallet-toolbox-client 2.16.0) checks reserved
@@ -14,9 +15,6 @@ import { reportDiagnostic } from "@/lib/runtime-diagnostics";
  */
 const RESERVED_PREFIXES = ["p ", "admin"] as const;
 
-/** How much of an offending value goes into errors and logs. */
-const SHOWN_LENGTH = 64;
-
 export type RefusalReason =
 	/** Becomes a reserved `p ` or `admin` name only once normalized. */
 	| "misrouted"
@@ -26,7 +24,7 @@ export type RefusalReason =
 	| "not-a-string"
 	/** Labels, tags, outputs or protocolID that is not a plain array. */
 	| "not-an-array"
-	/** An output or remittance that is not an object. */
+	/** Args, an output or a remittance that is not a plain object. */
 	| "not-an-object"
 	/** Key linkage for a reserved `p ` or `admin` protocol (apps only). */
 	| "reserved-linkage";
@@ -80,8 +78,7 @@ export class MisroutedModuleIdentifierError extends Error {
 	}
 }
 
-const shown = (value: string): string =>
-	value.length > SHOWN_LENGTH ? `${value.slice(0, SHOWN_LENGTH)}…` : value;
+const shown = (value: string): string => clipForLog(value);
 
 const typeOf = (value: unknown): string => {
 	if (value === null) return "null";
@@ -135,16 +132,30 @@ const wrongShape = (
 ): MisroutedModuleIdentifier => ({ field, value: typeOf(value), reason });
 
 /**
+ * Plain call args: an object whose prototype is `Object.prototype` or null.
+ * Structured clone keeps own properties on an array (`Object.assign([], …)`),
+ * and the manager reads them as args, so arrays and other objects are refused.
+ */
+const plainArgs = (value: unknown): Record<string, unknown> | null => {
+	const args = record(value);
+	if (!args) return null;
+	const proto = Object.getPrototypeOf(args);
+	return proto === Object.prototype || proto === null ? args : null;
+};
+
+/**
  * Walk every basket, tag, label, output basket, `insertionRemittance` basket
- * and tag, and `protocolID[1]` in BRC-100 call args. A slot that is present
- * but has the wrong shape is refused; each string is passed to `check`.
+ * and tag, and `protocolID[1]` in BRC-100 call args. Args that are present
+ * but not a plain object, and any slot that is present but has the wrong
+ * shape, are refused; each string is passed to `check`.
  */
 function walkNames(
 	args: unknown,
 	check: CheckName,
 ): MisroutedModuleIdentifier | null {
-	const top = record(args);
-	if (!top) return null;
+	if (args === undefined) return null;
+	const top = plainArgs(args);
+	if (!top) return wrongShape("args", args, "not-an-object");
 
 	const name = (field: string, value: unknown) =>
 		typeof value === "string"
@@ -239,55 +250,111 @@ export function findRefusedAppName(
 		: null;
 }
 
-const isPName = (value: unknown): boolean =>
-	typeof value === "string" && normalize(value).startsWith("p ");
+/**
+ * 1Sat module schemes that are the wallet's own (admin only). Their labels,
+ * baskets and outputs never show in an app's listing. Other `p ` schemes
+ * (`p nosend`, `p 1sat …`) are open to apps and stay visible.
+ */
+export const ADMIN_ONLY_SCHEMES = ["color"] as const;
 
-type ListedActions = {
-	totalActions: number;
-	actions: Record<string, unknown>[];
+const isAdminOnlyName = (value: unknown): boolean => {
+	if (typeof value !== "string") return false;
+	const name = normalize(value);
+	return ADMIN_ONLY_SCHEMES.some(
+		(scheme) => name === `p ${scheme}` || name.startsWith(`p ${scheme} `),
+	);
 };
 
+type ListedAction = Record<string, unknown>;
+type ListedActions = { totalActions: number; actions: ListedAction[] };
+type ListActions = (
+	args: Record<string, unknown>,
+	originator: unknown,
+) => Promise<ListedActions>;
+
+const isHiddenAction = (action: ListedAction): boolean =>
+	(Array.isArray(action.labels) ? action.labels : []).some(isAdminOnlyName);
+
+/** Page size of the label-only scan, and the most actions it will read. */
+export const LIST_SCAN_PAGE = 1000;
+export const LIST_SCAN_MAX = 10_000;
+
 /**
- * An app's `listActions` result without 1Sat module data: actions that carry
- * any `p ` label are dropped, and outputs in a `p ` basket are stripped from
- * the rest. Labels are only in the result when asked for, so the call is made
- * with `includeLabels: true` and they are removed again when the app did not
- * ask. `totalActions` is reduced by the actions dropped from this page;
- * hidden actions on other pages still count, so it is an upper bound.
+ * An app's `listActions` result without admin-only module data: actions with
+ * an admin-only label (e.g. `p color …`) are left out, and outputs in an
+ * admin-only basket are stripped from the rest.
+ *
+ * `offset`, `limit` and `totalActions` count visible actions only. A first
+ * scan reads labels alone, in pages of 1000, to find which of the wallet's
+ * actions are visible and how many there are; a second call reads the
+ * requested window in full. The scan stops after 10,000 actions: past that,
+ * unscanned actions count as visible in `totalActions` (an upper bound) and
+ * an offset beyond the scanned visible actions returns no actions.
  */
 export async function listActionsForApp(
-	listActions: (
-		args: Record<string, unknown>,
-		originator: unknown,
-	) => Promise<ListedActions>,
+	listActions: ListActions,
 	args: Record<string, unknown>,
 	originator: unknown,
 ): Promise<ListedActions> {
-	const result = await listActions(
-		{ ...args, includeLabels: true },
+	// The wallet's own checks and defaults (limit 10, offset 0); throws the
+	// wallet's WERR_INVALID_PARAMETER for a bad window.
+	const { limit, offset } = Validation.validateListActionsArgs(
+		args as unknown as ListActionsArgs,
+	);
+	const scanArgs = Object.fromEntries(
+		Object.entries({
+			labels: args.labels,
+			labelQueryMode: args.labelQueryMode,
+			seekPermission: args.seekPermission,
+		}).filter(([, value]) => value !== undefined),
+	);
+	const visible: number[] = [];
+	let scanned = 0;
+	let sourceTotal = 0;
+	while (scanned < LIST_SCAN_MAX) {
+		const page = await listActions(
+			{
+				...scanArgs,
+				includeLabels: true,
+				limit: LIST_SCAN_PAGE,
+				offset: scanned,
+			},
+			originator,
+		);
+		sourceTotal = page.totalActions;
+		for (const [index, action] of page.actions.entries())
+			if (!isHiddenAction(action)) visible.push(scanned + index);
+		scanned += page.actions.length;
+		if (page.actions.length < LIST_SCAN_PAGE || scanned >= sourceTotal) break;
+	}
+	const totalActions = visible.length + Math.max(0, sourceTotal - scanned);
+	const window = visible.slice(offset, offset + limit);
+	if (window.length === 0) return { totalActions, actions: [] };
+
+	const first = window[0];
+	const full = await listActions(
+		{
+			...args,
+			includeLabels: true,
+			offset: first,
+			limit: window[window.length - 1] - first + 1,
+		},
 		originator,
 	);
-	const kept = result.actions.filter(
-		(action) =>
-			!(Array.isArray(action.labels) ? action.labels : []).some(isPName),
-	);
-	const actions = kept.map((action) => {
-		const next = { ...action };
-		if (Array.isArray(action.outputs))
-			next.outputs = action.outputs.filter(
-				(output) => !isPName(record(output)?.basket),
-			);
-		if (args.includeLabels !== true) delete next.labels;
-		return next;
-	});
-	return {
-		...result,
-		totalActions: Math.max(
-			0,
-			result.totalActions - (result.actions.length - kept.length),
-		),
-		actions,
-	};
+	const actions = window
+		.map((position) => full.actions[position - first])
+		// The wallet may have changed between the two calls.
+		.filter((action) => action !== undefined && !isHiddenAction(action))
+		.map((action) => {
+			const next = { ...action };
+			if (Array.isArray(action.outputs))
+				next.outputs = action.outputs.filter(
+					(output) => !isAdminOnlyName(record(output)?.basket),
+				);
+			if (args.includeLabels !== true) delete next.labels;
+			return next;
+		});
+	return { totalActions, actions };
 }
 
 /**
@@ -315,11 +382,11 @@ export function guardModuleIdentifiers<T extends object>(
 					? findRefusedAppName(method, args[0])
 					: findMisroutedModuleIdentifier(args[0]);
 				if (!refused) {
-					const listArgs = record(args[0]);
-					if (isApp && method === "listActions" && listArgs)
+					const listArgs = plainArgs(args[0]);
+					if (isApp && method === "listActions")
 						return listActionsForApp(
 							(next, originator) => value.call(target, next, originator),
-							listArgs,
+							listArgs ?? {},
 							args[1],
 						);
 					return value.apply(target, args);
