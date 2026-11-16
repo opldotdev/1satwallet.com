@@ -30,9 +30,14 @@ export interface IncomingPaymentsState {
 	unreachableHosts: string[];
 }
 
+/** A record as a sync run saw it: null `createdAt` when the server gave none. */
+export type IncomingPaymentUpdate = Omit<IncomingPaymentRecord, "createdAt"> & {
+	createdAt: string | null;
+};
+
 /** What one sync run saw, for `saveInboxSync`. */
 export interface InboxSyncOutcome {
-	updates: IncomingPaymentRecord[];
+	updates: IncomingPaymentUpdate[];
 	/** Hosts listed successfully, and every payment key listed on them. */
 	listedHosts: string[];
 	listedKeys: ReadonlySet<string>;
@@ -130,8 +135,16 @@ export function saveInboxSync(scope: Scope, outcome: InboxSyncOutcome): void {
 		if (!stale) byKey.set(record.key, record);
 	}
 	for (const update of outcome.updates) {
-		if (byKey.get(update.key)?.status === "received") continue;
-		byKey.set(update.key, update);
+		const existing = byKey.get(update.key);
+		if (existing?.status === "received") continue;
+		byKey.set(update.key, {
+			...update,
+			// With no server time, keep the time the payment was first seen.
+			createdAt:
+				update.createdAt ??
+				existing?.createdAt ??
+				new Date(update.updatedAt).toISOString(),
+		});
 	}
 	const state: IncomingPaymentsState = {
 		records: [...byKey.values()]

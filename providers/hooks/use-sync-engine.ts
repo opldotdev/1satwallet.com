@@ -11,6 +11,7 @@ import type { WalletInterface } from "@bsv/sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { RECEIVE_ADDRESS_PREFIX } from "@/lib/receive-address-manager";
+import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	combineInboxResults,
 	paymailSyncFailed,
@@ -123,7 +124,14 @@ export function createSyncCoordinator(
 									? `${result.failed} item${result.failed === 1 ? "" : "s"} failed`
 									: null,
 						});
-					} catch {
+					} catch (error) {
+						reportDiagnostic({
+							category: "provider",
+							code: "provider.failed",
+							operation: `wallet.sync.${name}`,
+							recoverable: true,
+						});
+						console.error(`[sync] ${name} task threw`, error);
 						if (runGeneration !== generation) return false;
 						update(name, {
 							status: "failed",
