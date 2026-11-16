@@ -35,7 +35,15 @@ describe("testnet surfaces", () => {
 		);
 		assert.deepEqual(
 			walletTabsFor("test").map((tab) => tab.value),
-			["overview", "ordinals", "identity", "certificates", "bsv21", "history"],
+			[
+				"overview",
+				"ordinals",
+				"identity",
+				"certificates",
+				"bsv21",
+				"1color",
+				"history",
+			],
 		);
 	});
 

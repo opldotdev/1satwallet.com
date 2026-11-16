@@ -1,0 +1,172 @@
+"use client";
+
+import { Coins, KeyRound, Loader2 } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import type { ReactNode } from "react";
+import { useOneColorBalances } from "@/hooks/use-one-color-balances";
+import { isOneColorAvailable } from "@/lib/chain-endpoints";
+import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
+import { type OneColorBalance, oneColorTicker } from "@/lib/wallet/one-color";
+import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+
+function OneColorCard({ token }: { token: OneColorBalance }) {
+	const ticker = oneColorTicker(token);
+	return (
+		<div className="flex items-center gap-4 rounded-lg border border-border bg-card p-4">
+			<div className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted">
+				{token.icon ? (
+					<Image
+						src={token.icon}
+						alt=""
+						fill
+						sizes="48px"
+						className="object-cover"
+						unoptimized
+					/>
+				) : (
+					<Coins className="size-6 text-muted-foreground" />
+				)}
+			</div>
+			<div className="min-w-0 flex-1">
+				<div className="flex flex-wrap items-center gap-2">
+					<span className="font-semibold text-foreground">{ticker}</span>
+					<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs uppercase">
+						1Color
+					</span>
+					{token.authorities > 0 ? (
+						<span
+							className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-primary text-xs"
+							title={`${token.authorities} authority output${token.authorities === 1 ? "" : "s"}: this wallet can mint`}
+						>
+							<KeyRound className="size-3" />
+							Authority
+						</span>
+					) : null}
+				</div>
+				<div className="truncate text-muted-foreground text-sm">
+					{formatBsv21Amount(token.available, token.dec)} available
+					{token.pending > 0n
+						? ` · ${formatBsv21Amount(token.pending, token.dec)} pending`
+						: ""}
+				</div>
+			</div>
+			<div
+				className="hidden max-w-24 truncate font-mono text-muted-foreground text-xs sm:block"
+				title={token.assetId}
+			>
+				{token.assetId.slice(0, 8)}…
+			</div>
+		</div>
+	);
+}
+
+function Notice({ children }: { children: ReactNode }) {
+	return (
+		<div
+			className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground"
+			role="status"
+		>
+			<Coins className="mb-4 size-12 opacity-50" />
+			{children}
+		</div>
+	);
+}
+
+/** 1Color (BRC-162) tokens held by the wallet. Read-only. */
+export default function OneColorGrid() {
+	const { chain, connectionMode, isInitialized, isInitializing } =
+		useWalletToolbox();
+	const query = useOneColorBalances();
+
+	if (!isOneColorAvailable(chain)) {
+		return (
+			<Notice>
+				<p>
+					1Color tokens are on testnet only. Switch the network in{" "}
+					<Link className="underline" href="/wallet/settings">
+						Wallet settings
+					</Link>{" "}
+					to see them.
+				</p>
+			</Notice>
+		);
+	}
+
+	if (isInitializing) {
+		return (
+			<div className="flex items-center justify-center py-12">
+				<Loader2 className="size-8 animate-spin text-muted-foreground" />
+				<span className="ml-3 text-muted-foreground">Loading wallet…</span>
+			</div>
+		);
+	}
+
+	if (!isInitialized) {
+		return (
+			<Notice>
+				<p>Please unlock or connect a wallet to view your 1Color tokens.</p>
+			</Notice>
+		);
+	}
+
+	if (connectionMode === "external") {
+		return (
+			<Notice>
+				<p>
+					{describeAssetSurface(
+						{ kind: "unsupported", capability: "provider-managed" },
+						"token",
+					)}
+				</p>
+			</Notice>
+		);
+	}
+
+	if (query.isPending) {
+		return (
+			<div className="flex items-center justify-center py-12">
+				<Loader2 className="size-8 animate-spin text-muted-foreground" />
+				<span className="ml-3 text-muted-foreground">
+					Loading 1Color tokens…
+				</span>
+			</div>
+		);
+	}
+
+	if (query.isError) {
+		return (
+			<Notice>
+				<p>
+					{describeAssetSurface(
+						{ kind: "error", message: query.error.message },
+						"token",
+					)}
+				</p>
+			</Notice>
+		);
+	}
+
+	const tokens = query.data;
+	if (tokens.length === 0) {
+		return (
+			<Notice>
+				<p>No 1Color tokens found in your wallet.</p>
+			</Notice>
+		);
+	}
+
+	return (
+		<div className="space-y-4">
+			<h2 className="text-lg font-medium">
+				{tokens.length} 1Color token{tokens.length === 1 ? "" : "s"}
+			</h2>
+			<div className="space-y-2">
+				{tokens.map((token) => (
+					<OneColorCard key={token.assetId} token={token} />
+				))}
+			</div>
+		</div>
+	);
+}
