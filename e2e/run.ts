@@ -19,7 +19,7 @@ const SUITES = {
 		["./e2e/preflight.e2e.ts"],
 		["./e2e/locks.e2e.ts", "./e2e/profile.e2e.ts"],
 	],
-	mainnet: [["./e2e/mainnet.e2e.ts"]],
+	mainnet: [["./e2e/mainnet.e2e.ts", "./e2e/create-wallet.e2e.ts"]],
 } as const;
 
 type Suite = keyof typeof SUITES;

@@ -9,6 +9,7 @@ const ROLES = {
 	button: 'button,[role="button"]',
 	dialog: '[role="dialog"],[role="alertdialog"]',
 	img: 'img,[role="img"]',
+	link: 'a[href],[role="link"]',
 	listitem: 'li,[role="listitem"]',
 	region: 'section[aria-label],section[aria-labelledby],[role="region"]',
 	tab: '[role="tab"]',
