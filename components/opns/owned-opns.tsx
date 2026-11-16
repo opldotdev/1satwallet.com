@@ -90,28 +90,34 @@ export function OwnedOpns() {
 		queryKey: ["opns-names", identityKey, offset],
 		queryFn: async () => {
 			if (!oneSatContext) return { outputs: [], totalOutputs: 0 };
-			try {
-				return await listOpns.execute(oneSatContext, {
-					limit: PAGE_SIZE,
-					offset,
-					includeTags: true,
-					includeCustomInstructions: true,
-				});
-			} catch (error) {
-				reportDiagnostic({
-					category: "action",
-					code: "action.failed",
-					operation: "wallet.opns.list",
-					recoverable: true,
-					context: { retryable: true },
-				});
-				console.error("[opns] listOpns failed", { offset, error });
-				throw error;
-			}
+			return listOpns.execute(oneSatContext, {
+				limit: PAGE_SIZE,
+				offset,
+				includeTags: true,
+				includeCustomInstructions: true,
+			});
 		},
 		enabled: isInitialized && !!oneSatContext,
 		staleTime: 15_000,
 	});
+
+	// Logged once per failed load, after react-query's retries, not per try.
+	const { error: namesError, errorUpdatedAt } = namesQuery;
+	useEffect(() => {
+		if (!namesError) return;
+		reportDiagnostic({
+			category: "action",
+			code: "action.failed",
+			operation: "wallet.opns.list",
+			recoverable: true,
+			context: { retryable: true },
+		});
+		console.error("[opns] listOpns failed", {
+			offset,
+			at: errorUpdatedAt,
+			error: namesError,
+		});
+	}, [namesError, errorUpdatedAt, offset]);
 
 	const refresh = useCallback(async () => {
 		refreshBalance();
@@ -223,12 +229,24 @@ export function OwnedOpns() {
 											{ownedOpnsName(output)}
 										</span>
 										{(listed || published) && (
-											<Badge
-												variant={listed ? "secondary" : "outline"}
-												className="shrink-0 rounded-full px-2 font-medium"
-											>
-												{listed ? "Listed" : "Published"}
-											</Badge>
+											<div className="flex shrink-0 gap-1">
+												{published && (
+													<Badge
+														variant="outline"
+														className="rounded-full px-2 font-medium"
+													>
+														Published
+													</Badge>
+												)}
+												{listed && (
+													<Badge
+														variant="secondary"
+														className="rounded-full px-2 font-medium"
+													>
+														Listed
+													</Badge>
+												)}
+											</div>
 										)}
 									</div>
 									<span

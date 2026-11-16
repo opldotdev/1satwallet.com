@@ -14,7 +14,6 @@ import {
 	isPendingAction,
 	listActionHistoryPage,
 	orderActionsNewestFirst,
-	ordinaryActionLabels,
 } from "../lib/wallet/action-history";
 
 const action = {
@@ -202,9 +201,8 @@ describe("action history", () => {
 		assert.equal(actionHistoryForIdentity(previous, "previous"), previous);
 	});
 
-	test("separates the valid BRC-153 reference from ordinary labels", () => {
+	test("finds only a valid BRC-153 reference among the labels", () => {
 		assert.equal(actionReferenceLabel(action), "reference 010203");
-		assert.deepEqual(ordinaryActionLabels(action), ["payment", "personal"]);
 		assert.equal(
 			actionReferenceLabel({
 				...action,
@@ -212,9 +210,9 @@ describe("action history", () => {
 			}),
 			undefined,
 		);
-		assert.deepEqual(
-			ordinaryActionLabels({ ...action, labels: ["reference invalid"] }),
-			[],
+		assert.equal(
+			actionReferenceLabel({ ...action, labels: undefined }),
+			undefined,
 		);
 	});
 

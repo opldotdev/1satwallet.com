@@ -59,6 +59,7 @@ export function OrdinalsGrid() {
 	const [selectedArtifact, setSelectedArtifact] =
 		useState<ArtifactModalItem | null>(null);
 	const identityScopeRef = useRef(identityKey);
+	const gridRef = useRef<HTMLElement>(null);
 	const { metadataRequests, metadataQuery } = useOrdinalMetadata(
 		ordinals,
 		identityKey,
@@ -102,7 +103,11 @@ export function OrdinalsGrid() {
 		});
 	}, []);
 
-	const clearSelection = useCallback(() => setSelectedOutpoints(new Set()), []);
+	// The Clear button leaves with the bar, so focus goes back to the grid.
+	const clearSelection = useCallback(() => {
+		setSelectedOutpoints(new Set());
+		gridRef.current?.focus();
+	}, []);
 
 	const refresh = useCallback(async () => {
 		refreshBalance();
@@ -213,9 +218,12 @@ export function OrdinalsGrid() {
 					description="Inscriptions this wallet owns show up here."
 				/>
 			) : (
-				<div
+				<section
+					ref={gridRef}
+					aria-label="Your ordinals"
+					tabIndex={-1}
 					data-slot="ordinals-grid"
-					className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+					className="grid outline-none grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
 				>
 					{ordinals.map((ordinal: WalletOutput) => {
 						const outpoint = getDisplayOutpoint(ordinal);
@@ -310,18 +318,26 @@ export function OrdinalsGrid() {
 							</div>
 						);
 					})}
-				</div>
+				</section>
 			)}
 
 			{selectedOutpoints.size > 0 && (
-				// Shown only while something is selected. On phones it spans the
-				// screen edge to edge (out through the page gutter) and sits on
-				// the bottom of the screen, clear of the home indicator; from md
-				// it floats as a card over the bottom of the grid.
+				// Room under the grid so the fixed bar never covers the last row.
+				<div
+					aria-hidden="true"
+					className="h-[calc(--spacing(16)+env(safe-area-inset-bottom))] md:hidden"
+				/>
+			)}
+
+			{selectedOutpoints.size > 0 && (
+				// Shown only while something is selected. On phones it is fixed to
+				// the bottom of the screen, edge to edge and clear of the home
+				// indicator, however short the grid; from md it floats as a card
+				// over the bottom of the grid.
 				<section
 					aria-label="Selected ordinals"
 					data-slot="selection-bar"
-					className="sticky bottom-0 z-20 -mx-(--page-x) flex flex-col gap-2 border-t bg-background/95 px-(--page-x) pt-3 pb-[max(--spacing(3),env(safe-area-inset-bottom))] backdrop-blur supports-backdrop-filter:bg-background/80 md:bottom-4 md:mx-0 md:rounded-xl md:border md:px-4 md:pb-3 md:shadow-lg"
+					className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t bg-background/95 pt-3 pr-[max(var(--page-x),env(safe-area-inset-right))] pb-[max(--spacing(3),env(safe-area-inset-bottom))] pl-[max(var(--page-x),env(safe-area-inset-left))] backdrop-blur supports-backdrop-filter:bg-background/80 md:sticky md:inset-x-auto md:bottom-4 md:rounded-xl md:border md:px-(--page-x) md:pb-3 md:shadow-lg"
 				>
 					<div className="flex items-center gap-2">
 						<Button
@@ -333,7 +349,10 @@ export function OrdinalsGrid() {
 						>
 							<X />
 						</Button>
-						<span className="flex-1 text-sm font-medium tabular-nums">
+						<span
+							aria-live="polite"
+							className="flex-1 text-sm font-medium tabular-nums"
+						>
 							{selectedOutpoints.size} selected
 						</span>
 						{onlyUnlisted && (

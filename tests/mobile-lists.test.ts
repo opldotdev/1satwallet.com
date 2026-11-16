@@ -44,6 +44,21 @@ describe("wallet lists on phones", () => {
 		assert.doesNotMatch(grid, /LISTING_CREATE_OFF_MESSAGE/);
 		// A 44px tap target around the selection checkbox.
 		assert.match(grid, /<label className="[^"]*\bsize-11\b/);
+		// Fixed to the screen bottom on phones, a floating card from md, with
+		// the page gutter at every width.
+		assert.match(
+			grid,
+			/"fixed inset-x-0 bottom-0 [^"]*md:sticky[^"]*md:px-\(--page-x\)/,
+		);
+		assert.doesNotMatch(grid, /md:px-4/);
+		assert.match(grid, /aria-live="polite"/);
+		assert.match(grid, /gridRef\.current\?\.focus\(\)/);
+	});
+
+	it("show the whole outpoint in the review before a send or burn", () => {
+		const dialog = read("components/wallet/ordinal-action-dialog.tsx");
+		assert.doesNotMatch(dialog, /shortOutpoint/);
+		assert.match(dialog, /burn: "Permanently burn ordinals"/);
 	});
 
 	it("give history rows a short txid and one status badge", () => {

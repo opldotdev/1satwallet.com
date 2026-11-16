@@ -59,7 +59,7 @@ export function IncomingPayments() {
 		<section aria-label="Incoming payments" className="flex flex-col gap-3">
 			<SectionHeader
 				title="Incoming payments"
-				description="PeerPay payments sent to your identity key. Each sync takes in new ones and retries any that failed."
+				description="PeerPay payments sent to your identity key. Each sync takes in new ones and retries any that failed; one that can't be accepted stays in its MessageBox."
 			/>
 			{unreachableHosts.length > 0 && (
 				<Notice tone="warning">

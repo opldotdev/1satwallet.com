@@ -253,16 +253,13 @@ export function actionStatusLabel(
 	return STATUS_LABELS[action.status];
 }
 
+/** The action's valid BRC-153 reference label, if it has one. */
 export function actionReferenceLabel(action: WalletAction): string | undefined {
 	return action.labels?.find(
 		(label) =>
 			isBrc153ReferenceLabel(label) &&
 			parseBrc153ReferenceLabel(label) !== undefined,
 	);
-}
-
-export function ordinaryActionLabels(action: WalletAction): string[] {
-	return action.labels?.filter((label) => !isBrc153ReferenceLabel(label)) ?? [];
 }
 
 export function actionExplorerUrl(

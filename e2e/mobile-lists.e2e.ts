@@ -196,9 +196,15 @@ walletTest(
 						`${where}: selection bar spans ${bar.left}-${bar.right}px, expected edge to edge (0-${bar.innerWidth}px).`,
 					);
 				}
-				if (bar.top < 0 || bar.bottom > bar.innerHeight + TOLERANCE) {
+				// Fixed to the bottom of the screen, whatever the grid's length.
+				if (!near(bar.bottom, bar.innerHeight)) {
 					problems.add(
-						`${where}: selection bar is at ${bar.top}-${bar.bottom}px, expected it inside the ${bar.innerHeight}px window.`,
+						`${where}: selection bar bottom is ${bar.bottom}px, expected the window bottom (window.innerHeight ${bar.innerHeight}px).`,
+					);
+				}
+				if (bar.top < 0) {
+					problems.add(
+						`${where}: selection bar top is ${bar.top}px, expected it inside the window.`,
 					);
 				}
 				if (bar.buttons.length < 2) {

@@ -26,11 +26,7 @@ import {
 	ordinalAssetId,
 	validateOrdinalDestination,
 } from "@/lib/wallet/ordinal-actions";
-import {
-	getDisplayOutpoint,
-	getName,
-	shortOutpoint,
-} from "@/lib/wallet/wallet-output-utils";
+import { getDisplayOutpoint, getName } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 export type OrdinalActionKind = "send" | "burn" | "sell" | "cancel";
@@ -45,7 +41,7 @@ interface OrdinalActionDialogProps {
 
 const TITLES: Record<OrdinalActionKind, string> = {
 	send: "Send ordinals",
-	burn: "Burn ordinals",
+	burn: "Permanently burn ordinals",
 	sell: "Listing create is off",
 	cancel: "Cancel listing",
 };
@@ -192,18 +188,17 @@ export function OrdinalActionDialog({
 					{ordinals.map((ordinal) => {
 						const outpoint = getDisplayOutpoint(ordinal);
 						return (
+							// The whole outpoint, wrapped: this is the last look before
+							// a send or a burn, and a title tooltip never shows on touch.
 							<li
 								key={ordinal.outpoint}
-								className="flex items-baseline justify-between gap-3 px-3 py-2"
+								className="flex flex-col gap-1 px-3 py-2"
 							>
-								<span className="min-w-0 truncate font-medium">
+								<span className="font-medium wrap-anywhere">
 									{getName(ordinal) ?? "Ordinal"}
 								</span>
-								<span
-									className="shrink-0 font-mono text-xs text-muted-foreground"
-									title={outpoint}
-								>
-									{shortOutpoint(outpoint)}
+								<span className="font-mono text-xs text-muted-foreground wrap-anywhere">
+									{outpoint}
 								</span>
 							</li>
 						);
@@ -262,8 +257,10 @@ export function OrdinalActionDialog({
 
 				{kind === "burn" && (
 					<div className="flex flex-col gap-3">
-						<Notice tone="danger" title="Burning can't be undone">
-							Every ordinal listed above is destroyed.
+						<Notice tone="danger">
+							<p className="font-medium">
+								Burning is permanent. Every ordinal listed above is destroyed.
+							</p>
 						</Notice>
 						<div className="flex flex-col gap-2">
 							<Label htmlFor="ordinal-burn-confirmation">

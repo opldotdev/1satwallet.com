@@ -16,6 +16,7 @@ import {
 	actionBlockTimes,
 	actionExplorerUrl,
 	actionHistoryForIdentity,
+	actionReferenceLabel,
 	actionStatusLabel,
 	actionTimeLabel,
 	listActionHistoryPage,
@@ -207,6 +208,7 @@ const HistoryList = () => {
 									? "Received"
 									: "Transaction");
 						const txid = shortTxid(action.txid);
+						const reference = actionReferenceLabel(action);
 						return (
 							<li
 								key={action.txid}
@@ -214,7 +216,12 @@ const HistoryList = () => {
 								className="flex min-h-14 flex-col justify-center gap-1 py-3"
 							>
 								<div className="flex items-baseline justify-between gap-3">
-									<span className="min-w-0 truncate text-sm font-medium">
+									<span
+										className="min-w-0 truncate text-sm font-medium"
+										title={
+											reference ? `${description}\n${reference}` : description
+										}
+									>
 										{description}
 									</span>
 									<span
@@ -243,7 +250,9 @@ const HistoryList = () => {
 											rel="noreferrer"
 											aria-label={`Transaction ${txid} on WhatsOnChain`}
 											title={action.txid}
-											className="shrink-0 font-mono underline-offset-4 hover:text-primary hover:underline"
+											// 44px to tap on phones; the negative margin keeps the
+											// line as tall as its text.
+											className="inline-flex shrink-0 items-center font-mono underline-offset-4 hover:text-primary hover:underline max-md:-my-3.5 max-md:py-3.5"
 										>
 											{txid}
 										</a>
