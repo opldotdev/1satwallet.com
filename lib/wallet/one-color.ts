@@ -162,7 +162,7 @@ const SCAN_MAX = ONE_COLOR_SCAN_MAX;
  * leaving the loop. `scan.cut` is set when the cap ends the scan with older
  * actions left unread.
  */
-async function* actionsNewestFirst(
+export async function* actionsNewestFirst(
 	wallet: Pick<WalletInterface, "listActions">,
 	include: Omit<ListActionsArgs, "labels" | "limit" | "offset">,
 	scan: { cut: boolean } = { cut: false },

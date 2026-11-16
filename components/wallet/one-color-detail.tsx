@@ -7,10 +7,10 @@ import {
 	ExternalLink,
 	Loader2,
 	RefreshCw,
-	Send,
 	Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { useCallback, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,8 +38,12 @@ import {
 	type OneColorHistoryEntry,
 	oneColorTicker,
 } from "@/lib/wallet/one-color";
+import type { OneColorSendOutcome } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { OneColorReceiveDialog } from "./one-color-receive";
+import { OneColorPendingSends, OneColorSendDialog } from "./one-color-send";
+
+type DeliveredSend = Exclude<OneColorSendOutcome, { kind: "failed" }>;
 
 const DIRECTION_LABEL: Record<OneColorDirection, string> = {
 	received: "Received",
@@ -79,28 +83,32 @@ function useOverlayOrigin(assetId: string) {
 }
 
 /**
- * Receive, Send and Mint. Disabled until their batches land; each becomes a
- * dialog trigger then. Mint is offered only to an authority holder.
+ * Receive, Send and Mint. Mint is offered only to an authority holder and
+ * stays disabled until its batch lands.
  */
-function OneColorActions({ token }: { token: OneColorBalance }) {
+function OneColorActions({
+	token,
+	onSendOutcome,
+}: {
+	token: OneColorBalance;
+	onSendOutcome: (outcome: DeliveredSend) => void;
+}) {
 	return (
 		<div className="space-y-1">
 			<div className="flex flex-wrap gap-2">
 				<OneColorReceiveDialog />
-				<Button size="sm" variant="outline" disabled>
-					<Send className="size-4" data-icon="inline-start" /> Send
-				</Button>
+				<OneColorSendDialog token={token} onOutcome={onSendOutcome} />
 				{token.authorities > 0 ? (
 					<Button size="sm" variant="outline" disabled>
 						<Sparkles className="size-4" data-icon="inline-start" /> Mint
 					</Button>
 				) : null}
 			</div>
-			<p className="text-xs text-muted-foreground">
-				{token.authorities > 0
-					? "Send and Mint aren't available yet."
-					: "Send isn't available yet."}
-			</p>
+			{token.authorities > 0 ? (
+				<p className="text-xs text-muted-foreground">
+					Mint isn't available yet.
+				</p>
+			) : null}
 		</div>
 	);
 }
@@ -247,6 +255,16 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const [, copy] = useCopyWithSound();
 	const { state, retry } = useOneColorToken(assetId);
 	const overlay = useOverlayOrigin(assetId);
+	const [lastSend, setLastSend] = useState<DeliveredSend | null>(null);
+	const [undelivered, setUndelivered] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
+	const onSendOutcome = useCallback((outcome: DeliveredSend) => {
+		setLastSend(outcome);
+		if (outcome.kind === "undelivered") {
+			setUndelivered((previous) => new Set([...previous, outcome.txid]));
+		}
+	}, []);
 
 	if (state.kind === "loading")
 		return <OneColorLoading label="Loading 1Color token…" />;
@@ -311,7 +329,15 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 							<Copy />
 						</Button>
 					</div>
-					<OneColorActions token={token} />
+					<OneColorActions token={token} onSendOutcome={onSendOutcome} />
+					{lastSend ? (
+						<p
+							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}
+							role={lastSend.kind === "sent" ? "status" : "alert"}
+						>
+							{lastSend.message}
+						</p>
+					) : null}
 				</div>
 			</header>
 			<dl className="grid gap-4 rounded-md border p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -343,6 +369,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 					<dd className="mt-1 break-all font-mono text-sm">{overlayText}</dd>
 				</div>
 			</dl>
+			<OneColorPendingSends token={token} undelivered={undelivered} />
 			<section aria-labelledby="one-color-history" className="space-y-3">
 				<div className="flex items-center justify-between gap-3">
 					<h2 id="one-color-history" className="text-lg font-medium">
