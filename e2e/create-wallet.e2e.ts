@@ -96,17 +96,36 @@ e2eTest(
 			() => location.pathname === "/wallet/create/encrypt",
 			null,
 		);
-		// A new account is mainnet unless the visitor picks Testnet.
-		await browser.waitUntil("the network choice", {
-			role: "any",
-			text: containing("Network. This cannot be changed later."),
-		});
-		const mainnet = await browser.query({ role: "button", name: "Mainnet" }, [
-			"aria-pressed",
-		]);
-		if (mainnet.attributes["aria-pressed"] !== "true") {
-			throw new Error("The create flow does not default to Mainnet.");
+		// Mainnet needs no answer: Testnet sits behind collapsed "Developer
+		// options". Open it, switch Testnet on and back off, and leave it on
+		// Mainnet.
+		const options: Locator = { role: "button", name: "Developer options" };
+		const testnet: Locator = {
+			role: "switch",
+			name: "Use testnet",
+			attributes: ["aria-checked"],
+		};
+		const collapsed = await browser.query(options, ["aria-expanded"]);
+		if (collapsed.attributes["aria-expanded"] !== "false") {
+			throw new Error("Developer options are open on a new wallet.");
 		}
+		if ((await browser.query(testnet)).count !== 0) {
+			throw new Error("The Use testnet switch shows before Developer options.");
+		}
+		await browser.click(options);
+		const switchedTo = (checked: "true" | "false") =>
+			browser.waitUntil(
+				`Use testnet to be ${checked === "true" ? "on" : "off"}`,
+				testnet,
+				(result, expected) =>
+					result.count > 0 && result.attributes["aria-checked"] === expected,
+				checked,
+			);
+		await switchedTo("false");
+		await browser.click(testnet);
+		await switchedTo("true");
+		await browser.click(testnet);
+		await switchedTo("false");
 
 		await browser.fill({ role: "textbox", name: "Password" }, PASSWORD);
 		await browser.fill(

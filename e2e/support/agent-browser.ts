@@ -249,7 +249,7 @@ export class Browser {
 	query(locator: Locator, attributes?: string[]): Promise<QueryResult> {
 		return this.evaluate(pageQuery, {
 			locator: toPageLocator(locator),
-			attributes,
+			attributes: [...(locator.attributes ?? []), ...(attributes ?? [])],
 		});
 	}
 
@@ -266,7 +266,10 @@ export class Browser {
 		timeout = ACTION_TIMEOUT,
 	) {
 		// Composed here, not with eval in the page: the app's CSP may forbid it.
-		const args: QueryArgs = { locator: toPageLocator(locator) };
+		const args: QueryArgs = {
+			locator: toPageLocator(locator),
+			attributes: locator.attributes,
+		};
 		await this.waitForExpression(
 			description,
 			`(${check.toString()})((${pageQuery.toString()})(${JSON.stringify(args)}), ${JSON.stringify(extra ?? null)})`,

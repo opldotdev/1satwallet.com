@@ -12,6 +12,7 @@ const ROLES = {
 	link: 'a[href],[role="link"]',
 	listitem: 'li,[role="listitem"]',
 	region: 'section[aria-label],section[aria-labelledby],[role="region"]',
+	switch: '[role="switch"]',
 	tab: '[role="tab"]',
 	textbox: 'input:not([type="checkbox"]):not([type="radio"]),textarea',
 	any: "*",
@@ -48,6 +49,8 @@ export interface Locator {
 	within?: Locator;
 	/** Of several matches, this one (default 0). */
 	index?: number;
+	/** Attributes of the match to read into the result. */
+	attributes?: string[];
 }
 
 export interface PageLocator {
