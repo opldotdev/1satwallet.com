@@ -120,7 +120,7 @@ export function LandingHero() {
 				<PopoverTrigger asChild>
 					<Button
 						aria-label="How the P2P trading floor works"
-						className="fixed bottom-4 left-4 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
+						className="fixed bottom-[max(--spacing(4),env(safe-area-inset-bottom))] left-4 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
 						size="icon"
 						type="button"
 						variant="outline"

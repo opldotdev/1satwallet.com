@@ -41,8 +41,7 @@ import {
 } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
-/** Scrolls inside the viewport on short screens; footer buttons full width on phones. */
-export const SHEET_CLASS = "max-h-[calc(100dvh-2rem)] overflow-y-auto";
+/** Footer buttons full width on phones. */
 export const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
 
 const DELIVERY_NOTE =
@@ -212,7 +211,7 @@ export function OneColorSendDialog({
 					<Send className="size-4" data-icon="inline-start" /> Send
 				</Button>
 			</DialogTrigger>
-			<DialogContent className={SHEET_CLASS} showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>Send {ticker}</DialogTitle>
 					<DialogDescription>
@@ -391,7 +390,7 @@ function CancelSendDialog({
 					Cancel
 				</Button>
 			</DialogTrigger>
-			<DialogContent className={SHEET_CLASS} showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>Cancel this send?</DialogTitle>
 					<DialogDescription>

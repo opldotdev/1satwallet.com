@@ -13,7 +13,8 @@ export const RECEIVE_ADDRESS_PREFIX = "1sat";
 export const RECEIVE_ADDRESS_WINDOW = 5;
 
 interface DeriveAddressArgs {
-	wallet: WalletInterface;
+	/** Only key derivation is needed, so a ProtoWallet over the root key works. */
+	wallet: Pick<WalletInterface, "getPublicKey">;
 	/** The address format: 1… on main, m/n… on test. */
 	chain: Chain;
 	identityKey: string;
@@ -76,7 +77,7 @@ function toBase64Suffix(index: number): string {
 }
 
 async function callGetPublicKey(
-	wallet: WalletInterface,
+	wallet: Pick<WalletInterface, "getPublicKey">,
 	args: {
 		protocolID: typeof BRC29_PROTOCOL_ID;
 		keyID: string;

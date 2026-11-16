@@ -30,7 +30,6 @@ import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import {
 	FOOTER_BUTTON_CLASS,
 	logOneColorFailure,
-	SHEET_CLASS,
 	useRefreshAfterWrite,
 } from "./one-color-send";
 
@@ -176,7 +175,7 @@ export function OneColorMintDialog({
 					<Sparkles className="size-4" data-icon="inline-start" /> Mint
 				</Button>
 			</DialogTrigger>
-			<DialogContent className={SHEET_CLASS} showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>Mint {ticker}</DialogTitle>
 					<DialogDescription>

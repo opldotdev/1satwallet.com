@@ -218,10 +218,7 @@ export function OneColorDeploy() {
 							Deploy token
 						</Button>
 					</DialogTrigger>
-					<DialogContent
-						className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
-						showCloseButton={!busy}
-					>
+					<DialogContent showCloseButton={!busy}>
 						<DialogHeader>
 							<DialogTitle>Deploy 1Color token</DialogTitle>
 							<DialogDescription>

@@ -78,7 +78,13 @@ const ArtifactModal = ({ artifact, onClose }: ArtifactModalProps) => {
 
 	return (
 		<SoundDialog open={!!artifact} onOpenChange={(open) => !open && onClose()}>
-			<DialogContent className="max-w-[90vw] w-full h-[96vh] p-0 gap-0 bg-background border-border overflow-hidden flex flex-col">
+			<DialogContent
+				// Its own header holds the close button. 96dvh tall at every width
+				// (the shared dialog caps lower); the zero spacing keeps the
+				// home-indicator padding on phones.
+				showCloseButton={false}
+				className="max-w-[90vw] w-full h-[96dvh] max-h-[96dvh] max-sm:max-h-[96dvh] [--dialog-spacing:0px] [--dialog-gap:0px] bg-background border-border overflow-hidden flex flex-col"
+			>
 				<div className="sr-only">
 					<DialogTitle>{name || "Artifact Preview"}</DialogTitle>
 				</div>
