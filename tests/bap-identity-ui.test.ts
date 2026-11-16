@@ -68,7 +68,9 @@ describe("bap profile editor", () => {
 		assert.match(bapSource, /field: "banner", label: "Banner"/);
 		assert.match(bapSource, /Pick from my ordinals/);
 		assert.match(bapSource, /<ProfileImagePicker/);
-		assert.match(bapSource, /publicImageUrl\(value\.trim\(\), chain\)/);
+		assert.match(bapSource, /profileEditorPreviewUrl\(value, chain\)/);
+		assert.doesNotMatch(bapSource, /publicImageUrl/);
+		assert.match(bapSource, /validateBapProfile\(draft, baseline\)/);
 	});
 	it("merges edits over a fresh read of the published profile before saving", () => {
 		const save = bapSource.slice(

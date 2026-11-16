@@ -72,18 +72,24 @@ export function profileDraftFromRecord(
 	};
 }
 
+// At most ten index digits, as the iOS Outpoint parser bounds them.
 const ORDINAL_REFERENCE =
-	/^(?:(?:1sat|ord):\/\/)?([a-fA-F0-9]{64})(?:[._](\d+))?$/;
+	/^(?:(?:1sat|ord):\/\/)?([a-fA-F0-9]{64})(?:[._](\d{1,10}))?$/;
+const MAX_OUTPUT_INDEX = 4_294_967_295;
 
 /**
  * The ordinal origin (`txid_vout`) an image reference names: `1sat://txid.vout`
  * (what the iOS app and Yours write), the older `ord://txid_vout`, or a bare
- * outpoint. A reference without an output index names output 0.
+ * outpoint. A reference without an output index names output 0. The index
+ * must fit a UInt32 and is written in canonical decimal (`.007` is `_7`), as
+ * the iOS app's Outpoint parsing does.
  */
 export function imageReferenceOrigin(value: string): string | undefined {
 	const match = ORDINAL_REFERENCE.exec(value.trim());
 	if (!match) return undefined;
-	return `${match[1].toLowerCase()}_${match[2] ?? "0"}`;
+	const index = Number(match[2] ?? "0");
+	if (index > MAX_OUTPUT_INDEX) return undefined;
+	return `${match[1].toLowerCase()}_${index}`;
 }
 
 /** The `1sat://txid.vout` string BAP `image` and `banner` hold for an ordinal. */
@@ -95,18 +101,24 @@ export function ordinalImageReference(origin: string): string | undefined {
 /**
  * The string to publish for a typed or picked image: an https URL stays as
  * typed, an ordinal reference in any accepted form becomes `1sat://txid.vout`.
- * Anything else is not a publishable image.
+ * Anything else, including an https URL carrying a username or password, is
+ * not a publishable image.
  */
 export function storedImageReference(value: string): string | undefined {
 	const trimmed = value.trim();
 	if (!trimmed) return undefined;
 	const ordinal = ordinalImageReference(trimmed);
 	if (ordinal) return ordinal;
+	let url: URL;
 	try {
-		return new URL(trimmed).protocol === "https:" ? trimmed : undefined;
+		url = new URL(trimmed);
 	} catch {
 		return undefined;
 	}
+	if (url.protocol !== "https:" || url.username || url.password) {
+		return undefined;
+	}
+	return trimmed;
 }
 
 export function isSafePublicImageUrl(value: string): boolean {
@@ -120,8 +132,16 @@ export function isSafePublicImageUrl(value: string): boolean {
 	}
 }
 
+/**
+ * Validates the editor's fields. With `baseline` (what the editor opened
+ * with), an image or banner still equal to it raises no error and is left out
+ * of `profile`: `mergeBapProfile` republishes an unedited field verbatim, so
+ * a published value this editor would not write (`http://`, `ipfs://`) must
+ * not block saving the other fields.
+ */
 export function validateBapProfile(
 	draft: BapProfileDraft,
+	baseline?: BapProfileDraft,
 ): ValidatedBapProfile {
 	const errors: ValidatedBapProfile["errors"] = {};
 	const profile: Record<string, string> = { "@type": "Person" };
@@ -129,6 +149,13 @@ export function validateBapProfile(
 	for (const field of Object.keys(FIELD_LIMITS) as (keyof BapProfileDraft)[]) {
 		const value = draft[field].trim();
 		if (!value) continue;
+		if (
+			(field === "image" || field === "banner") &&
+			baseline !== undefined &&
+			value === baseline[field].trim()
+		) {
+			continue;
+		}
 		if (value.length > FIELD_LIMITS[field]) {
 			errors[field] = `Must be ${FIELD_LIMITS[field]} characters or fewer.`;
 			continue;

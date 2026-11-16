@@ -3,6 +3,8 @@ import test from "node:test";
 import {
 	bapDisplayName,
 	buildBapAttestationReview,
+	EMPTY_BAP_PROFILE,
+	hasProfileErrors,
 	identityActionMessage,
 	imageReferenceOrigin,
 	isSafePublicImageUrl,
@@ -345,4 +347,67 @@ test("an edited banner replaces a legacy coverImage; an unedited one keeps it", 
 		}),
 		{ "@type": "Person", banner: `1sat://${TXID}.4` },
 	);
+});
+
+test("an unedited published image or banner the editor would not write does not block saving", () => {
+	const published = {
+		"@type": "Person",
+		name: "Alice",
+		image: "ipfs://bafy/avatar.png",
+		coverImage: "http://example.com/cover.png",
+	};
+	const baseline = profileDraftFromRecord(published);
+	const draft = { ...baseline, name: "Alicia" };
+	const result = validateBapProfile(draft, baseline);
+	assert.deepEqual(result.errors, {});
+	assert.equal(hasProfileErrors(result.errors), false);
+	assert.deepEqual(mergeBapProfile(published, baseline, draft), {
+		...published,
+		name: "Alicia",
+	});
+	// Editing the field makes it the editor's to check again.
+	const edited = validateBapProfile(
+		{ ...draft, banner: "http://example.com/other.png" },
+		baseline,
+	);
+	assert.equal(
+		edited.errors.banner,
+		"Use an https://, ord://, or 1sat:// image URL.",
+	);
+	assert.equal(edited.errors.image, undefined);
+});
+
+test("https image URLs carrying a username or password are not published", () => {
+	for (const rejected of [
+		"https://user@example.com/a.png",
+		"https://user:secret@example.com/a.png",
+		"https://:secret@example.com/a.png",
+	]) {
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+		assert.equal(
+			validateBapProfile({ ...EMPTY_BAP_PROFILE, image: rejected }).errors
+				.image,
+			"Use an https://, ord://, or 1sat:// image URL.",
+		);
+	}
+	const withQuery = "https://example.com/a.png?v=2#crop";
+	assert.equal(storedImageReference(withQuery), withQuery);
+});
+
+test("output indexes are parsed as UInt32 and written in canonical decimal", () => {
+	assert.equal(storedImageReference(`1sat://${TXID}.007`), `1sat://${TXID}.7`);
+	assert.equal(imageReferenceOrigin(`ord://${TXID}_000`), `${TXID}_0`);
+	assert.equal(
+		storedImageReference(`${TXID}.4294967295`),
+		`1sat://${TXID}.4294967295`,
+	);
+	for (const rejected of [
+		`1sat://${TXID}.4294967296`,
+		`1sat://${TXID}.12345678901`,
+		`1sat://${TXID}.${"9".repeat(400)}`,
+	]) {
+		assert.equal(imageReferenceOrigin(rejected), undefined, rejected);
+		assert.equal(storedImageReference(rejected), undefined, rejected);
+		assert.equal(isSafePublicImageUrl(rejected), false, rejected);
+	}
 });

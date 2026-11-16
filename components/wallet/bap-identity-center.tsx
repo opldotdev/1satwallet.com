@@ -55,7 +55,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ProfileImagePicker } from "@/components/wallet/profile-image-picker";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
-import { publicImageUrl } from "@/lib/p2p-public-profile";
+import { profileEditorPreviewUrl } from "@/lib/p2p-public-profile";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	BAP_DISCOVERY_PAGE_SIZE,
@@ -129,7 +129,7 @@ function ProfileImageField({
 }) {
 	const { chain } = useWalletToolbox();
 	const [pickerOpen, setPickerOpen] = useState(false);
-	const previewUrl = error ? undefined : publicImageUrl(value.trim(), chain);
+	const previewUrl = error ? undefined : profileEditorPreviewUrl(value, chain);
 	return (
 		<div className="space-y-2">
 			<Label htmlFor={`bap-${field}`}>{label}</Label>
@@ -220,7 +220,10 @@ function ProfileEditor({
 	const [operation, setOperation] = useState<
 		"profile" | "publish" | "rotate" | null
 	>(null);
-	const validation = useMemo(() => validateBapProfile(draft), [draft]);
+	const validation = useMemo(
+		() => validateBapProfile(draft, baseline),
+		[draft, baseline],
+	);
 	const reviewedRecord = useMemo(
 		() => mergeBapProfile(profile, baseline, draft),
 		[profile, baseline, draft],

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicDisplayName, publicImageUrl } from "@/lib/p2p-public-profile";
+import {
+	profileEditorPreviewUrl,
+	publicDisplayName,
+	publicImageUrl,
+} from "@/lib/p2p-public-profile";
+import { storedImageReference } from "@/lib/wallet/bap-identity";
 
 describe("public profile claims", () => {
 	it("turns inscribed images into https content URLs and drops unsafe names", () => {
@@ -25,5 +30,30 @@ describe("public profile claims", () => {
 		assert.equal(publicDisplayName("Alice\nAdmin"), undefined);
 		assert.equal(publicDisplayName("A".repeat(80)), "A".repeat(64));
 		assert.equal(publicDisplayName("   "), undefined);
+	});
+});
+
+describe("profile editor preview", () => {
+	it("previews exactly what is published", () => {
+		const typed = `https://example.com/me.png?v=2#crop${"x".repeat(600)}`;
+		assert.equal(storedImageReference(typed), typed);
+		assert.equal(profileEditorPreviewUrl(` ${typed} `, "main"), typed);
+		assert.equal(
+			profileEditorPreviewUrl(`1sat://${"ab".repeat(32)}.007`, "test"),
+			`https://testnet.api.1sat.app/content/${"ab".repeat(32)}_7`,
+		);
+		for (const unpublishable of [
+			"http://example.com/me.png",
+			"ipfs://bafy/me.png",
+			"https://user:secret@example.com/me.png",
+			"javascript:alert(1)",
+		]) {
+			assert.equal(storedImageReference(unpublishable), undefined);
+			assert.equal(
+				profileEditorPreviewUrl(unpublishable, "main"),
+				undefined,
+				unpublishable,
+			);
+		}
 	});
 });

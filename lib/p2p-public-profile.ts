@@ -6,6 +6,7 @@ import {
 	imageReferenceOrigin,
 	isSafePublicImageUrl,
 	profileDraftFromRecord,
+	storedImageReference,
 } from "@/lib/wallet/bap-identity";
 import { type PublicProfileClaim, safeHttpsUrl } from "./p2p-presence";
 
@@ -30,6 +31,20 @@ export function publicImageUrl(
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The URL the profile editor previews a BAP `image` or `banner` from: an
+ * ordinal reference shows its ordfs content, an https URL shows exactly what
+ * `storedImageReference` would publish (query, fragment and length intact).
+ */
+export function profileEditorPreviewUrl(
+	value: string,
+	chain: "main" | "test",
+): string | undefined {
+	const origin = imageReferenceOrigin(value);
+	if (origin) return createStackServices(chain).ordfs.getContentUrl(origin);
+	return storedImageReference(value);
 }
 
 export async function publicProfileClaimFromWallet(
