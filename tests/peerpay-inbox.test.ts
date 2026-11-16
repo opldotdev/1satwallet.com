@@ -785,8 +785,12 @@ describe("incoming payment records", () => {
 
 	beforeEach(() => {
 		const store = new Map<string, string>();
-		Object.assign(globalThis, {
-			window: {
+		// defineProperty, not assignment: another test file may leave `window`
+		// defined as read-only (but configurable) on the shared global.
+		Object.defineProperty(globalThis, "window", {
+			configurable: true,
+			writable: true,
+			value: {
 				localStorage: {
 					getItem: (k: string) => store.get(k) ?? null,
 					setItem: (k: string, v: string) => store.set(k, v),
