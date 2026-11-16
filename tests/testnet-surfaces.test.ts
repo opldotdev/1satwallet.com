@@ -35,7 +35,15 @@ describe("testnet surfaces", () => {
 		);
 		assert.deepEqual(
 			walletTabsFor("test").map((tab) => tab.value),
-			["overview", "ordinals", "identity", "certificates", "bsv21", "history"],
+			[
+				"overview",
+				"ordinals",
+				"identity",
+				"certificates",
+				"bsv21",
+				"1color",
+				"history",
+			],
 		);
 	});
 
@@ -135,6 +143,26 @@ describe("testnet surfaces", () => {
 		assert.match(route, /readWalletChain\(\) === "main"/);
 		assert.match(route, /router\.refresh\(\)/);
 		assert.match(route, /subscribeWalletChain\(refreshOnMainnet\)/);
+	});
+
+	it("renders no chain-specific 1Color notice before the client knows the chain", () => {
+		const grid = read("components/wallet/one-color-grid.tsx");
+		assert.match(
+			grid,
+			/useSyncExternalStore\(\s*noSubscription,\s*\(\) => true,\s*\(\) => false,\s*\)/,
+		);
+		const loaderAt = grid.indexOf("if (!mounted) return <Loading");
+		assert.ok(loaderAt > 0);
+		assert.ok(loaderAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
+	});
+
+	it("drops cached 1Color holdings when the wallet identity changes", () => {
+		const provider = read("providers/wallet-toolbox-provider.tsx");
+		const clear = provider.slice(
+			provider.indexOf("const clearIdentityQueries"),
+			provider.indexOf("const resetWalletState"),
+		);
+		assert.match(clear, /removeQueries\(\{ queryKey: \["one-color"\] \}\)/);
 	});
 
 	it("never offers a legacy key address on testnet", () => {
