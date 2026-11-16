@@ -4,7 +4,8 @@ name: E2E
 #
 # visitor: builds this commit, serves it with `next start` and checks it as a
 # new visitor (no wallet, no secrets), up to the password step of creating
-# a wallet. Every PR, forks included, and every push to main.
+# a wallet, and checks the visitor pages' phone layout. Every PR, forks
+# included, and every push to main.
 #
 # testnet: the same local build, with the spending tests run as a throwaway
 # testnet wallet (secrets of the "e2e-testnet" environment). PRs to main
