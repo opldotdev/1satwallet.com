@@ -5,6 +5,7 @@
  * image processing API instead of external services.
  */
 
+import type { Chain } from "./chain-endpoints";
 import { stackContentUrl } from "./stack";
 
 interface ImageOptions {
@@ -51,8 +52,9 @@ export function getImageUrl(
 export function getOrdinalThumbnail(
 	outpoint: string,
 	size: number = 300,
+	chain: Chain = "main",
 ): string {
-	const source = stackContentUrl(outpoint);
+	const source = stackContentUrl(outpoint, chain);
 	return getImageUrl(source, {
 		width: size,
 		height: size,

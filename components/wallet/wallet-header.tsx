@@ -3,7 +3,10 @@
 import { LockKeyhole, LogOut } from "lucide-react";
 import Link from "next/link";
 import { PageHeader, PageTitle } from "@/components/page-layout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { endpointsOf } from "@/lib/chain-endpoints";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import { useWallet } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -17,6 +20,8 @@ export function WalletHeader() {
 		providerType,
 		disconnectExternalWallet,
 	} = useWalletToolbox();
+	const chain = useWalletChain();
+	const { faucet } = endpointsOf(chain);
 	const label = isInitializing
 		? "Connecting…"
 		: connectionStatus === "locked"
@@ -41,6 +46,21 @@ export function WalletHeader() {
 				</p>
 			</div>
 			<div className="flex h-9 items-center gap-3 text-xs md:justify-end">
+				{chain === "test" ? (
+					<span className="flex items-center gap-2">
+						<Badge variant="outline">Testnet</Badge>
+						{faucet ? (
+							<a
+								className="underline"
+								href={faucet}
+								rel="noopener noreferrer"
+								target="_blank"
+							>
+								Get test coins
+							</a>
+						) : null}
+					</span>
+				) : null}
 				<span className="flex min-w-32 items-center gap-2" role="status">
 					<span
 						className={`size-1.5 shrink-0 rounded-full ${isInitialized ? "bg-success" : "bg-muted-foreground"}`}

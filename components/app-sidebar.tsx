@@ -5,6 +5,7 @@ import { Cable, Copy, Import, Loader2, Plus, Wallet } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
 import { useState } from "react";
+import { MainnetOnly } from "@/components/mainnet-only";
 import { NavUser } from "@/components/nav-user";
 import { Button } from "@/components/ui/button";
 import {
@@ -96,6 +97,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 		isInitialized,
 		initError,
 		connectionMode,
+		chain,
 	} = useWalletToolbox();
 
 	const [isPrivacyModeEnabled] = useSettingsStorage<boolean>(
@@ -150,8 +152,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 	}, [walletKeys]);
 
 	const isExternal = connectionMode === "external";
+	// The legacy key addresses are mainnet-format and untracked on testnet
 	const resolvedDepositAddress =
-		depositAddress || (isExternal ? "" : identityAddress || payAddress);
+		depositAddress ||
+		(isExternal || chain === "test" ? "" : identityAddress || payAddress);
 
 	const handleCopyAddress = () => {
 		copy(resolvedDepositAddress);
@@ -300,7 +304,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 			</SidebarHeader>
 			<SidebarSeparator className="my-4" />
 			<SidebarContent>
-				<LegacySweepBanner />
+				<MainnetOnly fallback={null}>
+					<LegacySweepBanner />
+				</MainnetOnly>
 				<nav aria-label="Wallet navigation">
 					{navData.map((group) => (
 						<SidebarGroup key={group.title}>

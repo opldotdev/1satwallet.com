@@ -10,7 +10,7 @@ describe("external wallet UX contracts", () => {
 		const sidebar = read("components/app-sidebar.tsx");
 		assert.match(
 			sidebar,
-			/depositAddress \|\| \(isExternal \? "" : identityAddress \|\| payAddress\)/,
+			/depositAddress \|\|\s*\(isExternal \|\| chain === "test" \? "" : identityAddress \|\| payAddress\)/,
 		);
 		assert.doesNotMatch(sidebar, /isExternal\s*\?\s*""\s*:\s*depositAddress/);
 		assert.match(sidebar, /\{initError && \(/);

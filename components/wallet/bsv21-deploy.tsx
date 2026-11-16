@@ -26,6 +26,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { useSound } from "@/hooks/use-sound";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
@@ -51,7 +52,7 @@ export function Bsv21Deploy() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const { play } = useSound();
-	const { oneSatContext, refreshBalance } = useWalletToolbox();
+	const { chain, oneSatContext, refreshBalance } = useWalletToolbox();
 	const features = useStackFeatures();
 	const [open, setOpen] = useState(false);
 	const [createMode, setCreateMode] = useState<"fixed" | "authority">("fixed");
@@ -334,10 +335,20 @@ export function Bsv21Deploy() {
 			</div>
 			{createdTokenId ? (
 				<p className="text-sm text-primary" role="status">
-					Deployment submitted. Indexing is not yet confirmed.{" "}
-					<Link className="underline" href={`/market/bsv21/${createdTokenId}`}>
-						Open token {createdTokenId}
-					</Link>
+					Deployment submitted. Indexing is not yet confirmed.
+					{isRouteAvailableOn(chain, "/market/bsv21") ? (
+						<>
+							{" "}
+							<Link
+								className="underline"
+								href={`/market/bsv21/${createdTokenId}`}
+							>
+								Open token {createdTokenId}
+							</Link>
+						</>
+					) : (
+						` Token ${createdTokenId}.`
+					)}
 				</p>
 			) : null}
 			{!bsv21Available ? (

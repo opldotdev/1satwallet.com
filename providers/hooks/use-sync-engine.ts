@@ -9,6 +9,7 @@ import {
 import type { AddressManager, OneSatServices } from "@1sat/wallet-browser";
 import type { WalletInterface } from "@bsv/sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { endpointsOf } from "@/lib/chain-endpoints";
 import { RECEIVE_ADDRESS_PREFIX } from "@/lib/receive-address-manager";
 
 export type SyncTaskName = "addresses" | "payments" | "cosignDeliveries";
@@ -208,6 +209,7 @@ export function useSyncEngine({
 		}
 
 		const ctx = createActionContext(wallet, { chain, services });
+		const { messagebox: messageboxUrl } = endpointsOf(chain);
 		const count = addressManager.getAddresses().length || 5;
 		const { promise, started } = coordinator.run({
 			addresses: () =>
@@ -215,8 +217,9 @@ export function useSyncEngine({
 					prefix: RECEIVE_ADDRESS_PREFIX,
 					count,
 				}),
-			payments: () => syncMessages.execute(ctx, {}),
-			cosignDeliveries: () => syncCosignDeliveries.execute(ctx, {}),
+			payments: () => syncMessages.execute(ctx, { messageboxUrl }),
+			cosignDeliveries: () =>
+				syncCosignDeliveries.execute(ctx, { messageboxUrl }),
 		});
 
 		if (started) {

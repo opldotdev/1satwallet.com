@@ -10,6 +10,7 @@ import {
 	DialogTitle,
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
+import type { Chain } from "@/lib/chain-endpoints";
 import { stackContentUrl } from "@/lib/stack";
 
 /**
@@ -29,6 +30,8 @@ export interface ArtifactModalItem {
 	previewUrl?: string;
 	/** Optional canonical application viewer */
 	externalUrl?: string;
+	/** Chain whose OrdFS serves the content (default mainnet) */
+	chain?: Chain;
 }
 
 interface ArtifactModalProps {
@@ -60,10 +63,11 @@ const ArtifactModal = ({ artifact, onClose }: ArtifactModalProps) => {
 		name,
 		previewUrl,
 		externalUrl,
+		chain,
 	} = artifact;
 	const isBitPlan = contentType === "application/x-bitplan";
 	const contentClass = previewUrl ? "image" : classifyContentType(contentType);
-	const src = previewUrl ?? stackContentUrl(originOutpoint);
+	const src = previewUrl ?? stackContentUrl(originOutpoint, chain);
 	const openUrl =
 		externalUrl ??
 		(isBitPlan ? `https://bitplan.dev/d/${originOutpoint}` : src);

@@ -1,25 +1,24 @@
-type Chain = "main" | "test";
+import { type Chain, endpointsOf } from "@/lib/chain-endpoints";
 
 /**
  * The remote storage the built-in wallet uses as its active store. The local
  * IndexedDB store is registered beside it as a backup.
  *
- * wallet.1sat.app is the hosted BRC-100 storage server (the old
- * api.1sat.app/1sat/wallet URL 404s, and wallet-browser >=0.0.7x verifies the
- * storage connection eagerly at init). Testnet has no remote here, so its
- * active store is local.
+ * A wallet has one active storage, and the same keys must never point at two
+ * storages, or they diverge. So every chain uses its hosted 1Sat storage, the
+ * same one Yours and the iOS app use. NEXT_PUBLIC_WALLET_STORAGE_URL is a
+ * mainnet deploy setting and never applies to testnet.
  */
-export function walletStorageUrl(chain: Chain): string | undefined {
-	return (
-		process.env.NEXT_PUBLIC_WALLET_STORAGE_URL ||
-		(chain === "main" ? "https://wallet.1sat.app" : undefined)
-	);
+export function walletStorageUrl(chain: Chain): string {
+	if (chain === "main" && process.env.NEXT_PUBLIC_WALLET_STORAGE_URL) {
+		return process.env.NEXT_PUBLIC_WALLET_STORAGE_URL;
+	}
+	return endpointsOf(chain).storage;
 }
 
-/** The host to show for the active store, or undefined when it is local. */
-export function walletStorageHost(chain: Chain): string | undefined {
+/** The host to show for the active store. */
+export function walletStorageHost(chain: Chain): string {
 	const url = walletStorageUrl(chain);
-	if (!url) return undefined;
 	try {
 		return new URL(url).host;
 	} catch {

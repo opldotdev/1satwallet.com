@@ -1,5 +1,6 @@
 import type { WalletOutput } from "@1sat/actions";
 import type { OrdfsMetadata } from "@1sat/types";
+import type { Chain } from "@/lib/chain-endpoints";
 import { stackContentUrl, toUrlOutpoint } from "@/lib/stack";
 import {
 	getContentType,
@@ -43,6 +44,7 @@ function isThemeToken(metadata: OrdfsMetadata | null | undefined): boolean {
 export function getOrdinalPresentation(
 	output: WalletOutput,
 	metadata?: OrdfsMetadata | null,
+	chain: Chain = "main",
 ): OrdinalPresentation {
 	const originOutpoint = toUrlOutpoint(
 		metadata?.origin ?? getOriginOutpoint(output),
@@ -81,8 +83,8 @@ export function getOrdinalPresentation(
 			contentLabel: contentType,
 			contentType,
 			originOutpoint,
-			href: stackContentUrl(originOutpoint),
-			artworkUrl: stackContentUrl(originOutpoint),
+			href: stackContentUrl(originOutpoint, chain),
+			artworkUrl: stackContentUrl(originOutpoint, chain),
 		};
 	}
 
@@ -92,6 +94,6 @@ export function getOrdinalPresentation(
 		contentLabel: contentType || "Unknown content type",
 		contentType,
 		originOutpoint,
-		href: stackContentUrl(originOutpoint),
+		href: stackContentUrl(originOutpoint, chain),
 	};
 }

@@ -3,6 +3,7 @@
 import { Loader2, LockKeyhole, RefreshCw } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { MainnetOnly } from "@/components/mainnet-only";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WalletConnectCarousel } from "@/components/wallet/wallet-connect-carousel";
@@ -155,21 +156,23 @@ function ConnectedWalletHome() {
 				</div>
 			</section>
 
-			{connectionMode === "built-in" && legacyBalance > 0 && (
-				<div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
-					<div>
-						<p className="font-medium">Legacy balance found</p>
-						<p className="text-muted-foreground text-sm">
-							{privacyMode
-								? "Funds are held on legacy addresses."
-								: `${(legacyBalance / 100_000_000).toFixed(8)} BSV is held on legacy addresses.`}
-						</p>
+			<MainnetOnly fallback={null}>
+				{connectionMode === "built-in" && legacyBalance > 0 && (
+					<div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
+						<div>
+							<p className="font-medium">Legacy balance found</p>
+							<p className="text-muted-foreground text-sm">
+								{privacyMode
+									? "Funds are held on legacy addresses."
+									: `${(legacyBalance / 100_000_000).toFixed(8)} BSV is held on legacy addresses.`}
+							</p>
+						</div>
+						<Button asChild size="sm">
+							<Link href="/wallet/migrate">Review migration</Link>
+						</Button>
 					</div>
-					<Button asChild size="sm">
-						<Link href="/wallet/migrate">Review migration</Link>
-					</Button>
-				</div>
-			)}
+				)}
+			</MainnetOnly>
 			<WalletHomeStatus />
 		</div>
 	);
