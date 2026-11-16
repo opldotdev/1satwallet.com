@@ -12,11 +12,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	BadgeCheck,
 	Fingerprint,
+	ImageIcon,
 	Loader2,
 	RefreshCw,
 	Search,
 	ShieldCheck,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
@@ -51,7 +53,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ProfileImagePicker } from "@/components/wallet/profile-image-picker";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import { profileEditorPreviewUrl } from "@/lib/p2p-public-profile";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	BAP_DISCOVERY_PAGE_SIZE,
@@ -77,11 +81,15 @@ const PROFILE_FIELDS: Array<{
 	{ field: "alternateName", label: "Display name", placeholder: "satoshi" },
 	{ field: "email", label: "Email", placeholder: "satoshi@example.com" },
 	{ field: "paymail", label: "Paymail", placeholder: "satoshi@1sat.app" },
-	{
-		field: "image",
-		label: "Image URL",
-		placeholder: "https://example.com/avatar.png",
-	},
+];
+
+const IMAGE_FIELDS: Array<{
+	field: "image" | "banner";
+	label: string;
+	pickerTitle: string;
+}> = [
+	{ field: "image", label: "Avatar", pickerTitle: "Choose an avatar" },
+	{ field: "banner", label: "Banner", pickerTitle: "Choose a banner" },
 ];
 
 type ActionStatus =
@@ -101,6 +109,91 @@ function StatusMessage({ status }: { status: ActionStatus }) {
 		>
 			{status?.message}
 		</p>
+	);
+}
+
+function ProfileImageField({
+	field,
+	label,
+	pickerTitle,
+	value,
+	error,
+	onChange,
+}: {
+	field: "image" | "banner";
+	label: string;
+	pickerTitle: string;
+	value: string;
+	error?: string;
+	onChange: (value: string) => void;
+}) {
+	const { chain } = useWalletToolbox();
+	const [pickerOpen, setPickerOpen] = useState(false);
+	const previewUrl = error ? undefined : profileEditorPreviewUrl(value, chain);
+	return (
+		<div className="space-y-2">
+			<Label htmlFor={`bap-${field}`}>{label}</Label>
+			<div
+				className={`relative overflow-hidden border bg-muted/50 ${field === "banner" ? "aspect-[3/1] w-full rounded-md" : "size-20 rounded-full"}`}
+			>
+				{previewUrl ? (
+					<Image
+						alt={`${label} preview`}
+						className="object-cover"
+						fill
+						sizes={
+							field === "banner" ? "(max-width: 640px) 100vw, 50vw" : "5rem"
+						}
+						src={previewUrl}
+						unoptimized
+					/>
+				) : (
+					<ImageIcon
+						aria-hidden="true"
+						className="absolute inset-0 m-auto size-6 text-muted-foreground"
+					/>
+				)}
+			</div>
+			<Input
+				aria-describedby={error ? `bap-${field}-error` : undefined}
+				aria-invalid={Boolean(error)}
+				id={`bap-${field}`}
+				onChange={(event) => onChange(event.target.value)}
+				placeholder="1sat://txid.vout or https://…"
+				value={value}
+			/>
+			{error && (
+				<p className="text-destructive text-xs" id={`bap-${field}-error`}>
+					{error}
+				</p>
+			)}
+			<div className="flex flex-wrap gap-2">
+				<Button
+					onClick={() => setPickerOpen(true)}
+					size="sm"
+					type="button"
+					variant="outline"
+				>
+					Pick from my ordinals
+				</Button>
+				{value && (
+					<Button
+						onClick={() => onChange("")}
+						size="sm"
+						type="button"
+						variant="ghost"
+					>
+						Remove {label.toLowerCase()}
+					</Button>
+				)}
+			</div>
+			<ProfileImagePicker
+				onOpenChange={setPickerOpen}
+				onSelect={onChange}
+				open={pickerOpen}
+				title={pickerTitle}
+			/>
+		</div>
 	);
 }
 
@@ -127,7 +220,10 @@ function ProfileEditor({
 	const [operation, setOperation] = useState<
 		"profile" | "publish" | "rotate" | null
 	>(null);
-	const validation = useMemo(() => validateBapProfile(draft), [draft]);
+	const validation = useMemo(
+		() => validateBapProfile(draft, baseline),
+		[draft, baseline],
+	);
 	const reviewedRecord = useMemo(
 		() => mergeBapProfile(profile, baseline, draft),
 		[profile, baseline, draft],
@@ -301,6 +397,21 @@ function ProfileEditor({
 							</p>
 						)}
 					</div>
+				))}
+			</div>
+			<div className="grid gap-4 sm:grid-cols-2">
+				{IMAGE_FIELDS.map(({ field, label, pickerTitle }) => (
+					<ProfileImageField
+						error={validation.errors[field]}
+						field={field}
+						key={field}
+						label={label}
+						onChange={(value) =>
+							setDraft((current) => ({ ...current, [field]: value }))
+						}
+						pickerTitle={pickerTitle}
+						value={draft[field]}
+					/>
 				))}
 			</div>
 			<div className="space-y-2">

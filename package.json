@@ -17,6 +17,7 @@
 		"@1sat/connect": "0.1.2",
 		"@1sat/permission-module": "0.1.5",
 		"@1sat/permission-module-ui": "0.1.5",
+		"@1sat/templates": "0.1.1",
 		"@1sat/types": "0.1.1",
 		"@1sat/utils": "0.1.1",
 		"@1sat/wallet-browser": "0.1.2",

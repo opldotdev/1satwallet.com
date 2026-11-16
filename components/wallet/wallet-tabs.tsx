@@ -7,6 +7,7 @@ import {
 	Gem,
 	History,
 	type LucideIcon,
+	Palette,
 	ShieldCheck,
 	Wallet,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const icons: Record<WalletTabValue, LucideIcon> = {
 	identity: Fingerprint,
 	certificates: ShieldCheck,
 	bsv21: CircleDollarSign,
+	"1color": Palette,
 	history: History,
 };
 

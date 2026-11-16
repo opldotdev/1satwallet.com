@@ -3,8 +3,10 @@ import { createStackServices } from "@/lib/stack";
 import {
 	bapDisplayName,
 	hasControlCharacter,
+	imageReferenceOrigin,
 	isSafePublicImageUrl,
 	profileDraftFromRecord,
+	storedImageReference,
 } from "@/lib/wallet/bap-identity";
 import { type PublicProfileClaim, safeHttpsUrl } from "./p2p-presence";
 
@@ -16,24 +18,33 @@ export function publicDisplayName(value: string): string | undefined {
 	return name;
 }
 
-export function publicAvatarUrl(
+/** An https URL a BAP `image` or `banner` value can be shown from, if any. */
+export function publicImageUrl(
 	image: string,
 	chain: "main" | "test",
 ): string | undefined {
-	const match = /^(?:ord|1sat):\/\/([0-9a-fA-F]{64})(?:[._](\d+))?$/.exec(
-		image,
-	);
-	if (match) {
-		return createStackServices(chain).ordfs.getContentUrl(
-			`${match[1].toLowerCase()}_${match[2] ?? "0"}`,
-		);
-	}
+	const origin = imageReferenceOrigin(image);
+	if (origin) return createStackServices(chain).ordfs.getContentUrl(origin);
 	if (!isSafePublicImageUrl(image)) return undefined;
 	try {
-		return safeHttpsUrl(image, "avatarUrl");
+		return safeHttpsUrl(image, "imageUrl");
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * The URL the profile editor previews a BAP `image` or `banner` from: an
+ * ordinal reference shows its ordfs content, an https URL shows exactly what
+ * `storedImageReference` would publish (query, fragment and length intact).
+ */
+export function profileEditorPreviewUrl(
+	value: string,
+	chain: "main" | "test",
+): string | undefined {
+	const origin = imageReferenceOrigin(value);
+	if (origin) return createStackServices(chain).ordfs.getContentUrl(origin);
+	return storedImageReference(value);
 }
 
 export async function publicProfileClaimFromWallet(
@@ -43,7 +54,7 @@ export async function publicProfileClaimFromWallet(
 	if (result.error) return undefined;
 	const draft = profileDraftFromRecord(result.profile);
 	const displayName = publicDisplayName(bapDisplayName(draft) ?? "");
-	const avatarUrl = publicAvatarUrl(draft.image, ctx.chain ?? "main");
+	const avatarUrl = publicImageUrl(draft.image, ctx.chain ?? "main");
 	if (!displayName && !avatarUrl) return undefined;
 	return {
 		...(displayName ? { displayName } : {}),

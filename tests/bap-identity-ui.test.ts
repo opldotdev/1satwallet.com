@@ -63,6 +63,15 @@ describe("bap profile editor", () => {
 		assert.doesNotMatch(bapSource, /label: "Handle"/);
 		assert.match(bapSource, /bapDisplayName\(identity\)/);
 	});
+	it("edits the avatar and banner with previews and an ordinal picker", () => {
+		assert.match(bapSource, /field: "image", label: "Avatar"/);
+		assert.match(bapSource, /field: "banner", label: "Banner"/);
+		assert.match(bapSource, /Pick from my ordinals/);
+		assert.match(bapSource, /<ProfileImagePicker/);
+		assert.match(bapSource, /profileEditorPreviewUrl\(value, chain\)/);
+		assert.doesNotMatch(bapSource, /publicImageUrl/);
+		assert.match(bapSource, /validateBapProfile\(draft, baseline\)/);
+	});
 	it("merges edits over a fresh read of the published profile before saving", () => {
 		const save = bapSource.slice(
 			bapSource.indexOf("const saveProfile"),

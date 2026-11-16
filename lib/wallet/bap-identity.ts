@@ -8,6 +8,7 @@ export interface BapProfileDraft {
 	alternateName: string;
 	description: string;
 	image: string;
+	banner: string;
 	email: string;
 	paymail: string;
 }
@@ -17,6 +18,7 @@ export const EMPTY_BAP_PROFILE: BapProfileDraft = {
 	alternateName: "",
 	description: "",
 	image: "",
+	banner: "",
 	email: "",
 	paymail: "",
 };
@@ -26,6 +28,7 @@ const FIELD_LIMITS: Record<keyof BapProfileDraft, number> = {
 	alternateName: 100,
 	description: 500,
 	image: 2_048,
+	banner: 2_048,
 	email: 254,
 	paymail: 254,
 };
@@ -57,14 +60,70 @@ export function profileDraftFromRecord(
 		alternateName: stringField("alternateName"),
 		description: stringField("description"),
 		image: stringField("image"),
+		// A legacy `coverImage` is read as the banner, as the iOS app reads it.
+		banner:
+			profile?.banner === undefined
+				? typeof profile?.coverImage === "string"
+					? profile.coverImage
+					: ""
+				: stringField("banner"),
 		email: stringField("email"),
 		paymail: stringField("paymail"),
 	};
 }
 
+// At most ten index digits, as the iOS Outpoint parser bounds them.
+const ORDINAL_REFERENCE =
+	/^(?:(?:1sat|ord):\/\/)?([a-fA-F0-9]{64})(?:[._](\d{1,10}))?$/;
+const MAX_OUTPUT_INDEX = 4_294_967_295;
+
+/**
+ * The ordinal origin (`txid_vout`) an image reference names: `1sat://txid.vout`
+ * (what the iOS app and Yours write), the older `ord://txid_vout`, or a bare
+ * outpoint. A reference without an output index names output 0. The index
+ * must fit a UInt32 and is written in canonical decimal (`.007` is `_7`), as
+ * the iOS app's Outpoint parsing does.
+ */
+export function imageReferenceOrigin(value: string): string | undefined {
+	const match = ORDINAL_REFERENCE.exec(value.trim());
+	if (!match) return undefined;
+	const index = Number(match[2] ?? "0");
+	if (index > MAX_OUTPUT_INDEX) return undefined;
+	return `${match[1].toLowerCase()}_${index}`;
+}
+
+/** The `1sat://txid.vout` string BAP `image` and `banner` hold for an ordinal. */
+export function ordinalImageReference(origin: string): string | undefined {
+	const outpoint = imageReferenceOrigin(origin);
+	return outpoint ? `1sat://${outpoint.replace("_", ".")}` : undefined;
+}
+
+/**
+ * The string to publish for a typed or picked image: an https URL stays as
+ * typed, an ordinal reference in any accepted form becomes `1sat://txid.vout`.
+ * Anything else, including an https URL carrying a username or password, is
+ * not a publishable image.
+ */
+export function storedImageReference(value: string): string | undefined {
+	const trimmed = value.trim();
+	if (!trimmed) return undefined;
+	const ordinal = ordinalImageReference(trimmed);
+	if (ordinal) return ordinal;
+	let url: URL;
+	try {
+		url = new URL(trimmed);
+	} catch {
+		return undefined;
+	}
+	if (url.protocol !== "https:" || url.username || url.password) {
+		return undefined;
+	}
+	return trimmed;
+}
+
 export function isSafePublicImageUrl(value: string): boolean {
 	if (value.startsWith("ord://") || value.startsWith("1sat://")) {
-		return /^(?:ord|1sat):\/\/[a-fA-F0-9]{64}(?:[._]\d+)?$/.test(value);
+		return imageReferenceOrigin(value) !== undefined;
 	}
 	try {
 		return new URL(value).protocol === "https:";
@@ -73,8 +132,16 @@ export function isSafePublicImageUrl(value: string): boolean {
 	}
 }
 
+/**
+ * Validates the editor's fields. With `baseline` (what the editor opened
+ * with), a field still equal to it raises no error and is left out of
+ * `profile`: `mergeBapProfile` republishes an unedited field verbatim, so a
+ * published value this editor would not write (an `http://` banner, an
+ * over-long name another client wrote) must not block saving other fields.
+ */
 export function validateBapProfile(
 	draft: BapProfileDraft,
+	baseline?: BapProfileDraft,
 ): ValidatedBapProfile {
 	const errors: ValidatedBapProfile["errors"] = {};
 	const profile: Record<string, string> = { "@type": "Person" };
@@ -82,6 +149,7 @@ export function validateBapProfile(
 	for (const field of Object.keys(FIELD_LIMITS) as (keyof BapProfileDraft)[]) {
 		const value = draft[field].trim();
 		if (!value) continue;
+		if (baseline !== undefined && value === baseline[field].trim()) continue;
 		if (value.length > FIELD_LIMITS[field]) {
 			errors[field] = `Must be ${FIELD_LIMITS[field]} characters or fewer.`;
 			continue;
@@ -90,8 +158,13 @@ export function validateBapProfile(
 			errors[field] = "Control characters are not allowed.";
 			continue;
 		}
-		if (field === "image" && !isSafePublicImageUrl(value)) {
-			errors[field] = "Use an https://, ord://, or 1sat:// image URL.";
+		if (field === "image" || field === "banner") {
+			const stored = storedImageReference(value);
+			if (!stored) {
+				errors[field] = "Use an https://, ord://, or 1sat:// image URL.";
+				continue;
+			}
+			profile[field] = stored;
 			continue;
 		}
 		if (field === "email" && !EMAILISH.test(value)) {
@@ -111,7 +184,7 @@ export function validateBapProfile(
 /**
  * The record to publish: the currently published profile with the editor's
  * changes laid over it. `updateProfile` writes the object it is given whole,
- * so keys this editor does not show (banner, logo, url, sameAs, `@context`,
+ * so keys this editor does not show (logo, url, sameAs, `@context`,
  * anything another client published) must be carried over. A field whose
  * draft still matches `baseline` (what the editor opened with) keeps its
  * published value, whatever its JSON type. A changed field left empty is
@@ -135,6 +208,9 @@ export function mergeBapProfile(
 		if (draft[field].trim() === baseline[field].trim()) continue;
 		if (profile[field]) record[field] = profile[field];
 		else delete record[field];
+		// A legacy `coverImage` stands in for the banner; drop it once the
+		// banner is edited or removed, as the iOS app does.
+		if (field === "banner") delete record.coverImage;
 	}
 	return record;
 }

@@ -1,25 +1,59 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { publicAvatarUrl, publicDisplayName } from "@/lib/p2p-public-profile";
+import {
+	profileEditorPreviewUrl,
+	publicDisplayName,
+	publicImageUrl,
+} from "@/lib/p2p-public-profile";
+import { storedImageReference } from "@/lib/wallet/bap-identity";
 
 describe("public profile claims", () => {
 	it("turns inscribed images into https content URLs and drops unsafe names", () => {
 		assert.equal(
-			publicAvatarUrl(`ord://${"ab".repeat(32)}.2`, "main"),
+			publicImageUrl(`ord://${"ab".repeat(32)}.2`, "main"),
 			`https://api.1sat.app/content/${"ab".repeat(32)}_2`,
 		);
 		assert.equal(
-			publicAvatarUrl(`1sat://${"cd".repeat(32)}`, "test"),
+			publicImageUrl(`1sat://${"cd".repeat(32)}`, "test"),
 			`https://testnet.api.1sat.app/content/${"cd".repeat(32)}_0`,
 		);
 		assert.equal(
-			publicAvatarUrl("https://example.com/me.png?token=secret#x", "main"),
+			publicImageUrl("https://example.com/me.png?token=secret#x", "main"),
 			"https://example.com/me.png",
 		);
-		assert.equal(publicAvatarUrl("javascript:alert(1)", "main"), undefined);
+		assert.equal(
+			publicImageUrl(`1sat://${"ef".repeat(32)}.1`, "main"),
+			`https://api.1sat.app/content/${"ef".repeat(32)}_1`,
+		);
+		assert.equal(publicImageUrl("javascript:alert(1)", "main"), undefined);
 		assert.equal(publicDisplayName("  Alice  "), "Alice");
 		assert.equal(publicDisplayName("Alice\nAdmin"), undefined);
 		assert.equal(publicDisplayName("A".repeat(80)), "A".repeat(64));
 		assert.equal(publicDisplayName("   "), undefined);
+	});
+});
+
+describe("profile editor preview", () => {
+	it("previews exactly what is published", () => {
+		const typed = `https://example.com/me.png?v=2#crop${"x".repeat(600)}`;
+		assert.equal(storedImageReference(typed), typed);
+		assert.equal(profileEditorPreviewUrl(` ${typed} `, "main"), typed);
+		assert.equal(
+			profileEditorPreviewUrl(`1sat://${"ab".repeat(32)}.007`, "test"),
+			`https://testnet.api.1sat.app/content/${"ab".repeat(32)}_7`,
+		);
+		for (const unpublishable of [
+			"http://example.com/me.png",
+			"ipfs://bafy/me.png",
+			"https://user:secret@example.com/me.png",
+			"javascript:alert(1)",
+		]) {
+			assert.equal(storedImageReference(unpublishable), undefined);
+			assert.equal(
+				profileEditorPreviewUrl(unpublishable, "main"),
+				undefined,
+				unpublishable,
+			);
+		}
 	});
 });

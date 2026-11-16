@@ -521,6 +521,7 @@ export function WalletToolboxProvider({
 		queryClient.removeQueries({ queryKey: ["wallet-actions"] });
 		queryClient.removeQueries({ queryKey: ["bap-profile"] });
 		queryClient.removeQueries({ queryKey: ["opns-names"] });
+		queryClient.removeQueries({ queryKey: ["one-color"] });
 	}, [queryClient]);
 
 	const resetWalletState = useCallback(
