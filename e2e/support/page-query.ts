@@ -11,6 +11,7 @@ const ROLES = {
 	img: 'img,[role="img"]',
 	link: 'a[href],[role="link"]',
 	listitem: 'li,[role="listitem"]',
+	navigation: 'nav,[role="navigation"]',
 	region: 'section[aria-label],section[aria-labelledby],[role="region"]',
 	switch: '[role="switch"]',
 	tab: '[role="tab"]',

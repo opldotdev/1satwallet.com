@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeft } from "lucide-react";
+import { PanelLeft, Wallet } from "lucide-react";
 import type * as React from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { LeftSidebar } from "@/components/left-sidebar";
@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import {
 	SidebarInset,
 	SidebarProvider,
-	SidebarTrigger,
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { FullScreenUnlock } from "@/components/wallet/full-screen-unlock";
@@ -62,9 +61,10 @@ function InnerContent({
 	children: React.ReactNode;
 	toggleLeft: () => void;
 }) {
+	const { toggleSidebar: toggleRight } = useSidebar(); // Inner (Right) Context
 	return (
 		<SidebarInset>
-			<header className="flex h-[calc(--spacing(16)+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-4 max-md:pl-[max(1rem,env(safe-area-inset-left))] transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-[calc(--spacing(12)+env(safe-area-inset-top))]">
+			<header className="flex h-[calc(--spacing(16)+env(safe-area-inset-top))] max-md:h-[calc(--spacing(12)+env(safe-area-inset-top))] shrink-0 items-center justify-between gap-2 border-b pt-[env(safe-area-inset-top)] pr-[max(1rem,env(safe-area-inset-right))] pl-4 max-md:pl-[max(1rem,env(safe-area-inset-left))] transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-[calc(--spacing(12)+env(safe-area-inset-top))]">
 				<div className="flex items-center gap-2">
 					<Button
 						variant="ghost"
@@ -77,11 +77,18 @@ function InnerContent({
 					</Button>
 				</div>
 				<div className="flex items-center gap-2">
-					<SidebarTrigger
+					{/* Opens the wallet panel, so it wears the wallet's icon. */}
+					<Button
 						aria-label="Toggle wallet navigation"
 						className="-mr-1"
+						data-sidebar="trigger"
+						onClick={toggleRight}
+						size="icon"
 						title="Toggle wallet navigation"
-					/>
+						variant="ghost"
+					>
+						<Wallet />
+					</Button>
 				</div>
 			</header>
 			{/* The shell owns the side and bottom safe-area insets (viewport-fit=

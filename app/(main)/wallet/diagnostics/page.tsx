@@ -1,7 +1,6 @@
 "use client";
 
-import { ArrowLeft, RefreshCw, Trash2 } from "lucide-react";
-import Link from "next/link";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,19 +108,10 @@ export default function WalletDiagnosticsPage() {
 
 	return (
 		<section className="space-y-6">
-			<div className="flex items-center justify-start gap-2">
-				<Button variant="ghost" size="icon" asChild className="-ml-2">
-					<Link href="/wallet/settings">
-						<span className="sr-only">Back to wallet settings</span>
-						<ArrowLeft className="size-4" />
-					</Link>
-				</Button>
-				<div className="flex-1">
-					<h2 className="font-mono text-xl font-medium">Wallet Diagnostics</h2>
-					<p className="text-muted-foreground">
-						Redacted provider, action, and route health
-					</p>
-				</div>
+			<div className="flex items-center justify-between gap-4">
+				<p className="text-sm text-muted-foreground">
+					Redacted provider, action, and route health
+				</p>
 				<Badge variant={toolbox.isInitialized ? "default" : "secondary"}>
 					{toolbox.connectionStatus}
 				</Badge>

@@ -1,15 +1,23 @@
 "use client";
 
-import { LockKeyhole, LogOut } from "lucide-react";
+import { ArrowLeft, LockKeyhole, LogOut } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { PageHeader, PageTitle } from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
+import { useSound } from "@/hooks/use-sound";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
+import { walletSectionFor } from "@/lib/wallet-sections";
 import { useWallet } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
+/**
+ * The headline names the section you are in (the tab's own label), or the
+ * sub-page with a back arrow to where it came from. The right side is the
+ * connection: a status dot and Lock or Disconnect.
+ */
 export function WalletHeader() {
 	const { lockWallet } = useWallet();
 	const {
@@ -20,7 +28,9 @@ export function WalletHeader() {
 		providerType,
 		disconnectExternalWallet,
 	} = useWalletToolbox();
+	const { play } = useSound();
 	const chain = useWalletChain();
+	const section = walletSectionFor(usePathname(), chain);
 	const { faucet } = endpointsOf(chain);
 	const label = isInitializing
 		? "Connecting…"
@@ -38,61 +48,83 @@ export function WalletHeader() {
 								? "Mobile wallet"
 								: "Wallet connected";
 	return (
-		<PageHeader className="grid min-h-24 grid-cols-1 gap-4 md:min-h-20 md:grid-cols-[1fr_auto] md:gap-6">
-			<div>
-				<PageTitle>Wallet</PageTitle>
-				<p className="mt-1 text-sm text-muted-foreground">
-					Your money, assets, and connection at a glance.
-				</p>
-			</div>
-			<div className="flex h-9 items-center gap-3 text-xs md:justify-end">
-				{chain === "test" ? (
-					<span className="flex items-center gap-2">
-						<TestnetBadge />
-						{faucet ? (
-							<a
-								className="underline"
-								href={faucet}
-								rel="noopener noreferrer"
-								target="_blank"
-							>
-								Get test coins
-							</a>
-						) : null}
-					</span>
+		<PageHeader className="min-h-11 items-start">
+			<div className="flex min-w-0 items-start gap-1">
+				{section.parentHref ? (
+					<Button
+						asChild
+						className="-ml-3 shrink-0 md:-ml-2"
+						size="icon"
+						variant="ghost"
+					>
+						<Link
+							aria-label={`Back to ${section.parentTitle}`}
+							href={section.parentHref}
+							onClick={() => play("click")}
+						>
+							<ArrowLeft />
+						</Link>
+					</Button>
 				) : null}
-				<span className="flex min-w-32 items-center gap-2" role="status">
+				<div className="flex min-w-0 flex-col gap-1 max-md:min-h-11 max-md:justify-center">
+					<div className="flex min-w-0 items-center gap-2">
+						<PageTitle className="truncate">{section.title}</PageTitle>
+						{chain === "test" ? (
+							<span className="flex shrink-0">
+								<TestnetBadge />
+							</span>
+						) : null}
+					</div>
+					{chain === "test" && faucet && section.tab === "overview" ? (
+						<a
+							className="w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+							href={faucet}
+							rel="noopener noreferrer"
+							target="_blank"
+						>
+							Get test coins
+						</a>
+					) : null}
+				</div>
+			</div>
+			<div className="flex shrink-0 items-center gap-1 md:gap-2">
+				<span
+					className="flex size-11 items-center justify-center md:size-9"
+					role="status"
+					title={label}
+				>
 					<span
-						className={`size-1.5 shrink-0 rounded-full ${isInitialized ? "bg-success" : "bg-muted-foreground"}`}
+						aria-hidden="true"
+						className={`size-2 rounded-full ${isInitialized ? "bg-success" : "bg-muted-foreground"}`}
 					/>
-					{label}
+					<span className="sr-only">{label}</span>
 				</span>
 				{isInitialized && connectionMode === "external" ? (
 					<Button
-						className="min-w-28"
+						className="max-md:min-w-11"
 						size="sm"
 						variant="ghost"
 						onClick={() => void disconnectExternalWallet()}
 					>
 						<LogOut />
-						Disconnect
+						<span className="max-md:sr-only">Disconnect</span>
 					</Button>
 				) : isInitialized && connectionMode === "built-in" ? (
 					<Button
-						className="min-w-28"
+						className="max-md:min-w-11"
 						size="sm"
 						variant="ghost"
 						onClick={lockWallet}
 					>
 						<LockKeyhole />
-						Lock
+						<span className="max-md:sr-only">Lock</span>
 					</Button>
 				) : isInitializing ? (
-					<Button className="min-w-28" size="sm" variant="ghost" disabled>
+					<Button size="sm" variant="ghost" disabled>
 						Connecting…
 					</Button>
 				) : (
-					<Button className="min-w-28" size="sm" variant="ghost" asChild>
+					<Button size="sm" variant="ghost" asChild>
 						<Link href="/wallet">Connect</Link>
 					</Button>
 				)}

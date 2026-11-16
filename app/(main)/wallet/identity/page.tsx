@@ -1,7 +1,11 @@
-"use client";
-import { BapIdentityCenter } from "@/components/wallet/bap-identity-center";
-import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import type { Metadata } from "next";
+import { walletSectionTitle } from "@/lib/wallet-sections";
+import { IdentityCenter } from "./identity-center";
+
+export const metadata: Metadata = {
+	title: walletSectionTitle("identity"),
+};
+
 export default function WalletIdentityPage() {
-	const { identityKey } = useWalletToolbox();
-	return <BapIdentityCenter key={identityKey ?? "disconnected"} />;
+	return <IdentityCenter />;
 }

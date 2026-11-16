@@ -1,53 +1,80 @@
+/* The wallet's section tabs: a quiet row of links. The current one is in the
+   foreground colour with a 2px brand underline; the others are muted. */
 .list {
-	width: 100%;
-	max-width: 100%;
-	height: 52px;
+	display: flex;
+	align-items: stretch;
+	margin: 0;
 	padding: 0;
-	justify-content: flex-start;
-	gap: clamp(4px, 2vw, 24px);
+	list-style: none;
 	overflow-x: auto;
-	background: transparent;
-	border-radius: 0;
-	border-bottom: 1px solid var(--border);
-	font-family: var(--font-mono);
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+	/* The baseline, drawn inside the scroller so the underline can cover it. */
+	box-shadow: inset 0 -1px 0 var(--border);
+	font-family: var(--font-sans);
 }
-.trigger {
-	position: relative;
+.list::-webkit-scrollbar {
+	display: none;
+}
+/* More tabs past the right edge: fade the last 16px. */
+.list[data-more-after] {
+	mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
+.item {
 	flex: 0 0 auto;
-	height: 100%;
-	padding: 0 4px;
-	border: 0;
-	border-radius: 0;
+	display: flex;
+}
+.link {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-width: 44px;
+	min-height: 44px;
+	padding: 0 12px;
 	color: var(--muted-foreground);
-	background: transparent;
-	box-shadow: none;
-	gap: 10px;
+	font-size: 14px;
+	font-weight: 500;
+	line-height: 20px;
+	white-space: nowrap;
+	transition: color 150ms ease;
 }
-.trigger[data-state="active"] {
+.link:hover {
 	color: var(--foreground);
-	background: transparent;
-	border: 0;
-	box-shadow: none;
 }
-.trigger[data-state="active"]::after {
+.link[aria-current="page"] {
+	color: var(--foreground);
+}
+/* The underline spans the icon and label, not the padding. */
+.link[aria-current="page"]::after {
 	content: "";
 	position: absolute;
+	right: 12px;
 	bottom: 0;
-	left: 0;
-	right: 0;
+	left: 12px;
 	height: 2px;
+	border-radius: 2px 2px 0 0;
 	background: var(--brand);
-	box-shadow: 0 0 9px color-mix(in srgb, var(--brand) 25%, transparent);
 }
-.trigger:focus-visible {
+.link:focus-visible {
 	outline: 2px solid var(--ring);
-	outline-offset: -3px;
+	outline-offset: -2px;
+	border-radius: var(--radius-md);
 }
+/* Phones: the other tabs are icon only, a 44px square each. */
 @media (max-width: 639px) {
-	.list {
-		justify-content: space-between;
+	.link:not([aria-current="page"]) {
+		padding: 0;
 	}
-	.trigger {
-		padding: 0 8px;
+}
+@media (min-width: 768px) {
+	.link {
+		min-height: 48px;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.link {
+		transition: none;
 	}
 }
