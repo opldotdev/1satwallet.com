@@ -49,8 +49,18 @@ let locks = 0;
 
 describe("this tab's own wallet writes", () => {
 	before(() => {
-		globals.window = Object.assign(events, { localStorage: storage });
-		globals.StorageEvent = TestStorageEvent;
+		// defineProperty, not assignment: another test file may leave these
+		// defined as read-only (but configurable) on the shared global.
+		for (const [name, value] of [
+			["window", Object.assign(events, { localStorage: storage })],
+			["StorageEvent", TestStorageEvent],
+		] as const) {
+			Object.defineProperty(globalThis, name, {
+				configurable: true,
+				writable: true,
+				value,
+			});
+		}
 		// Mirrors WalletProvider: a change made elsewhere locks and drops the
 		// key cache; this tab's own save is skipped.
 		events.addEventListener("storage", (event) => {

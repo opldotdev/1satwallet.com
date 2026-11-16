@@ -239,10 +239,16 @@ describe("CWI BRC-100 ABI", () => {
 			assert.equal((responses[2] as { status: string }).status, "error");
 			bridge.stop();
 		} finally {
-			Object.defineProperty(globalThis, "window", {
-				configurable: true,
-				value: previousWindow,
-			});
+			// Leave no read-only `window` behind for later test files.
+			if (previousWindow === undefined) {
+				Reflect.deleteProperty(globalThis, "window");
+			} else {
+				Object.defineProperty(globalThis, "window", {
+					configurable: true,
+					writable: true,
+					value: previousWindow,
+				});
+			}
 		}
 	});
 
