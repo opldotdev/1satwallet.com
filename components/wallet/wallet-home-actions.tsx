@@ -2,7 +2,13 @@
 
 import { sendBsv } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDownToLine, Copy, Loader2, Send } from "lucide-react";
+import {
+	ArrowDownToLine,
+	ChevronDown,
+	Copy,
+	Loader2,
+	Send,
+} from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -255,7 +261,7 @@ export function WalletHomeActions() {
 									<DialogDescription>
 										It will confirm shortly.
 									</DialogDescription>
-									<p className="font-mono font-semibold text-2xl wrap-anywhere">
+									<p className="font-mono font-semibold text-3xl wrap-anywhere">
 										{formatSatoshisAsBsv(sendState.satoshis)} BSV
 									</p>
 								</div>
@@ -268,9 +274,13 @@ export function WalletHomeActions() {
 									Done
 								</Button>
 							</DialogClose>
-							<details className="text-muted-foreground text-sm">
-								<summary className="flex min-h-11 cursor-pointer items-center justify-center rounded-md focus-visible:outline-2 focus-visible:outline-ring md:min-h-9">
+							<details className="group text-muted-foreground text-sm">
+								<summary className="flex min-h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring md:min-h-9 [&::-webkit-details-marker]:hidden">
 									Transaction details
+									<ChevronDown
+										aria-hidden="true"
+										className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+									/>
 								</summary>
 								<p className="mt-2 font-mono text-xs wrap-anywhere">
 									{sendState.txid}
@@ -330,12 +340,16 @@ export function WalletHomeActions() {
 								<Label htmlFor="wallet-home-recipient">Recipient</Label>
 								<Input
 									autoComplete="off"
+									aria-describedby="wallet-home-recipient-hint"
 									id="wallet-home-recipient"
 									onChange={(event) => setRecipient(event.target.value)}
 									placeholder="1A1z…"
 									value={recipient}
 								/>
-								<p className="text-muted-foreground text-xs">
+								<p
+									className="text-muted-foreground text-xs"
+									id="wallet-home-recipient-hint"
+								>
 									BSV addresses only. Paymail isn't supported yet.
 								</p>
 							</div>

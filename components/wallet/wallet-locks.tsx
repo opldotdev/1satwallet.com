@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Lock, LockOpen, RefreshCw } from "lucide-react";
+import { ChevronDown, Loader2, Lock, LockOpen, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DetailList, DetailRow } from "@/components/ui/detail-list";
@@ -188,9 +188,13 @@ function LockDialog({
 						<p className="font-mono font-semibold text-2xl" role="status">
 							{formatSatoshisAsBsv(state.satoshis)} BSV
 						</p>
-						<details className="text-muted-foreground text-sm">
-							<summary className="flex min-h-11 cursor-pointer items-center md:min-h-9">
+						<details className="group text-muted-foreground text-sm">
+							<summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring md:min-h-9 [&::-webkit-details-marker]:hidden">
 								Transaction details
+								<ChevronDown
+									aria-hidden="true"
+									className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+								/>
 							</summary>
 							<p className="mt-2 font-mono text-xs wrap-anywhere">
 								{state.txid}

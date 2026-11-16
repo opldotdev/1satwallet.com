@@ -131,6 +131,10 @@
 .activity:hover h3 {
 	color: var(--brand);
 }
+.services {
+	/* Still referenced by wallet-home-status.tsx, which D6 owns. The service
+	   rows space themselves, so this adds no style. */
+}
 .connection {
 	grid-column: 2;
 	grid-row: 1 / 3;

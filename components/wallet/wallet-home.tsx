@@ -30,8 +30,8 @@ function LoadingHome({ message }: { message: string }) {
 						<Skeleton className="h-10 w-60 max-w-full" />
 					</div>
 					<div className="grid grid-cols-2 gap-2 sm:flex">
-						<Skeleton className="h-12 sm:h-10 sm:w-32" />
-						<Skeleton className="h-12 sm:h-10 sm:w-32" />
+						<Skeleton className="h-12 sm:w-32 md:h-10" />
+						<Skeleton className="h-12 sm:w-32 md:h-10" />
 					</div>
 				</div>
 			</div>
@@ -43,15 +43,16 @@ function FailedWalletHome({ message }: { message: string }) {
 	const { lockWallet } = useWallet();
 	return (
 		<section
-			aria-label="Wallet could not be opened"
+			aria-labelledby="wallet-failed-heading"
 			className="flex flex-col items-start gap-4"
 		>
-			<Notice
-				className="w-full"
-				title="Wallet could not be opened"
-				tone="danger"
-			>
-				<span className="wrap-anywhere">{message}</span>
+			<Notice className="w-full" tone="danger">
+				<div className="flex flex-col gap-1">
+					<h2 className="font-medium" id="wallet-failed-heading">
+						Wallet could not be opened
+					</h2>
+					<p className="text-muted-foreground wrap-anywhere">{message}</p>
+				</div>
 			</Notice>
 			<Button onClick={lockWallet} variant="outline">
 				Lock and retry
@@ -183,7 +184,7 @@ function ConnectedWalletHome() {
 									? "Funds are held on legacy addresses."
 									: `${(legacyBalance / 100_000_000).toFixed(8)} BSV is held on legacy addresses.`}
 							</span>
-							<Button asChild size="sm" variant="outline">
+							<Button asChild size="sm">
 								<Link href="/wallet/migrate">Review migration</Link>
 							</Button>
 						</div>

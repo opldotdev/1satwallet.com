@@ -16,7 +16,12 @@ import {
 	waitForSettledPage,
 } from "./support/layout";
 import type { Locator } from "./support/page-query";
-import { CHAIN_TIMEOUT, unlockWallet, walletTest } from "./support/wallet";
+import {
+	CHAIN_TIMEOUT,
+	readDepositAddress,
+	unlockWallet,
+	walletTest,
+} from "./support/wallet";
 
 // The wallet overview, its Receive, Send and Lock BSV sheets and the unlock
 // screen on phones, as testnet wallet A. Read-only: sheets are opened and
@@ -180,6 +185,188 @@ walletTest(
 			}
 		}
 		problems.throwIfAny("Overview sheets on phones");
+	},
+);
+
+interface ReviewGeometry {
+	detailRows: number;
+	footers: {
+		width: number;
+		buttons: { label: string; width: number; height: number }[];
+	}[];
+}
+
+/** The review state of the one open sheet: its DetailList and footer. */
+function measureReview(browser: Browser): Promise<ReviewGeometry> {
+	return browser.evaluate(() => {
+		const round = (n: number) => Math.round(n * 10) / 10;
+		const dialog = Array.from(
+			document.querySelectorAll(
+				'[data-slot="dialog-content"][data-state="open"]',
+			),
+		).find((el) => el.getClientRects().length > 0);
+		return {
+			detailRows:
+				dialog?.querySelectorAll(
+					'[data-slot="detail-list"] [data-slot="detail-row"]',
+				).length ?? 0,
+			footers: Array.from(
+				dialog?.querySelectorAll('[data-slot="dialog-footer"]') ?? [],
+				(footer) => ({
+					width: round(footer.getBoundingClientRect().width),
+					buttons: Array.from(footer.querySelectorAll("button"))
+						.filter((el) => el.getClientRects().length > 0)
+						.map((el) => {
+							const box = el.getBoundingClientRect();
+							return {
+								label: (el.textContent ?? "").replace(/\s+/g, " ").trim(),
+								width: round(box.width),
+								height: round(box.height),
+							};
+						}),
+				}),
+			),
+		};
+	}, null);
+}
+
+function checkReview(
+	g: ReviewGeometry,
+	where: string,
+	confirmLabel: string,
+	problems: LayoutProblems,
+) {
+	if (g.detailRows === 0) {
+		problems.add(
+			`${where}: no [data-slot="detail-row"] in a [data-slot="detail-list"], expected the review as a DetailList.`,
+		);
+	}
+	const buttons = g.footers.flatMap((footer) =>
+		footer.buttons.map((button) => ({ ...button, footer: footer.width })),
+	);
+	const labels = buttons.map((button) => button.label);
+	if (
+		g.footers.length !== 1 ||
+		buttons.length !== 2 ||
+		!labels.includes("Back") ||
+		!labels.includes(confirmLabel)
+	) {
+		problems.add(
+			`${where}: footer buttons are [${labels.map((l) => `"${l}"`).join(", ")}] in ${g.footers.length} footer(s), expected "Back" and "${confirmLabel}" in one DialogFooter.`,
+		);
+	}
+	for (const button of buttons) {
+		if (button.height < MIN_TAP_TARGET) {
+			problems.add(
+				`${where}: footer button "${button.label}" is ${button.height}px tall, expected at least ${MIN_TAP_TARGET}px.`,
+			);
+		}
+		if (Math.abs(button.width - button.footer) > TOLERANCE) {
+			problems.add(
+				`${where}: footer button "${button.label}" is ${button.width}px wide, expected the footer's ${button.footer}px.`,
+			);
+		}
+	}
+}
+
+/** The smallest amounts each sheet accepts. Neither is ever confirmed. */
+const SEND_AMOUNT = "0.00000001";
+const LOCK_AMOUNT = "0.00001";
+
+walletTest(
+	"overview review steps on phones: Send and Lock BSV, never confirmed",
+	async (browser) => {
+		const problems = new LayoutProblems();
+		// Sending to the wallet's own address, so a stray confirm would cost
+		// only the fee. The test only reaches the review and goes Back.
+		const address = await readDepositAddress(browser);
+		await setViewport(browser, PHONE_VIEWPORTS[0]);
+
+		const reviews: readonly {
+			trigger: Locator;
+			dialog: DialogLocator;
+			fill: () => Promise<void>;
+			review: string;
+			confirm: string;
+		}[] = [
+			{
+				trigger: { role: "button", name: "Send", within: balanceRegion },
+				dialog: { role: "dialog", name: "Send BSV" },
+				fill: async () => {
+					const dialog: Locator = { role: "dialog", name: "Send BSV" };
+					await browser.fill(
+						{ role: "textbox", name: "Recipient", within: dialog },
+						address,
+					);
+					await browser.fill(
+						{ role: "textbox", name: "Amount (BSV)", within: dialog },
+						SEND_AMOUNT,
+					);
+				},
+				review: "Review payment",
+				confirm: "Confirm and send",
+			},
+			{
+				trigger: { role: "button", name: "Lock BSV", within: locksRegion },
+				dialog: { role: "dialog", name: "Lock BSV" },
+				fill: async () => {
+					await browser.fill(
+						{
+							role: "textbox",
+							name: "Amount (BSV)",
+							within: { role: "dialog", name: "Lock BSV" },
+						},
+						LOCK_AMOUNT,
+					);
+				},
+				review: "Review lock",
+				confirm: "Confirm and lock",
+			},
+		];
+
+		for (const { trigger, dialog, fill, review, confirm } of reviews) {
+			await setViewport(browser, PHONE_VIEWPORTS[0]);
+			await browser.click(trigger, CHAIN_TIMEOUT);
+			await waitForOpenDialog(browser, dialog.name);
+			await fill();
+			await browser.click({ role: "button", name: review, within: dialog });
+			const confirmButton: Locator = {
+				role: "button",
+				name: confirm,
+				within: dialog,
+			};
+			await browser.waitUntil(
+				`the ${dialog.name} review`,
+				confirmButton,
+				undefined,
+				undefined,
+				CHAIN_TIMEOUT,
+			);
+			for (const viewport of PHONE_VIEWPORTS) {
+				await setViewport(browser, viewport);
+				const where = `${dialog.name} review at ${describeViewport(viewport)}`;
+				checkReview(await measureReview(browser), where, confirm, problems);
+				checkBottomSheet(await measureOpenDialog(browser), where, problems);
+			}
+			// Back to the form, then close: nothing is signed or broadcast.
+			await browser.click({ role: "button", name: "Back", within: dialog });
+			await browser.waitUntil(`the ${dialog.name} form`, {
+				role: "button",
+				name: review,
+				within: dialog,
+			});
+			const stillReviewing = await browser.query(confirmButton);
+			if (stillReviewing.count > 0) {
+				throw new Error(`${dialog.name} stayed on its review after Back.`);
+			}
+			await browser.press("Escape");
+			await browser.waitUntil(
+				`the "${dialog.name}" dialog to close`,
+				dialog,
+				(result) => result.count === 0,
+			);
+		}
+		problems.throwIfAny("Overview review steps on phones");
 	},
 );
 
