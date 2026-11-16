@@ -233,6 +233,26 @@ export function actionTimeLabel(
 	return isPendingAction(action) ? "Pending" : undefined;
 }
 
+const STATUS_LABELS: Partial<Record<WalletAction["status"], string>> = {
+	unprocessed: "Queued",
+	sending: "Sending",
+	unproven: "Unconfirmed",
+	unsigned: "Unsigned",
+	nosend: "Not sent",
+	nonfinal: "Not final",
+	failed: "Failed",
+};
+
+/**
+ * The row's one status badge, in plain words. A completed (mined) action has
+ * none: its date already says it is done.
+ */
+export function actionStatusLabel(
+	action: Pick<WalletAction, "status">,
+): string | undefined {
+	return STATUS_LABELS[action.status];
+}
+
 export function actionReferenceLabel(action: WalletAction): string | undefined {
 	return action.labels?.find(
 		(label) =>

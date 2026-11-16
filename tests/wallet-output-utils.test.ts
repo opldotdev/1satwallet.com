@@ -7,6 +7,8 @@ import {
 	classifyContent,
 	getDisplayOutpoint,
 	getOriginOutpoint,
+	shortOutpoint,
+	shortTxid,
 } from "../lib/wallet/wallet-output-utils";
 
 const txid = "ab".repeat(32);
@@ -106,5 +108,27 @@ describe("wallet ordinal display metadata", () => {
 				artworkUrl: `https://themetoken.dev/og/${txid}_0.png?v=2`,
 			},
 		]);
+	});
+});
+
+describe("short ids for list rows", () => {
+	const longTxid = `abcd${"0".repeat(56)}wxyz`;
+
+	test("shortTxid keeps the first and last four characters", () => {
+		assert.equal(shortTxid(longTxid), "abcd…wxyz");
+		assert.equal(shortTxid(longTxid).length, 9);
+	});
+
+	test("shortTxid shows a short id whole", () => {
+		assert.equal(shortTxid(""), "");
+		assert.equal(shortTxid("abc"), "abc");
+		assert.equal(shortTxid("0123456789"), "0123456789");
+		assert.equal(shortTxid("0123456789a"), "0123…789a");
+	});
+
+	test("shortOutpoint shortens the txid and keeps the output index", () => {
+		assert.equal(shortOutpoint(`${longTxid}.0`), "abcd…wxyz_0");
+		assert.equal(shortOutpoint(`${longTxid}_12`), "abcd…wxyz_12");
+		assert.equal(shortOutpoint(longTxid), "abcd…wxyz");
 	});
 });

@@ -50,3 +50,18 @@ export function classifyContent(
 	if (ct.startsWith("image/")) return "image";
 	return "other";
 }
+
+/**
+ * A txid shortened for a list row: the first and last four characters,
+ * "abcd…wxyz". An id of ten characters or fewer is shown whole, since
+ * shortening it would hide nothing.
+ */
+export function shortTxid(txid: string): string {
+	return txid.length <= 10 ? txid : `${txid.slice(0, 4)}…${txid.slice(-4)}`;
+}
+
+/** An outpoint (`txid.vout` or `txid_vout`) as "abcd…wxyz_vout". */
+export function shortOutpoint(outpoint: string): string {
+	const match = /^(.*)[._](\d+)$/.exec(outpoint);
+	return match ? `${shortTxid(match[1])}_${match[2]}` : shortTxid(outpoint);
+}

@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import { useSound } from "@/hooks/use-sound";
 import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
@@ -25,7 +26,11 @@ import {
 	ordinalAssetId,
 	validateOrdinalDestination,
 } from "@/lib/wallet/ordinal-actions";
-import { getDisplayOutpoint, getName } from "@/lib/wallet/wallet-output-utils";
+import {
+	getDisplayOutpoint,
+	getName,
+	shortOutpoint,
+} from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 export type OrdinalActionKind = "send" | "burn" | "sell" | "cancel";
@@ -40,9 +45,9 @@ interface OrdinalActionDialogProps {
 
 const TITLES: Record<OrdinalActionKind, string> = {
 	send: "Send ordinals",
-	burn: "Permanently burn ordinals",
+	burn: "Burn ordinals",
 	sell: "Listing create is off",
-	cancel: "Cancel ordinal listing",
+	cancel: "Cancel listing",
 };
 
 export function OrdinalActionDialog({
@@ -107,8 +112,8 @@ export function OrdinalActionDialog({
 			if (!destinationIsValid) {
 				setError(
 					destinationKind === "address"
-						? `Enter a valid ${chain}net P2PKH address.`
-						: "Enter a valid compressed BSV identity public key.",
+						? `Enter a valid ${chain}net address.`
+						: "Enter a valid identity key (66 hex characters).",
 				);
 				return;
 			}
@@ -149,6 +154,7 @@ export function OrdinalActionDialog({
 				recoverable: true,
 				context: { retryable: true },
 			});
+			console.error(`[ordinals] ${kind} failed`, { count: ids.length, cause });
 			setError(ordinalActionFailureMessage(cause));
 			play("error");
 		} finally {
@@ -173,49 +179,59 @@ export function OrdinalActionDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={setOpen}>
-			<DialogContent className="sm:max-w-lg" showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>{TITLES[kind]}</DialogTitle>
 					<DialogDescription>
-						Review {ordinals.length} selected ordinal
-						{ordinals.length === 1 ? "" : "s"} before asking the active wallet
-						to authorize the transaction.
+						{ordinals.length} ordinal{ordinals.length === 1 ? "" : "s"}{" "}
+						selected. Your wallet asks you to approve the transaction first.
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="max-h-40 space-y-1 overflow-y-auto rounded-md border p-3 text-xs">
-					{ordinals.map((ordinal) => (
-						<div key={ordinal.outpoint}>
-							<span className="font-medium">
-								{getName(ordinal) ?? "Ordinal"}
-							</span>
-							<span className="ml-2 break-all font-mono text-muted-foreground">
-								{getDisplayOutpoint(ordinal)}
-							</span>
-						</div>
-					))}
-				</div>
+				<ul className="max-h-48 divide-y overflow-y-auto rounded-lg border text-sm">
+					{ordinals.map((ordinal) => {
+						const outpoint = getDisplayOutpoint(ordinal);
+						return (
+							<li
+								key={ordinal.outpoint}
+								className="flex items-baseline justify-between gap-3 px-3 py-2"
+							>
+								<span className="min-w-0 truncate font-medium">
+									{getName(ordinal) ?? "Ordinal"}
+								</span>
+								<span
+									className="shrink-0 font-mono text-xs text-muted-foreground"
+									title={outpoint}
+								>
+									{shortOutpoint(outpoint)}
+								</span>
+							</li>
+						);
+					})}
+				</ul>
 
 				{!hasCompleteIds && (
-					<p className="text-sm text-destructive" role="alert">
+					<Notice tone="danger">
 						At least one ordinal is missing its wallet asset ID. Refresh before
 						continuing.
-					</p>
+					</Notice>
 				)}
 
 				{kind === "send" && (
-					<div className="space-y-3">
+					<div className="flex flex-col gap-3">
 						<fieldset className="grid grid-cols-2 gap-2">
-							<legend className="sr-only">Destination type</legend>
+							<legend className="sr-only">Send to</legend>
 							<Button
 								type="button"
+								aria-pressed={destinationKind === "address"}
 								variant={destinationKind === "address" ? "default" : "outline"}
 								onClick={() => setDestinationKind("address")}
 							>
-								P2PKH address
+								Address
 							</Button>
 							<Button
 								type="button"
+								aria-pressed={destinationKind === "counterparty"}
 								variant={
 									destinationKind === "counterparty" ? "default" : "outline"
 								}
@@ -224,16 +240,17 @@ export function OrdinalActionDialog({
 								Identity key
 							</Button>
 						</fieldset>
-						<div className="space-y-2">
+						<div className="flex flex-col gap-2">
 							<Label htmlFor="ordinal-destination">
 								{destinationKind === "address"
-									? `${chain}net P2PKH address`
-									: "Compressed identity public key"}
+									? "Recipient address"
+									: "Recipient identity key"}
 							</Label>
 							<Input
 								id="ordinal-destination"
 								autoComplete="off"
 								spellCheck={false}
+								className="font-mono"
 								value={destination}
 								onChange={(event) => setDestination(event.target.value)}
 							/>
@@ -241,43 +258,35 @@ export function OrdinalActionDialog({
 					</div>
 				)}
 
-				{kind === "sell" && (
-					<p className="text-sm text-muted-foreground" role="status">
-						{LISTING_CREATE_OFF_MESSAGE}
-					</p>
-				)}
+				{kind === "sell" && <Notice>{LISTING_CREATE_OFF_MESSAGE}</Notice>}
 
 				{kind === "burn" && (
-					<div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/5 p-3">
-						<p className="text-sm font-medium text-destructive">
-							Burning is permanent. Every ordinal listed above will be
-							destroyed.
-						</p>
-						<Label htmlFor="ordinal-burn-confirmation">
-							Type BURN to confirm all {ordinals.length} item
-							{ordinals.length === 1 ? "" : "s"}
-						</Label>
-						<Input
-							id="ordinal-burn-confirmation"
-							autoComplete="off"
-							value={burnConfirmation}
-							onChange={(event) => setBurnConfirmation(event.target.value)}
-						/>
+					<div className="flex flex-col gap-3">
+						<Notice tone="danger" title="Burning can't be undone">
+							Every ordinal listed above is destroyed.
+						</Notice>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="ordinal-burn-confirmation">
+								Type BURN to confirm{" "}
+								{ordinals.length === 1 ? "it" : `all ${ordinals.length}`}
+							</Label>
+							<Input
+								id="ordinal-burn-confirmation"
+								autoComplete="off"
+								value={burnConfirmation}
+								onChange={(event) => setBurnConfirmation(event.target.value)}
+							/>
+						</div>
 					</div>
 				)}
 
 				{kind === "cancel" && (
 					<p className="text-sm text-muted-foreground">
-						This creates a transaction that returns the listed ordinal to the
-						wallet basket.
+						This ends the listing and returns the ordinal to your wallet.
 					</p>
 				)}
 
-				{error && (
-					<p className="text-sm text-destructive" role="alert">
-						{error}
-					</p>
-				)}
+				{error && <Notice tone="danger">{error}</Notice>}
 
 				<DialogFooter>
 					<Button
@@ -294,7 +303,7 @@ export function OrdinalActionDialog({
 						disabled={!canSubmit}
 						onClick={() => void run()}
 					>
-						{busy && <Loader2 className="mr-2 size-4 animate-spin" />}
+						{busy && <Loader2 className="animate-spin" />}
 						{busy ? "Waiting for wallet…" : TITLES[kind]}
 					</Button>
 				</DialogFooter>

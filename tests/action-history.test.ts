@@ -9,6 +9,7 @@ import {
 	actionExplorerUrl,
 	actionHistoryForIdentity,
 	actionReferenceLabel,
+	actionStatusLabel,
 	actionTimeLabel,
 	isPendingAction,
 	listActionHistoryPage,
@@ -227,5 +228,17 @@ describe("action history", () => {
 			`https://test.whatsonchain.com/tx/${action.txid}`,
 		);
 		assert.equal(actionExplorerUrl("not-a-txid", "main"), undefined);
+	});
+	test("gives a row one plain status badge, and none once it is mined", () => {
+		const label = (status: WalletAction["status"]) =>
+			actionStatusLabel({ status });
+		assert.equal(label("completed"), undefined);
+		assert.equal(label("unproven"), "Unconfirmed");
+		assert.equal(label("sending"), "Sending");
+		assert.equal(label("unprocessed"), "Queued");
+		assert.equal(label("unsigned"), "Unsigned");
+		assert.equal(label("nosend"), "Not sent");
+		assert.equal(label("nonfinal"), "Not final");
+		assert.equal(label("failed"), "Failed");
 	});
 });
