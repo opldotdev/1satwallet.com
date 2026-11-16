@@ -56,7 +56,7 @@ const describeRefusal = ({
 		case "not-an-array":
 			return `Refused: ${field} must be an array, not ${value}.`;
 		case "not-an-object":
-			return `Refused: ${field} must be an object, not ${value}.`;
+			return `Refused: ${field} must be a plain object, not ${value}.`;
 		case "reserved-linkage":
 			return `Refused: key linkage for the reserved "${prefix}" protocol ${quoted} is not available to apps.`;
 	}
@@ -83,9 +83,12 @@ const shown = (value: string): string => clipForLog(value);
 const typeOf = (value: unknown): string => {
 	if (value === null) return "null";
 	if (typeof value !== "object") return typeof value;
-	return Array.isArray(value)
-		? "an array"
-		: `an object (${Object.prototype.toString.call(value).slice(8, -1)})`;
+	if (Array.isArray(value)) return "an array";
+	const proto = Object.getPrototypeOf(value);
+	if (proto === Object.prototype || proto === null) return "a plain object";
+	const tag = Object.prototype.toString.call(value).slice(8, -1);
+	const name = tag !== "Object" ? tag : proto?.constructor?.name;
+	return `an instance of ${name || "an unnamed class"}`;
 };
 
 const normalize = (value: string): string => value.trim().toLowerCase();
@@ -275,86 +278,184 @@ type ListActions = (
 const isHiddenAction = (action: ListedAction): boolean =>
 	(Array.isArray(action.labels) ? action.labels : []).some(isAdminOnlyName);
 
-/** Page size of the label-only scan, and the most actions it will read. */
+/** An action as the app sees it: admin-only outputs and unasked labels gone. */
+const forApp = (
+	action: ListedAction,
+	args: Record<string, unknown>,
+): ListedAction => {
+	const next = { ...action };
+	if (Array.isArray(action.outputs))
+		next.outputs = action.outputs.filter(
+			(output) => !isAdminOnlyName(record(output)?.basket),
+		);
+	if (args.includeLabels !== true) delete next.labels;
+	return next;
+};
+
+/**
+ * Spec-op labels are 64-hex ids the wallet acts on while listing (the noSend
+ * one aborts actions), so a request carrying one is never scanned ahead.
+ */
+const isSpecOpLabel = (label: unknown): boolean =>
+	typeof label === "string" && /^[0-9a-f]{64}$/.test(label);
+
+/** Most actions one label-only scan page reads, and the most a scan reads. */
 export const LIST_SCAN_PAGE = 1000;
 export const LIST_SCAN_MAX = 10_000;
+
+/**
+ * How far a label-only scan of one query got: underlying positions of the
+ * visible actions found in the first `scanned` actions of `sourceTotal`.
+ */
+interface ListScan {
+	sourceTotal: number;
+	scanned: number;
+	visible: number[];
+}
+
+/** The last few scans, per originator and label query; see listActionsForApp. */
+export type ListScanCache = Map<string, ListScan>;
+const SCAN_CACHE_SIZE = 8;
+
+export const createListScanCache = (): ListScanCache => new Map();
 
 /**
  * An app's `listActions` result without admin-only module data: actions with
  * an admin-only label (e.g. `p color …`) are left out, and outputs in an
  * admin-only basket are stripped from the rest.
  *
- * `offset`, `limit` and `totalActions` count visible actions only. A first
- * scan reads labels alone, in pages of 1000, to find which of the wallet's
- * actions are visible and how many there are; a second call reads the
- * requested window in full. The scan stops after 10,000 actions: past that,
- * unscanned actions count as visible in `totalActions` (an upper bound) and
- * an offset beyond the scanned visible actions returns no actions.
+ * `offset` and `limit` count visible actions. A label-only scan reads forward
+ * only until `offset + limit` visible actions are found or the wallet's list
+ * ends (pages sized to what is still needed, at most 1000; at most 10,000
+ * actions in all), then the requested window is read once in full. The scan
+ * is kept in `cache` per originator and label query, so the next page
+ * continues it instead of starting at 0; it is dropped when the wallet's
+ * total for the query changes.
+ *
+ * `totalActions` is the visible actions found so far plus the actions not
+ * yet scanned: an upper bound, exact once a scan has reached the end.
+ *
+ * A request carrying a spec-op label goes to the wallet once, as asked, and
+ * only its result is filtered; its `totalActions` is the wallet's total less
+ * the actions dropped from that page (an upper bound).
  */
 export async function listActionsForApp(
 	listActions: ListActions,
 	args: Record<string, unknown>,
 	originator: unknown,
+	cache: ListScanCache = createListScanCache(),
 ): Promise<ListedActions> {
 	// The wallet's own checks and defaults (limit 10, offset 0); throws the
 	// wallet's WERR_INVALID_PARAMETER for a bad window.
 	const { limit, offset } = Validation.validateListActionsArgs(
 		args as unknown as ListActionsArgs,
 	);
-	const scanArgs = Object.fromEntries(
+	const labels = Array.isArray(args.labels) ? args.labels : [];
+
+	if (labels.some(isSpecOpLabel)) {
+		const result = await listActions(
+			{ ...args, includeLabels: true },
+			originator,
+		);
+		const kept = result.actions.filter((action) => !isHiddenAction(action));
+		return {
+			totalActions: Math.max(
+				0,
+				result.totalActions - (result.actions.length - kept.length),
+			),
+			actions: kept.map((action) => forApp(action, args)),
+		};
+	}
+
+	const query = Object.fromEntries(
 		Object.entries({
 			labels: args.labels,
 			labelQueryMode: args.labelQueryMode,
 			seekPermission: args.seekPermission,
 		}).filter(([, value]) => value !== undefined),
 	);
-	const visible: number[] = [];
-	let scanned = 0;
-	let sourceTotal = 0;
-	while (scanned < LIST_SCAN_MAX) {
-		const page = await listActions(
+	const key = JSON.stringify([
+		typeof originator === "string" ? originator : null,
+		labels,
+		args.labelQueryMode ?? "any",
+	]);
+	const wanted = offset + limit;
+
+	const scanTo = async (from: ListScan | undefined): Promise<ListScan> => {
+		const scan: ListScan = from
+			? { ...from, visible: [...from.visible] }
+			: { sourceTotal: Number.POSITIVE_INFINITY, scanned: 0, visible: [] };
+		while (
+			scan.visible.length < wanted &&
+			scan.scanned < scan.sourceTotal &&
+			scan.scanned < LIST_SCAN_MAX
+		) {
+			const pageSize = Math.min(
+				LIST_SCAN_PAGE,
+				LIST_SCAN_MAX - scan.scanned,
+				Math.max(32, 2 * (wanted - scan.visible.length)),
+			);
+			const page = await listActions(
+				{
+					...query,
+					includeLabels: true,
+					limit: pageSize,
+					offset: scan.scanned,
+				},
+				originator,
+			);
+			if (from && page.totalActions !== scan.sourceTotal)
+				return await scanTo(undefined);
+			scan.sourceTotal = page.totalActions;
+			for (const [index, action] of page.actions.entries())
+				if (!isHiddenAction(action)) scan.visible.push(scan.scanned + index);
+			scan.scanned += page.actions.length;
+			if (page.actions.length < pageSize) {
+				scan.sourceTotal = scan.scanned;
+				break;
+			}
+		}
+		if (!Number.isFinite(scan.sourceTotal)) scan.sourceTotal = scan.scanned;
+		cache.delete(key);
+		cache.set(key, scan);
+		if (cache.size > SCAN_CACHE_SIZE)
+			cache.delete(cache.keys().next().value as string);
+		return scan;
+	};
+
+	const read = async (
+		scan: ListScan,
+		retry: boolean,
+	): Promise<ListedActions> => {
+		const totalActions =
+			scan.visible.length + Math.max(0, scan.sourceTotal - scan.scanned);
+		const window = scan.visible.slice(offset, wanted);
+		if (window.length === 0) return { totalActions, actions: [] };
+		const first = window[0];
+		const full = await listActions(
 			{
-				...scanArgs,
+				...args,
 				includeLabels: true,
-				limit: LIST_SCAN_PAGE,
-				offset: scanned,
+				offset: first,
+				limit: window[window.length - 1] - first + 1,
 			},
 			originator,
 		);
-		sourceTotal = page.totalActions;
-		for (const [index, action] of page.actions.entries())
-			if (!isHiddenAction(action)) visible.push(scanned + index);
-		scanned += page.actions.length;
-		if (page.actions.length < LIST_SCAN_PAGE || scanned >= sourceTotal) break;
-	}
-	const totalActions = visible.length + Math.max(0, sourceTotal - scanned);
-	const window = visible.slice(offset, offset + limit);
-	if (window.length === 0) return { totalActions, actions: [] };
+		// The wallet changed since the scan: scan again from 0, once.
+		if (full.totalActions !== scan.sourceTotal && retry) {
+			cache.delete(key);
+			return await read(await scanTo(undefined), false);
+		}
+		return {
+			totalActions,
+			actions: window
+				.map((position) => full.actions[position - first])
+				.filter((action) => action !== undefined && !isHiddenAction(action))
+				.map((action) => forApp(action, args)),
+		};
+	};
 
-	const first = window[0];
-	const full = await listActions(
-		{
-			...args,
-			includeLabels: true,
-			offset: first,
-			limit: window[window.length - 1] - first + 1,
-		},
-		originator,
-	);
-	const actions = window
-		.map((position) => full.actions[position - first])
-		// The wallet may have changed between the two calls.
-		.filter((action) => action !== undefined && !isHiddenAction(action))
-		.map((action) => {
-			const next = { ...action };
-			if (Array.isArray(action.outputs))
-				next.outputs = action.outputs.filter(
-					(output) => !isAdminOnlyName(record(output)?.basket),
-				);
-			if (args.includeLabels !== true) delete next.labels;
-			return next;
-		});
-	return { totalActions, actions };
+	return await read(await scanTo(cache.get(key)), true);
 }
 
 /**
@@ -370,6 +471,7 @@ export function guardModuleIdentifiers<T extends object>(
 	wallet: T,
 	adminOriginator: string,
 ): T {
+	const scans = createListScanCache();
 	return new Proxy(wallet, {
 		get(target, prop, receiver) {
 			const value: unknown = Reflect.get(target, prop, receiver);
@@ -388,6 +490,7 @@ export function guardModuleIdentifiers<T extends object>(
 							(next, originator) => value.call(target, next, originator),
 							listArgs ?? {},
 							args[1],
+							scans,
 						);
 					return value.apply(target, args);
 				}

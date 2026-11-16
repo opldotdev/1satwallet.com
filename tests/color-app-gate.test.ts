@@ -15,6 +15,7 @@ import {
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
 import {
+	createListScanCache,
 	findMisroutedModuleIdentifier,
 	findRefusedAppName,
 	guardModuleIdentifiers,
@@ -236,7 +237,8 @@ describe("findMisroutedModuleIdentifier", () => {
 			[Object.assign([], { basket: " default" }), "an array"],
 			["P color", "string"],
 			[null, "null"],
-			[new Map([["basket", "x"]]), "an object (Map)"],
+			[new Map([["basket", "x"]]), "an instance of Map"],
+			[new (class Args {})(), "an instance of Args"],
 		] as const) {
 			assert.deepEqual(findMisroutedModuleIdentifier(args), {
 				field: "args",
@@ -244,6 +246,12 @@ describe("findMisroutedModuleIdentifier", () => {
 				reason: "not-an-object",
 			});
 		}
+		const refusal = findMisroutedModuleIdentifier(new (class Args {})());
+		assert.ok(refusal);
+		assert.equal(
+			new MisroutedModuleIdentifierError(refusal).message,
+			"Refused: args must be a plain object, not an instance of Args.",
+		);
 	});
 
 	it("refuses names that are not primitive strings and lists that are not arrays", () => {
@@ -252,7 +260,7 @@ describe("findMisroutedModuleIdentifier", () => {
 				{ basket: new String("P color x") },
 				"basket",
 				"not-a-string",
-				"an object (String)",
+				"an instance of String",
 			],
 			[{ basket: 1 }, "basket", "not-a-string", "number"],
 			[{ labels: [null] }, "labels[0]", "not-a-string", "null"],
@@ -261,25 +269,25 @@ describe("findMisroutedModuleIdentifier", () => {
 				{ labels: { 0: "P color x", length: 1 } },
 				"labels",
 				"not-an-array",
-				"an object (Object)",
+				"a plain object",
 			],
 			[
 				{ protocolID: { 0: 2, 1: "P color x" } },
 				"protocolID",
 				"not-an-array",
-				"an object (Object)",
+				"a plain object",
 			],
 			[
 				{ protocolID: [2, new String("P color x")] },
 				"protocolID[1]",
 				"not-a-string",
-				"an object (String)",
+				"an instance of String",
 			],
 			[
 				{ outputs: { 0: { insertionRemittance: { basket: "P color x" } } } },
 				"outputs",
 				"not-an-array",
-				"an object (Object)",
+				"a plain object",
 			],
 			[{ outputs: [null] }, "outputs[0]", "not-an-object", "null"],
 			[
@@ -296,7 +304,7 @@ describe("findMisroutedModuleIdentifier", () => {
 				},
 				"outputs[0].insertionRemittance.tags[0]",
 				"not-a-string",
-				"an object (String)",
+				"an instance of String",
 			],
 		];
 		for (const [args, field, reason, value] of cases) {
@@ -808,27 +816,148 @@ describe("apps never see admin-only module actions or outputs in listActions", (
 		assert.deepEqual(methods(calls), ["listActions"]);
 	});
 
-	it("stops scanning at the cap and counts the rest as an upper bound", async () => {
-		const actions = Array.from({ length: LIST_SCAN_MAX + 5 }, (_, index) => ({
+	/** A wallet listing over `actions` that counts its calls. */
+	const counted = (actions: Record<string, unknown>[]) => {
+		const calls: Record<string, unknown>[] = [];
+		const listActions = async (args: Record<string, unknown>) => {
+			calls.push(args);
+			return listFrom({ actions }, args);
+		};
+		return { calls, listActions };
+	};
+	const history = (length: number) =>
+		Array.from({ length }, (_, index) => ({
 			txid: String(index),
-			labels: index % 2 === 0 ? ["p color plan"] : [],
+			labels: index % 2 === 0 ? ["p color plan"] : ["payments"],
 		}));
-		let scanned = 0;
+
+	it("reads only as far as the requested page, in two calls", async () => {
+		const actions = history(5_000);
+		const { calls, listActions } = counted(actions);
 		const result = await listActionsForApp(
-			async (args) => {
-				const page = listFrom({ actions }, args);
-				if (args.limit === LIST_SCAN_PAGE) scanned += page.actions.length;
-				return page;
-			},
-			{ labels: [], limit: 2 },
+			listActions,
+			{ labels: [], limit: 10 },
 			APP,
 		);
+		assert.equal(calls.length, 2);
+		assert.deepEqual(
+			calls.map((call) => [call.offset, call.limit]),
+			[
+				[0, 32],
+				[1, 19],
+			],
+		);
+		assert.deepEqual(
+			result.actions.map((action) => action.txid),
+			["1", "3", "5", "7", "9", "11", "13", "15", "17", "19"],
+		);
+		// 16 visible found in the 32 scanned, plus the 4,968 not yet scanned.
+		assert.equal(result.totalActions, 16 + 4_968);
+	});
+
+	it("continues the cached scan for the next page", async () => {
+		const actions = history(5_000);
+		const { calls, listActions } = counted(actions);
+		const cache = createListScanCache();
+		const page = (offset: number) =>
+			listActionsForApp(
+				listActions,
+				{ labels: [], offset, limit: 10 },
+				APP,
+				cache,
+			);
+		await page(0);
+		const second = await page(10);
+		assert.deepEqual(
+			second.actions.map((action) => action.txid),
+			["21", "23", "25", "27", "29", "31", "33", "35", "37", "39"],
+		);
+		// Page two scans on from action 32 (one call) and reads its window.
+		assert.equal(calls.length, 4);
+		assert.equal(calls[2].offset, 32);
+		const again = await page(0);
+		assert.deepEqual(
+			again.actions.map((action) => action.txid),
+			["1", "3", "5", "7", "9", "11", "13", "15", "17", "19"],
+		);
+		assert.equal(calls.length, 5);
+	});
+
+	it("rescans when the wallet's total changes", async () => {
+		const actions = history(100);
+		const { calls, listActions } = counted(actions);
+		const cache = createListScanCache();
+		const page = () =>
+			listActionsForApp(listActions, { labels: [], limit: 2 }, APP, cache);
+		await page();
+		actions.unshift({ txid: "new", labels: ["payments"] });
+		const result = await page();
+		assert.deepEqual(
+			result.actions.map((action) => action.txid),
+			["new", "1"],
+		);
+		// The cached window read saw the new total, so it scanned again once.
+		assert.deepEqual(
+			calls.map((call) => [call.offset, call.limit]),
+			[
+				[0, 32],
+				[1, 3],
+				[1, 3],
+				[0, 32],
+				[0, 3],
+			],
+		);
+	});
+
+	it("reports an exact total once the scan reaches the end", async () => {
+		const actions = history(40);
+		const { listActions } = counted(actions);
+		const result = await listActionsForApp(
+			listActions,
+			{ labels: [], offset: 15, limit: 10 },
+			APP,
+		);
+		assert.equal(result.totalActions, 20);
+		assert.deepEqual(
+			result.actions.map((action) => action.txid),
+			["31", "33", "35", "37", "39"],
+		);
+	});
+
+	it("stops scanning at the cap and counts the rest as an upper bound", async () => {
+		const actions = history(LIST_SCAN_MAX + 5);
+		const { calls, listActions } = counted(actions);
+		const result = await listActionsForApp(
+			listActions,
+			{ labels: [], offset: LIST_SCAN_MAX, limit: 2 },
+			APP,
+		);
+		const scanned = calls.reduce(
+			(sum, call) => sum + Math.min(Number(call.limit), actions.length),
+			0,
+		);
 		assert.equal(scanned, LIST_SCAN_MAX);
+		assert.ok(calls.every((call) => Number(call.limit) <= LIST_SCAN_PAGE));
 		assert.equal(result.totalActions, LIST_SCAN_MAX / 2 + 5);
+		assert.deepEqual(result.actions, []);
+	});
+
+	it("passes a spec-op label through once and only filters the result", async () => {
+		const noSend =
+			"ac6b20a3bb320adafecd637b25c84b792ad828d3aa510d05dc841481f664277d";
+		const { calls, listActions } = counted(history(6));
+		const result = await listActionsForApp(
+			listActions,
+			{ labels: [noSend], limit: 4 },
+			APP,
+		);
+		assert.equal(calls.length, 1);
+		assert.deepEqual(calls[0].labels, [noSend]);
 		assert.deepEqual(
 			result.actions.map((action) => action.txid),
 			["1", "3"],
 		);
+		assert.equal(result.totalActions, 4);
 	});
 
 	it("rejects a bad window with the wallet's own error", async () => {

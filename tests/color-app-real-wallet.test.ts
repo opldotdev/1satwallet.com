@@ -114,6 +114,7 @@ const seedActions = async (
 		labels.set(label, id);
 		return id;
 	};
+	const run = crypto.randomUUID();
 	const txids: string[] = [];
 	for (const [index, action] of actions.entries()) {
 		const txid = (index + 1).toString(16).padStart(64, "0");
@@ -123,7 +124,8 @@ const seedActions = async (
 			transactionId: 0,
 			userId: user.userId,
 			status: "completed",
-			reference: `ref-${index}`,
+			// References must be unique across this test run's databases.
+			reference: `${run}-${index}`,
 			isOutgoing: true,
 			satoshis: 1,
 			description: `action ${index}`,
@@ -432,5 +434,48 @@ describe("an app's listActions against a real wallet", () => {
 		const byLabel = await manager.listActions({ labels: ["mylabel"] }, APP);
 		assert.equal(byLabel.totalActions, 3);
 		assert.equal(byLabel.actions[0].labels, undefined);
+	});
+});
+
+describe("an app's listActions cost against a real wallet", () => {
+	it("reads a page of 10 from a long history in a few wallet calls", async () => {
+		const { wallet, manager, local, identityKey } = await setup();
+		const length = 600;
+		await seedActions(
+			local,
+			identityKey,
+			Array.from({ length }, (_, index) => ({
+				labels: index % 3 === 0 ? ["p color plan x"] : ["mylabel"],
+				baskets: ["tokens"],
+			})),
+		);
+		const calls: { offset?: number; limit?: number }[] = [];
+		const listActions = wallet.listActions.bind(wallet);
+		wallet.listActions = async (args, originator) => {
+			calls.push({ offset: args.offset, limit: args.limit });
+			return await listActions(args, originator);
+		};
+
+		const first = await manager.listActions(
+			{ labels: [], includeOutputs: true, limit: 10 },
+			APP,
+		);
+		assert.equal(first.actions.length, 10);
+		// One label-only scan page and one read of the window.
+		assert.deepEqual(calls, [
+			{ offset: 0, limit: 32 },
+			{ offset: 1, limit: 14 },
+		]);
+		// 21 visible in the 32 scanned, plus the 568 not yet scanned.
+		assert.equal(first.totalActions, 21 + 568);
+
+		const second = await manager.listActions(
+			{ labels: [], includeOutputs: true, offset: 10, limit: 10 },
+			APP,
+		);
+		assert.equal(second.actions.length, 10);
+		// The cached scan already covers it: one read of the window.
+		assert.equal(calls.length, 3);
+		assert.ok(calls.every(({ limit = 0 }) => limit <= 32));
 	});
 });
