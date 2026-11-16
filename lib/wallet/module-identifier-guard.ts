@@ -3,7 +3,7 @@ import { isCWIStandardMethod } from "@/lib/cwi/types";
 import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 
 /**
- * The permissions manager (wallet-toolbox-client 2.16.0) checks reserved
+ * The permissions manager (wallet-toolbox-client 2.17.0) checks reserved
  * names on the raw string: a basket, label or protocol goes to a permission
  * module only when it starts with lowercase `p `, counts as the wallet's own
  * (`admin`) only when it starts with lowercase `admin`, and the baskets
@@ -237,7 +237,7 @@ export function findMisroutedModuleIdentifier(
  * the manager and another to the wallet; no `revealSpecificKeyLinkage` for a
  * reserved `p ` or `admin` protocol; and no `getPublicKey` that asks for the
  * identity key together with a protocolID. The manager (wallet-toolbox-client
- * 2.16.0) hands a `p ` protocol's `getPublicKey` to its module before its own
+ * 2.17.0) hands a `p ` protocol's `getPublicKey` to its module before its own
  * identity-key prompt, and the wallet underneath returns the identity key
  * whenever `identityKey` is set, ignoring the protocol. So `p color …` (or a
  * 1Sat module's `p ` scheme) would give an app the identity key unasked. An

@@ -28,6 +28,12 @@ jobs:
         run: bun outdated
       - run: bun audit
       - run: bunx biome check .
+      - name: No fixed sleeps in e2e tests
+        run: |
+          if grep -rnE 'waitForTimeout|setTimeout|Bun\.sleep|"wait", *"[0-9]' e2e/; then
+            echo "::error::e2e tests must wait on app state (agent-browser wait conditions), not on time."
+            exit 1
+          fi
       - run: bunx tsc --noEmit
       - run: bun test
       - run: bun scripts/check-routes.mjs

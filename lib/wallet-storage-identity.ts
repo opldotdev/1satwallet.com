@@ -1,6 +1,6 @@
 type Chain = "main" | "test";
 
-const INSTALLATION_ID_KEY = "1sat-wallet-storage-installation-id";
+export const INSTALLATION_ID_KEY = "1sat-wallet-storage-installation-id";
 const INSTALLATION_ID_PREFIX = "1sat-web-";
 const INSTALLATION_ID =
 	/^1sat-web-[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

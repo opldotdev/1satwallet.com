@@ -9,7 +9,11 @@
 		"lint": "biome check",
 		"lint:fix": "biome check --write .",
 		"format": "biome format --write",
-		"cwi:e2e:redirect": "node scripts/cwi-redirect-e2e.mjs"
+		"cwi:e2e:redirect": "node scripts/cwi-redirect-e2e.mjs",
+		"test:live": "bun test ./tests/integration/endpoints.live.ts",
+		"e2e": "bun e2e/run.ts",
+		"e2e:mainnet": "bun e2e/run.ts --suite mainnet",
+		"e2e:wallet:create": "bun e2e/scripts/create-test-wallet.ts"
 	},
 	"dependencies": {
 		"@1sat/actions": "0.1.6",
@@ -23,8 +27,8 @@
 		"@1sat/wallet-browser": "0.1.2",
 		"@bsv/color-permission-module": "npm:@bopen-io/color-permission-module@0.2.3",
 		"@bsv/message-box-client": "2.7.0",
-		"@bsv/sdk": "^4.1.0",
-		"@bsv/wallet-toolbox-client": "2.16.0",
+		"@bsv/sdk": "^4.1.1",
+		"@bsv/wallet-toolbox-client": "2.17.0",
 		"@convex-dev/presence": "0.4.0",
 		"@radix-ui/react-alert-dialog": "^1.2.1",
 		"@radix-ui/react-context-menu": "^2.4.1",
@@ -74,6 +78,7 @@
 		"@types/node": "^26.6.6",
 		"@types/react": "^19.3.0",
 		"@types/react-dom": "^19.3.0",
+		"agent-browser": "^0.43.0",
 		"babel-plugin-react-compiler": "1.0.0",
 		"fake-indexeddb": "^6.2.8",
 		"schema-dts": "^2.1.0",

@@ -1,0 +1,219 @@
+name: E2E
+
+# Browser tests driven by agent-browser.
+#
+# visitor: builds this commit, serves it with `next start` and checks it as a
+# new visitor (no wallet, no secrets), up to the password step of creating
+# a wallet, and checks the visitor pages' phone layout. Every PR, forks
+# included, and every push to main.
+#
+# testnet: the same local build, with the spending tests run as a throwaway
+# testnet wallet (secrets of the "e2e-testnet" environment). PRs to main
+# from this repository, nightly and by hand, once the repository variable
+# E2E_TESTNET_ENABLED is "true".
+#
+# production: the visitor checks against https://1satwallet.com, with no
+# secrets. After each Vercel Production deploy, nightly and by hand.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  deployment_status:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NEXT_PUBLIC_API_HOST: https://api.1sat.app
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  NEXT_PUBLIC_CONVEX_URL: https://ci-placeholder.convex.cloud
+  NEXT_PUBLIC_ONESAT_STACK_URL: https://api.1sat.app
+  NEXT_PUBLIC_ORDFS_URL: https://api.1sat.app
+  NEXT_PUBLIC_WALLET_STORAGE_URL: https://wallet.1sat.app
+
+jobs:
+  visitor:
+    name: Visitor (local build)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      # Ubuntu 24.04 blocks the unprivileged user namespaces Chrome's sandbox
+      # needs; allow them instead of turning the sandbox off.
+      - name: Install Chrome for agent-browser
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bunx agent-browser install --with-deps
+      - run: bun run build
+      - name: Start the app
+        run: |
+          bun run start > next-start.log 2>&1 &
+          if ! curl --silent --show-error --fail --output /dev/null \
+            --retry 60 --retry-delay 1 --retry-connrefused --retry-all-errors \
+            "$E2E_BASE_URL/"; then
+            cat next-start.log
+            exit 1
+          fi
+      - name: Visitor browser tests
+        run: bun run e2e:mainnet
+      - name: Server log
+        if: failure()
+        run: cat next-start.log
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-visitor-screenshots
+          path: e2e-artifacts/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  testnet:
+    name: Testnet (local build)
+    # Fork PRs and Dependabot get no environment secrets: they skip instead
+    # of failing, as does everything until the wallet is set up.
+    if: >-
+      vars.E2E_TESTNET_ENABLED == 'true' &&
+      github.actor != 'dependabot[bot]' && (
+        github.event_name == 'schedule' ||
+        github.event_name == 'workflow_dispatch' || (
+          github.event_name == 'pull_request' &&
+          github.base_ref == 'main' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: e2e-testnet
+    # One wallet, one writer: a run waits for the one in progress, which is
+    # never cancelled. GitHub keeps one pending run per group, so a newer
+    # pending run replaces an older pending one.
+    concurrency:
+      group: e2e-testnet-wallet
+      cancel-in-progress: false
+    env:
+      E2E_BASE_URL: http://localhost:3000
+      # Nightly, the last run's one-block lock must unlock (or still be
+      # waiting on testnet's next block).
+      E2E_REQUIRE_UNLOCK: ${{ github.event_name == 'schedule' && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - name: Install Chrome for agent-browser
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bunx agent-browser install --with-deps
+
+      - name: Backend reachability
+        run: bun run test:live
+
+      - run: bun run build
+      - name: Start the app
+        run: |
+          bun run start > next-start.log 2>&1 &
+          if ! curl --silent --show-error --fail --output /dev/null \
+            --retry 60 --retry-delay 1 --retry-connrefused --retry-all-errors \
+            "$E2E_BASE_URL/"; then
+            cat next-start.log
+            exit 1
+          fi
+
+      - name: Browser tests
+        run: bun run e2e
+        env:
+          E2E_WALLET_A_BACKUP: ${{ secrets.E2E_WALLET_A_BACKUP }}
+          E2E_WALLET_PASSPHRASE: ${{ secrets.E2E_WALLET_PASSPHRASE }}
+
+      - name: Server log
+        if: failure()
+        run: cat next-start.log
+
+      # Fails the job if the passphrase reached agent-browser's state, a temp
+      # file or a screenshot. It runs before any upload.
+      - name: Passphrase leak guard
+        if: always()
+        env:
+          E2E_WALLET_PASSPHRASE: ${{ secrets.E2E_WALLET_PASSPHRASE }}
+        run: |
+          if [ -z "$E2E_WALLET_PASSPHRASE" ]; then
+            echo "::error::E2E_WALLET_PASSPHRASE is not set in the e2e-testnet environment."
+            exit 1
+          fi
+          shopt -s nullglob
+          paths=()
+          for path in "$HOME/.agent-browser" "$RUNNER_TEMP" /tmp/1sat-e2e-* e2e-artifacts; do
+            [ -e "$path" ] && paths+=("$path")
+          done
+          if [ ${#paths[@]} -eq 0 ]; then exit 0; fi
+          if grep -rlaF -f <(printf %s "$E2E_WALLET_PASSPHRASE") "${paths[@]}"; then
+            echo "::error::The passphrase was found in the files above."
+            exit 1
+          fi
+
+      # Screenshots are taken only after the passphrase field is cleared.
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-testnet-screenshots
+          path: e2e-artifacts/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  production:
+    name: Production (read-only)
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' || (
+        github.event_name == 'deployment_status' &&
+        github.event.deployment_status.state == 'success' &&
+        github.event.deployment.creator.login == 'vercel[bot]' &&
+        github.event.deployment.environment == 'Production'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      E2E_BASE_URL: https://1satwallet.com
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.deployment.sha || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - name: Install Chrome for agent-browser
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bunx agent-browser install --with-deps
+
+      - name: Read-only browser tests
+        run: bun run e2e:mainnet
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-production-screenshots
+          path: e2e-artifacts/*.png
+          if-no-files-found: ignore
+          retention-days: 7

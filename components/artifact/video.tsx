@@ -56,7 +56,7 @@ const VideoArtifact: React.FC<VideoArtifactProps> = ({
 			className={`transition ${className || ""}`}
 			style={
 				needsHeightConstraint
-					? { maxHeight: "calc(96vh - 4rem)", maxWidth: "100%" }
+					? { maxHeight: "calc(96dvh - 4rem)", maxWidth: "100%" }
 					: undefined
 			}
 			src={videoSrc}

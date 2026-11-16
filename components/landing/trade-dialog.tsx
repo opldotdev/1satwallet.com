@@ -211,7 +211,7 @@ export function TradeDialog({
 				open={inventoryOpen}
 			/>
 			<SoundDialog open={open} onOpenChange={onOpenChange}>
-				<DialogContent className="flex h-[min(650px,90dvh)] max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[800px] flex-col gap-0 overflow-hidden p-0 shadow-2xl">
+				<DialogContent className="flex h-[min(650px,90dvh)] max-h-[90dvh] w-[calc(100vw-2rem)] max-w-[800px] flex-col overflow-hidden pb-0 shadow-2xl [--dialog-gap:0px] [--dialog-spacing:0px]">
 					<DialogHeader className="border-b bg-muted/40 p-4 pr-12 sm:p-6 sm:pr-12">
 						<div className="flex items-center justify-between gap-4">
 							<DialogTitle className="flex items-center gap-3 text-lg sm:text-xl">
@@ -325,7 +325,7 @@ export function TradeDialog({
 						</section>
 					</div>
 
-					<div className="flex flex-col gap-3 border-t bg-muted/30 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+					<div className="flex flex-col gap-3 border-t bg-muted/30 px-4 pt-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6">
 						<p className="text-muted-foreground text-xs">
 							Session expires automatically. Closing cancels it for both
 							parties.

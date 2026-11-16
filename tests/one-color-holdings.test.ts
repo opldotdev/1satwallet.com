@@ -411,7 +411,7 @@ describe("getOneColorAssetInfo", () => {
 });
 
 describe("getOneColorBalances", () => {
-	it("a deploy that cannot be read yields { dec: 0 } and is retried on the next read", async () => {
+	it("a deploy that cannot be read yields a placeholder { dec: 0 } marked unreadable, retried on the next read", async () => {
 		const { tx, assetId } = deployWithMetadata("SLV");
 		let online = false;
 		const { services, calls } = servicesWith(async () => {
@@ -458,7 +458,14 @@ describe("getOneColorBalances", () => {
 		console.error = (...args: unknown[]) => logged.push(args);
 		try {
 			assert.deepEqual(await getOneColorBalances(ctx), [
-				{ assetId, available: 40n, pending: 9n, authorities: 1, dec: 0 },
+				{
+					assetId,
+					available: 40n,
+					pending: 9n,
+					authorities: 1,
+					dec: 0,
+					infoUnreadable: true,
+				},
 			]);
 		} finally {
 			console.error = originalError;

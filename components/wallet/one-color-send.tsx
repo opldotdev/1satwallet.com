@@ -32,6 +32,7 @@ import {
 	type OneColorPendingSend,
 	type OneColorSendInput,
 	type OneColorSendOutcome,
+	oneColorDecimalsError,
 	oneColorMemoError,
 	oneColorSendAmountError,
 	parseOneColorAmount,
@@ -40,14 +41,13 @@ import {
 } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
-/** Scrolls inside the viewport on short screens; footer buttons full width on phones. */
-const SHEET_CLASS = "max-h-[calc(100dvh-2rem)] overflow-y-auto";
-const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
+/** Footer buttons full width on phones. */
+export const FOOTER_BUTTON_CLASS = "w-full sm:w-auto";
 
 const DELIVERY_NOTE =
 	"Delivered to the handle's mailbox and claimed when their wallet next syncs.";
 
-function logSendFailure(
+export function logOneColorFailure(
 	operation: string,
 	cause: unknown,
 	details?: { txid?: string },
@@ -66,10 +66,10 @@ function logSendFailure(
 }
 
 /**
- * After a send or a cancel: re-reads the BSV balance and the holdings,
+ * After a send, cancel or mint: re-reads the BSV balance and the holdings,
  * history and pending sends (all under `["one-color"]`).
  */
-function useRefreshAfterWrite() {
+export function useRefreshAfterWrite() {
 	const queryClient = useQueryClient();
 	const { refreshBalance } = useWalletToolbox();
 	return useCallback(async () => {
@@ -127,6 +127,12 @@ export function OneColorSendDialog({
 
 	const prepareReview = useCallback(() => {
 		setError(null);
+		// Before parsing: an unread deploy's `dec` is a placeholder 0.
+		const decimalsError = oneColorDecimalsError(token);
+		if (decimalsError) {
+			setError(decimalsError);
+			return;
+		}
 		const normalized = normalizeHandle(handle);
 		if (!normalized) {
 			setError(ONE_COLOR_HANDLE_PROMPT);
@@ -154,7 +160,7 @@ export function OneColorSendDialog({
 			handle: normalized,
 			...(trimmedMemo ? { memo: trimmedMemo } : {}),
 		});
-	}, [amount, handle, memo, token.assetId, token.available, token.dec]);
+	}, [amount, handle, memo, token]);
 
 	const send = useCallback(async () => {
 		if (!(colorContext && review) || inFlight.current) return;
@@ -165,7 +171,7 @@ export function OneColorSendDialog({
 		// Holdings are re-read before `busy` clears, so Send stays disabled until
 		// the wallet's own read shows whether a send was built.
 		const outcome = await runOneColorSend(colorContext, review, {
-			log: logSendFailure,
+			log: logOneColorFailure,
 			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
@@ -205,7 +211,7 @@ export function OneColorSendDialog({
 					<Send className="size-4" data-icon="inline-start" /> Send
 				</Button>
 			</DialogTrigger>
-			<DialogContent className={SHEET_CLASS} showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>Send {ticker}</DialogTitle>
 					<DialogDescription>
@@ -357,7 +363,7 @@ function CancelSendDialog({
 		setBusy(true);
 		setError(null);
 		const outcome = await runOneColorCancel(colorContext, send, {
-			log: logSendFailure,
+			log: logOneColorFailure,
 			refresh: refreshAfterWrite,
 		});
 		if (outcome.kind === "failed") {
@@ -384,7 +390,7 @@ function CancelSendDialog({
 					Cancel
 				</Button>
 			</DialogTrigger>
-			<DialogContent className={SHEET_CLASS} showCloseButton={!busy}>
+			<DialogContent showCloseButton={!busy}>
 				<DialogHeader>
 					<DialogTitle>Cancel this send?</DialogTitle>
 					<DialogDescription>
