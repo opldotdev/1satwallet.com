@@ -16,12 +16,13 @@ import { WALLET_STORAGE_KEY } from "@/lib/constants";
 import { deriveIdentityKey, findKeysFromMnemonic } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
-import { refreshWalletChain, walletStoredAfter } from "@/lib/wallet-chain";
+import { refreshWalletChain } from "@/lib/wallet-chain";
 import {
 	clearCachedEncryptionKey,
 	loadEncryptedWallet,
 	saveEncryptedWallet,
 	WalletSaveError,
+	walletChangedElsewhere,
 } from "@/lib/wallet-storage";
 
 export { WalletSaveError };
@@ -62,11 +63,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	const lifecycleGenerationRef = useRef(0);
 
 	useEffect(() => {
-		// The wallet replaced or removed, here or in another tab (clear() there
-		// arrives with a null key): lock and drop the keys, so the built-in
-		// wallet never opens on one network with another account's keys.
+		// The wallet replaced or removed in another tab (clear() there arrives
+		// with a null key) or deleted here: lock and drop the keys, so the
+		// built-in wallet never opens on one network with another account's
+		// keys. This tab's own saves are skipped: they would clear the key
+		// cache that the save just set.
 		const handleStorageChange = (event: StorageEvent) => {
-			const exists = walletStoredAfter(event, window.localStorage);
+			const exists = walletChangedElsewhere(event, window.localStorage);
 			if (exists !== undefined) {
 				lifecycleGenerationRef.current += 1;
 				setHasWallet(exists);

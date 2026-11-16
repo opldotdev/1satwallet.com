@@ -253,7 +253,10 @@ describe("an account on another network replacing this one", () => {
 			source.indexOf("const handleStorageChange"),
 			source.indexOf('window.addEventListener("storage"'),
 		);
-		assert.match(handler, /walletStoredAfter\(event, window\.localStorage\)/);
+		assert.match(
+			handler,
+			/walletChangedElsewhere\(event, window\.localStorage\)/,
+		);
 		assert.match(handler, /if \(exists !== undefined\)/);
 		const remove = source.slice(
 			source.indexOf("const deleteWallet"),

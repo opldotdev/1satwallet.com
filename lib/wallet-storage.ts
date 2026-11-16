@@ -14,7 +14,7 @@ import {
 } from "@/lib/encryption";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
-import { refreshWalletChain } from "@/lib/wallet-chain";
+import { refreshWalletChain, walletStoredAfter } from "@/lib/wallet-chain";
 
 export interface EncryptedBackupJson {
 	format?: "1sat-web-wallet";
@@ -123,8 +123,12 @@ function walletPayload(keys: Keys, network: Chain) {
 	};
 }
 
+/** The value this tab is announcing while its synthetic storage event runs. */
+let ownWrite: string | null = null;
+
 function notifyWalletStorage(value: string): void {
 	if (typeof window === "undefined") return;
+	ownWrite = value;
 	try {
 		window.dispatchEvent(
 			new StorageEvent("storage", {
@@ -140,10 +144,33 @@ function notifyWalletStorage(value: string): void {
 			operation: "wallet.storage.notify",
 			recoverable: true,
 		});
+	} finally {
+		ownWrite = null;
 	}
 	// Covers browsers that refuse a constructed StorageEvent; a no-op when
 	// the event already moved the chain.
 	refreshWalletChain();
+}
+
+/**
+ * For a storage listener that holds unlocked keys: whether a wallet is stored
+ * after a change made elsewhere (another tab, clear(), or a delete); undefined
+ * when the event does not touch the wallet or is this tab's own save, whose
+ * keys and key cache are already current. A real cross-tab event never runs
+ * inside this tab's synchronous dispatch, so it is never mistaken for one.
+ */
+export function walletChangedElsewhere(
+	event: { key: string | null; newValue: string | null },
+	storage: Pick<Storage, "getItem"> | undefined,
+): boolean | undefined {
+	if (
+		ownWrite !== null &&
+		event.key === WALLET_STORAGE_KEY &&
+		event.newValue === ownWrite
+	) {
+		return undefined;
+	}
+	return walletStoredAfter(event, storage);
 }
 
 async function encryptAuthenticated(
