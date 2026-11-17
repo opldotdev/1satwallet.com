@@ -20,10 +20,12 @@ function bunxArgs(vercelEnv: string | undefined): string[] {
 	const stub = join(bin, "bunx");
 	writeFileSync(stub, '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n');
 	chmodSync(stub, 0o755);
-	const env: Record<string, string> = {
+	const { VERCEL_ENV: _, ...inherited } = process.env;
+	const env: NodeJS.ProcessEnv = {
+		...inherited,
 		PATH: `${bin}:${process.env.PATH ?? ""}`,
+		...(vercelEnv === undefined ? {} : { VERCEL_ENV: vercelEnv }),
 	};
-	if (vercelEnv !== undefined) env.VERCEL_ENV = vercelEnv;
 	const run = spawnSync("bash", ["scripts/vercel-build.sh"], {
 		cwd: process.cwd(),
 		env,
