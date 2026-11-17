@@ -1,25 +1,21 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-	ArrowLeft,
-	Copy,
-	ExternalLink,
-	Loader2,
-	RefreshCw,
-} from "lucide-react";
-import Link from "next/link";
-import { useCallback, useState } from "react";
+import { Coins, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DetailRow } from "@/components/ui/detail-list";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SectionHeader } from "@/components/ui/section-header";
 import {
-	OneColorChips,
-	OneColorGate,
-	OneColorIcon,
+	OneColorAuthorityChip,
+	OneColorExternalWallet,
 	OneColorLoading,
 	OneColorNotice,
+	useOneColorAccess,
 } from "@/components/wallet/one-color-grid";
-import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { oneColorBalancesQueryKey } from "@/hooks/use-one-color-balances";
 import {
 	flattenOneColorHistory,
@@ -39,10 +35,12 @@ import {
 	oneColorTicker,
 } from "@/lib/wallet/one-color";
 import type { OneColorSendOutcome } from "@/lib/wallet/one-color-actions";
+import { shortTxid } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { OneColorMintDialog } from "./one-color-mint";
 import { OneColorReceiveDialog } from "./one-color-receive";
 import { OneColorPendingSends, OneColorSendDialog } from "./one-color-send";
+import { TokenDetailLayout } from "./token-detail-layout";
 
 type DeliveredSend = Exclude<OneColorSendOutcome, { kind: "failed" }>;
 
@@ -99,7 +97,7 @@ function OneColorActions({
 	onMintFailed: (message: string) => void;
 }) {
 	return (
-		<div className="flex flex-wrap gap-2">
+		<>
 			<OneColorReceiveDialog />
 			<OneColorSendDialog
 				token={token}
@@ -112,7 +110,7 @@ function OneColorActions({
 				onMinted={onMinted}
 				onFailed={onMintFailed}
 			/>
-		</div>
+		</>
 	);
 }
 
@@ -137,21 +135,24 @@ function HistoryRow({
 						href={explorerUrl}
 						target="_blank"
 						rel="noreferrer"
-						className="inline-flex items-center gap-1 break-all font-mono text-[11px] text-muted-foreground hover:text-primary"
+						className="inline-flex items-center gap-1 break-all font-mono text-xs text-muted-foreground hover:text-primary"
 					>
-						{action.txid} <ExternalLink className="size-3" />
+						{shortTxid(action.txid)} <ExternalLink className="size-3" />
 					</a>
 				) : (
-					<div className="break-all font-mono text-[11px] text-muted-foreground">
-						{action.txid}
+					<div
+						className="font-mono text-xs text-muted-foreground"
+						title={action.txid}
+					>
+						{shortTxid(action.txid)}
 					</div>
 				)}
 			</div>
 			<div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-				<Badge variant="outline" className="text-[10px]">
+				<Badge variant="outline" className="text-xs">
 					{DIRECTION_LABEL[direction]}
 				</Badge>
-				<Badge variant="secondary" className="text-[10px]">
+				<Badge variant="secondary" className="text-xs">
 					{action.status}
 				</Badge>
 				<span
@@ -278,7 +279,6 @@ function LastMintNotice({
 function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const { chain, identityKey, colorOverlay } = useWalletToolbox();
 	const queryClient = useQueryClient();
-	const [, copy] = useCopyWithSound();
 	const { state, retry } = useOneColorToken(assetId);
 	const overlay = useOverlayOrigin(assetId);
 	const [lastSend, setLastSend] = useState<DeliveredSend | null>(null);
@@ -356,119 +356,115 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 					: "…";
 
 	return (
-		<div className="space-y-6">
-			<header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-				<OneColorIcon icon={token.icon} size={80} />
-				<div className="min-w-0 flex-1 space-y-2">
-					<div className="flex flex-wrap items-center gap-2">
-						<h1 className="min-w-0 text-3xl font-bold wrap-anywhere">
-							{ticker}
-						</h1>
-						<OneColorChips authorities={token.authorities} />
-					</div>
-					<div className="flex items-center gap-1">
-						<p className="break-all font-mono text-xs text-muted-foreground">
-							{assetId}
-						</p>
-						<Button
-							aria-label="Copy asset id"
-							title="Copy asset id"
-							onClick={() => void copy(assetId)}
-							size="icon"
-							variant="ghost"
-						>
-							<Copy />
-						</Button>
-					</div>
-					<OneColorActions
-						token={token}
-						onWriteStart={onWriteStart}
-						onSendOutcome={onSendOutcome}
-						onMinted={onMinted}
-						onMintFailed={onMintFailed}
-					/>
+		<TokenDetailLayout
+			actions={
+				<OneColorActions
+					token={token}
+					onWriteStart={onWriteStart}
+					onSendOutcome={onSendOutcome}
+					onMinted={onMinted}
+					onMintFailed={onMintFailed}
+				/>
+			}
+			badge={<OneColorAuthorityChip authorities={token.authorities} />}
+			balance={formatBsv21Amount(token.available, token.dec)}
+			balanceCaption={
+				token.pending > 0n
+					? `${formatBsv21Amount(token.pending, token.dec)} waiting to be claimed`
+					: "Available"
+			}
+			details={
+				<>
+					<DetailRow label="Decimals">{token.dec}</DetailRow>
+					<DetailRow label="Mint authorities">{token.authorities}</DetailRow>
+					<DetailRow label="Overlay" stack>
+						{overlayText}
+					</DetailRow>
+				</>
+			}
+			icon={token.icon}
+			id={assetId}
+			idLabel="Asset ID"
+			status={
+				<>
 					<LastMintNotice lastMint={lastMint} />
 					{lastSend ? (
 						<p
-							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}
+							className={`text-sm wrap-anywhere ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}
 							role={lastSend.kind === "sent" ? "status" : "alert"}
 						>
 							{lastSend.message}
 						</p>
 					) : null}
-				</div>
-			</header>
-			<dl className="grid gap-4 rounded-md border p-4 sm:grid-cols-2 lg:grid-cols-4">
-				<div>
-					<dt className="text-xs text-muted-foreground">Available</dt>
-					<dd className="mt-1 break-all font-mono">
-						{formatBsv21Amount(token.available, token.dec)}
-					</dd>
-				</div>
-				<div>
-					<dt className="text-xs text-muted-foreground">Pending</dt>
-					<dd className="mt-1 break-all font-mono">
-						{formatBsv21Amount(token.pending, token.dec)}
-					</dd>
-					<dd className="mt-1 text-xs text-muted-foreground">
-						In sends not yet claimed by the recipient.
-					</dd>
-				</div>
-				<div>
-					<dt className="text-xs text-muted-foreground">Authorities</dt>
-					<dd className="mt-1 font-mono">{token.authorities}</dd>
-				</div>
-				<div>
-					<dt className="text-xs text-muted-foreground">Decimals</dt>
-					<dd className="mt-1 font-mono">{token.dec}</dd>
-				</div>
-				<div className="sm:col-span-2 lg:col-span-4">
-					<dt className="text-xs text-muted-foreground">Overlay</dt>
-					<dd className="mt-1 break-all font-mono text-sm">{overlayText}</dd>
-				</div>
-			</dl>
+				</>
+			}
+			ticker={ticker}
+		>
 			<OneColorPendingSends
 				token={token}
 				undelivered={undelivered}
 				onCancelOutcome={onCancelOutcome}
 			/>
-			<section aria-labelledby="one-color-history" className="space-y-3">
-				<div className="flex items-center justify-between gap-3">
-					<h2 id="one-color-history" className="text-lg font-medium">
-						History
-					</h2>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						onClick={() =>
-							void queryClient.invalidateQueries({
-								queryKey: oneColorBalancesQueryKey(chain, identityKey),
-							})
-						}
-					>
-						<RefreshCw data-icon="inline-start" /> Refresh
-					</Button>
-				</div>
+			<section
+				aria-labelledby="one-color-history"
+				className="flex flex-col gap-3"
+			>
+				<SectionHeader
+					action={
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							onClick={() =>
+								void queryClient.invalidateQueries({
+									queryKey: oneColorBalancesQueryKey(chain, identityKey),
+								})
+							}
+						>
+							<RefreshCw data-icon="inline-start" /> Refresh
+						</Button>
+					}
+					title={<span id="one-color-history">History</span>}
+				/>
 				<OneColorHistory assetId={assetId} dec={token.dec} />
 			</section>
-		</div>
+		</TokenDetailLayout>
 	);
 }
 
-/** One 1Color token: balances, overlay, actions and history. */
+/**
+ * What the page shows before it can read the built-in wallet. A chain
+ * without 1Color never shows the page: it goes to Tokens (the proxy sends
+ * mainnet there before render; this covers a chain switched in the tab).
+ */
+function OneColorDetailGate({ children }: { children: ReactNode }) {
+	const access = useOneColorAccess();
+	const router = useRouter();
+	useEffect(() => {
+		if (access === "unavailable") router.replace("/wallet/tokens");
+	}, [access, router]);
+
+	if (access === "loading" || access === "unavailable") {
+		return <OneColorLoading label="Loading wallet…" />;
+	}
+	if (access === "locked") {
+		return (
+			<EmptyState icon={Coins} title="Unlock your wallet to see this token" />
+		);
+	}
+	if (access === "external") return <OneColorExternalWallet />;
+	return children;
+}
+
+/**
+ * One 1Color token (testnet only): balance, Receive, Send and Mint, sends
+ * waiting to be claimed, history and the token's facts. The wallet header
+ * is the page's h1 and back arrow to Tokens.
+ */
 export default function OneColorDetail({ assetId }: { assetId: string }) {
 	return (
-		<div className="space-y-6">
-			<Link
-				className="inline-flex items-center rounded-sm text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-				href="/wallet/1color"
-			>
-				<ArrowLeft className="mr-2 size-4" /> Back to 1Color tokens
-			</Link>
-			<OneColorGate>
-				<OneColorDetailBody assetId={assetId} />
-			</OneColorGate>
-		</div>
+		<OneColorDetailGate>
+			<OneColorDetailBody assetId={assetId} />
+		</OneColorDetailGate>
 	);
 }

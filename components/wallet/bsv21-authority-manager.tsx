@@ -1,10 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, KeyRound, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import {
 	Dialog,
 	DialogContent,
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
 	Select,
 	SelectContent,
@@ -24,6 +26,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { useSound } from "@/hooks/use-sound";
+import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	formatBsv21Amount,
@@ -79,27 +82,43 @@ function isPermanentTermination(kind: AuthorityOperation): boolean {
 	return kind === "terminate-authority" || kind === "terminate";
 }
 
+const OPERATION_LABEL: Record<AuthorityOperation, string> = {
+	mint: "Mint and keep minting",
+	transfer: "Give minting to someone else",
+	"terminate-authority": "End minting without a final mint",
+	terminate: "Final mint, then end minting",
+};
+
+/**
+ * Mint a BSV-21 token with this wallet's mint authority, give the authority
+ * away, or end minting for good. Opens from `trigger`: the token page's Mint
+ * (its token ID fixed) or the Tokens section's "Mint by token ID".
+ */
 export function Bsv21AuthorityManager({
-	bsv21Available,
-	suggestedTokenId,
+	trigger,
+	tokenId: fixedTokenId,
+	onDone,
 }: {
-	bsv21Available: boolean;
-	suggestedTokenId: string | null;
+	trigger: ReactNode;
+	/** The token, when the manager opens from its page. */
+	tokenId?: string;
+	/** What happened, once the wallet has submitted the action. */
+	onDone: (message: string) => void;
 }) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const { play } = useSound();
 	const { chain, oneSatContext, refreshBalance } = useWalletToolbox();
+	const { available: bsv21Available } = useBsv21Availability();
 	const [open, setOpen] = useState(false);
 	const [operation, setOperation] = useState<AuthorityOperation>("mint");
-	const [tokenId, setTokenId] = useState(suggestedTokenId ?? "");
+	const [tokenId, setTokenId] = useState(fixedTokenId ?? "");
 	const [amount, setAmount] = useState("");
 	const [destination, setDestination] = useState("");
 	const [confirmation, setConfirmation] = useState("");
 	const [review, setReview] = useState<AuthorityReview | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [status, setStatus] = useState<string | null>(null);
 
 	const prepareReview = useCallback(async () => {
 		setError(null);
@@ -175,6 +194,14 @@ export function Bsv21AuthorityManager({
 				amount: atomic,
 			});
 		} catch (cause) {
+			console.error(`[bsv21] authority review of ${tokenId} failed:`, cause);
+			reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: `wallet.bsv21.authority.${operation}-review`,
+				recoverable: true,
+				context: { retryable: true },
+			});
 			setError(bsv21AuthorityFailureMessage(cause));
 		} finally {
 			setBusy(false);
@@ -252,12 +279,14 @@ export function Bsv21AuthorityManager({
 			const result = await executeBsv21AuthorityIntent(oneSatContext, intent);
 			if (result.error) throw new Error(result.error);
 			if (!result.txid) throw new Error(BSV21_ACTION_CONFIRMATION_MISSING);
-			setStatus(
+			onDone(
 				review.kind === "terminate-authority"
 					? `Mint authority was permanently ended in ${result.txid}. No tokens were minted.`
 					: review.kind === "terminate"
 						? `Final mint submitted in ${result.txid}. Mint authority was permanently consumed.`
-						: `Authority action submitted in ${result.txid ?? "the wallet"}. Overlay indexing is not yet confirmed.`,
+						: review.kind === "transfer"
+							? `Minting was given away in ${result.txid}.`
+							: `Minted ${formatBsv21Amount(review.amount, review.decimals)} ${review.symbol} in ${result.txid}. It shows once the overlay indexes it.`,
 			);
 			setReview(null);
 			setOpen(false);
@@ -269,6 +298,7 @@ export function Bsv21AuthorityManager({
 			]);
 			router.refresh();
 		} catch (cause) {
+			console.error(`[bsv21] authority ${review.kind} failed:`, cause);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -288,6 +318,7 @@ export function Bsv21AuthorityManager({
 		confirmation,
 		destination,
 		oneSatContext,
+		onDone,
 		operation,
 		play,
 		queryClient,
@@ -299,224 +330,171 @@ export function Bsv21AuthorityManager({
 
 	const terminationPhrase = isBsv21TokenId(tokenId)
 		? permanentMintTerminationConfirmation(tokenId)
-		: "END <canonical token ID>";
+		: "END <token ID>";
+	const permanent = isPermanentTermination(review?.kind ?? operation);
 
 	return (
-		<div className="space-y-3 border-t pt-4">
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div>
-					<h3 className="font-medium">Mint authority</h3>
-					<p className="text-sm text-muted-foreground">
-						Mint supply, transfer control, or permanently end minting with or
-						without a final mint.
-					</p>
-				</div>
-				<Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
-					<DialogTrigger asChild>
-						<Button
-							disabled={!oneSatContext || !bsv21Available}
-							variant="outline"
-						>
-							<KeyRound className="size-4" data-icon="inline-start" />
-							Manage authority
-						</Button>
-					</DialogTrigger>
-					<DialogContent showCloseButton={!busy}>
-						<DialogHeader>
-							<DialogTitle>Manage BSV21 mint authority</DialogTitle>
-							<DialogDescription>
-								The wallet action selects the matching authority from the
-								standard bsv21 basket and requests wallet approval.
-							</DialogDescription>
-						</DialogHeader>
-						{review ? (
-							<div className="space-y-4">
-								<dl className="grid grid-cols-[auto_1fr] gap-2 rounded-md border p-3 text-sm">
-									<dt>Action</dt>
-									<dd className="text-right font-medium">
-										{review.kind === "mint"
-											? "Mint and continue authority"
-											: review.kind === "transfer"
-												? "Transfer authority only"
-												: review.kind === "terminate-authority"
-													? "End authority without minting"
-													: "Final mint and end authority"}
-									</dd>
-									<dt>Token</dt>
-									<dd className="break-all text-right font-mono">
-										{review.symbol} · {review.tokenId}
-									</dd>
-									{review.kind === "transfer" ? (
-										<>
-											<dt>New controller</dt>
-											<dd className="break-all text-right font-mono">
-												{review.destination.address ??
-													review.destination.counterparty}
-											</dd>
-										</>
-									) : review.kind === "terminate-authority" ? null : (
-										<>
-											<dt>Amount</dt>
-											<dd className="break-all text-right font-mono">
-												{formatBsv21Amount(review.amount, review.decimals)}
-											</dd>
-											<dt>Atomic amount</dt>
-											<dd className="break-all text-right font-mono">
-												{review.amount.toString()}
-											</dd>
-										</>
-									)}
-								</dl>
-								<div
-									className={`flex gap-2 rounded-md border p-3 text-sm ${
-										isPermanentTermination(review.kind)
-											? "border-destructive bg-destructive/10 text-destructive"
-											: "border-warning/40 bg-warning/5"
-									}`}
-								>
-									<AlertTriangle className="mt-0.5 size-4 shrink-0" />
-									<p>
-										{review.kind === "mint"
-											? "A replacement authority returns to this wallet so future minting remains possible."
-											: review.kind === "transfer"
-												? "This wallet gives up its authority. The recipient controls all future minting."
-												: review.kind === "terminate-authority"
-													? "This consumes the mint authority without minting tokens. No wallet can ever mint this token again."
-													: "This mints the final amount and emits no replacement authority. No wallet can ever mint this token again."}
-									</p>
-								</div>
-							</div>
-						) : (
-							<div className="space-y-4">
-								<div className="space-y-2">
-									<Label htmlFor="bsv21-authority-operation">Action</Label>
-									<Select
-										value={operation}
-										onValueChange={(value: AuthorityOperation) =>
-											setOperation(value)
-										}
-									>
-										<SelectTrigger id="bsv21-authority-operation">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="mint">
-												Mint and keep authority
-											</SelectItem>
-											<SelectItem value="transfer">
-												Transfer authority only
-											</SelectItem>
-											<SelectItem value="terminate-authority">
-												Permanently end without minting
-											</SelectItem>
-											<SelectItem value="terminate">
-												Final mint and permanently end
-											</SelectItem>
-										</SelectContent>
-									</Select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="bsv21-authority-token">Token ID</Label>
-									<Input
-										id="bsv21-authority-token"
-										placeholder="txid_vout"
-										value={tokenId}
-										onChange={(event) => setTokenId(event.target.value)}
-									/>
-								</div>
-								{operation === "transfer" ? (
-									<div className="space-y-2">
-										<Label htmlFor="bsv21-authority-destination">
-											New controller
-										</Label>
-										<Input
-											id="bsv21-authority-destination"
-											placeholder="Address or public key"
-											value={destination}
-											onChange={(event) => setDestination(event.target.value)}
-										/>
-									</div>
-								) : operation === "terminate-authority" ? null : (
-									<div className="space-y-2">
-										<Label htmlFor="bsv21-authority-amount">
-											{operation === "terminate"
-												? "Final mint amount"
-												: "Mint amount"}
-										</Label>
-										<Input
-											id="bsv21-authority-amount"
-											inputMode="decimal"
-											value={amount}
-											onChange={(event) => setAmount(event.target.value)}
-										/>
-									</div>
-								)}
-								{isPermanentTermination(operation) ? (
-									<div className="space-y-2 rounded-md border border-destructive bg-destructive/10 p-3">
-										<p className="text-sm text-destructive">
-											{operation === "terminate-authority"
-												? "This permanently consumes mint authority without creating any tokens."
-												: "This creates the final positive mint and permanently consumes mint authority."}
-										</p>
-										<Label
-											className="text-destructive"
-											htmlFor="bsv21-authority-confirm"
-										>
-											Type {terminationPhrase} to confirm permanent termination
-										</Label>
-										<Input
-											autoComplete="off"
-											id="bsv21-authority-confirm"
-											value={confirmation}
-											onChange={(event) => setConfirmation(event.target.value)}
-										/>
-									</div>
-								) : null}
-							</div>
-						)}
-						{error ? (
-							<p className="text-sm text-destructive" role="alert">
-								{error}
-							</p>
-						) : null}
-						<DialogFooter>
-							<Button
-								disabled={busy}
-								onClick={() => (review ? setReview(null) : setOpen(false))}
-								type="button"
-								variant="outline"
-							>
-								{review ? "Edit" : "Cancel"}
-							</Button>
-							<Button
-								disabled={busy}
-								onClick={() => void (review ? execute() : prepareReview())}
-								type="button"
-								variant={
-									review && isPermanentTermination(review.kind)
-										? "destructive"
-										: "default"
+		<Dialog
+			open={open}
+			onOpenChange={(next) => {
+				if (busy) return;
+				setOpen(next);
+				if (!next) {
+					setReview(null);
+					setError(null);
+				}
+			}}
+		>
+			<DialogTrigger asChild>{trigger}</DialogTrigger>
+			<DialogContent showCloseButton={!busy}>
+				<DialogHeader>
+					<DialogTitle>Mint BSV-21 tokens</DialogTitle>
+					<DialogDescription>
+						Uses this wallet's mint authority for the token. Your wallet asks
+						you to approve.
+					</DialogDescription>
+				</DialogHeader>
+				{review ? (
+					<div className="flex flex-col gap-4">
+						<Notice tone={permanent ? "danger" : "warning"}>
+							{review.kind === "mint"
+								? "A new mint authority returns to this wallet, so you can mint again later."
+								: review.kind === "transfer"
+									? "This wallet gives up its mint authority. The new holder controls all future minting."
+									: review.kind === "terminate-authority"
+										? "No tokens are minted, and no wallet can ever mint this token again."
+										: "This is the last mint. No wallet can ever mint this token again."}
+						</Notice>
+						<DetailList className="rounded-xl border p-4">
+							<DetailRow label="Action" mono={false}>
+								{OPERATION_LABEL[review.kind]}
+							</DetailRow>
+							<DetailRow label="Token" stack>
+								{review.symbol} · {review.tokenId}
+							</DetailRow>
+							{review.kind === "transfer" ? (
+								<DetailRow label="New holder" stack>
+									{review.destination.address ??
+										review.destination.counterparty}
+								</DetailRow>
+							) : review.kind === "terminate-authority" ? null : (
+								<DetailRow label="Amount">
+									{formatBsv21Amount(review.amount, review.decimals)}
+								</DetailRow>
+							)}
+						</DetailList>
+					</div>
+				) : (
+					<div className="flex flex-col gap-4">
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="bsv21-authority-operation">Action</Label>
+							<Select
+								value={operation}
+								onValueChange={(value: AuthorityOperation) =>
+									setOperation(value)
 								}
 							>
-								{busy ? (
-									<Loader2
-										className="size-4 animate-spin"
-										data-icon="inline-start"
-									/>
-								) : null}
-								{review
-									? "Authorize reviewed action"
-									: "Review authority action"}
-							</Button>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
-			</div>
-			{status ? (
-				<p className="text-sm text-primary" role="status">
-					{status}
-				</p>
-			) : null}
-		</div>
+								<SelectTrigger
+									className="w-full"
+									id="bsv21-authority-operation"
+								>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{(Object.keys(OPERATION_LABEL) as AuthorityOperation[]).map(
+										(value) => (
+											<SelectItem key={value} value={value}>
+												{OPERATION_LABEL[value]}
+											</SelectItem>
+										),
+									)}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="bsv21-authority-token">Token ID</Label>
+							<Input
+								id="bsv21-authority-token"
+								placeholder="txid_vout"
+								readOnly={fixedTokenId !== undefined}
+								value={tokenId}
+								onChange={(event) => setTokenId(event.target.value)}
+							/>
+						</div>
+						{operation === "transfer" ? (
+							<div className="flex flex-col gap-2">
+								<Label htmlFor="bsv21-authority-destination">New holder</Label>
+								<Input
+									id="bsv21-authority-destination"
+									placeholder="Address or identity key"
+									value={destination}
+									onChange={(event) => setDestination(event.target.value)}
+								/>
+							</div>
+						) : operation === "terminate-authority" ? null : (
+							<div className="flex flex-col gap-2">
+								<Label htmlFor="bsv21-authority-amount">
+									{operation === "terminate" ? "Final amount" : "Amount"}
+								</Label>
+								<Input
+									id="bsv21-authority-amount"
+									inputMode="decimal"
+									value={amount}
+									onChange={(event) => setAmount(event.target.value)}
+								/>
+							</div>
+						)}
+						{isPermanentTermination(operation) ? (
+							<div className="flex flex-col gap-2">
+								<Notice tone="danger">
+									This ends minting for good. It cannot be undone.
+								</Notice>
+								<Label htmlFor="bsv21-authority-confirm">
+									Type {terminationPhrase} to confirm
+								</Label>
+								<Input
+									autoComplete="off"
+									id="bsv21-authority-confirm"
+									value={confirmation}
+									onChange={(event) => setConfirmation(event.target.value)}
+								/>
+							</div>
+						) : null}
+					</div>
+				)}
+				{error ? (
+					<p className="text-destructive text-sm" role="alert">
+						{error}
+					</p>
+				) : null}
+				<DialogFooter>
+					<Button
+						disabled={busy}
+						onClick={() => (review ? setReview(null) : setOpen(false))}
+						type="button"
+						variant="outline"
+					>
+						{review ? "Edit" : "Cancel"}
+					</Button>
+					<Button
+						disabled={busy || !(oneSatContext && bsv21Available)}
+						onClick={() => void (review ? execute() : prepareReview())}
+						type="button"
+						variant={review && permanent ? "destructive" : "default"}
+					>
+						{busy ? (
+							<Loader2 className="animate-spin" data-icon="inline-start" />
+						) : null}
+						{review
+							? review.kind === "mint" || review.kind === "terminate"
+								? "Mint"
+								: review.kind === "transfer"
+									? "Give minting away"
+									: "End minting"
+							: "Review"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }

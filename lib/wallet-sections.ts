@@ -1,5 +1,6 @@
 import type { Chain } from "@/lib/chain-endpoints";
 import {
+	unavailableRouteRedirect,
 	WALLET_TABS,
 	type WalletTabValue,
 	walletTabsFor,
@@ -88,9 +89,15 @@ const SUB_PAGES: readonly SubPage[] = [
 	},
 	{
 		path: "/wallet/bsv21/",
-		title: "BSV21 token",
-		parentHref: "/wallet/bsv21",
-		parentTitle: "BSV21",
+		title: "BSV-21 token",
+		parentHref: "/wallet/tokens",
+		parentTitle: "Tokens",
+	},
+	{
+		path: "/wallet/1color/",
+		title: "1Color token",
+		parentHref: "/wallet/tokens",
+		parentTitle: "Tokens",
 	},
 	// An app's request: nothing to go back to, and no tabs to wander off by.
 	{ path: "/wallet/cwi", title: "Authorize request" },
@@ -135,7 +142,12 @@ export function walletSectionFor(
 	chain: Chain,
 ): WalletSection {
 	const path = normalizeWalletPath(pathname);
-	const sub = walletSubPageFor(path);
+	// A sub-page the chain redirects away from (1Color off testnet) is never
+	// named, not even for the moment before the redirect lands.
+	const sub =
+		unavailableRouteRedirect(chain, path) === null
+			? walletSubPageFor(path)
+			: null;
 	if (sub) {
 		return {
 			title: sub.title,

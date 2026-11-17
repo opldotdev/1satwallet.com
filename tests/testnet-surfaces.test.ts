@@ -26,24 +26,17 @@ describe("testnet surfaces", () => {
 			[
 				"overview",
 				"ordinals",
+				"tokens",
 				"opns",
 				"identity",
 				"certificates",
-				"bsv21",
 				"history",
 			],
 		);
+		// One Tokens tab holds both standards; testnet drops only OpNS.
 		assert.deepEqual(
 			walletTabsFor("test").map((tab) => tab.value),
-			[
-				"overview",
-				"ordinals",
-				"identity",
-				"certificates",
-				"bsv21",
-				"1color",
-				"history",
-			],
+			["overview", "ordinals", "tokens", "identity", "certificates", "history"],
 		);
 	});
 
@@ -55,7 +48,9 @@ describe("testnet surfaces", () => {
 		for (const href of [
 			"/",
 			"/wallet",
-			"/wallet/bsv21",
+			"/wallet/tokens",
+			"/wallet/bsv21/abc_0",
+			"/wallet/1color/abc_0",
 			"/wallet/history",
 			"/wallet/settings",
 			"/settings",
@@ -162,11 +157,19 @@ describe("testnet surfaces", () => {
 		assert.match(engine, /syncMessages\.execute\(ctx, \{ messageboxUrl \}\)/);
 	});
 
-	it("shows a testnet badge and faucet link in the wallet header", () => {
+	it("shows a testnet badge in the wallet header and the faucet under the balance", () => {
 		const header = read("components/wallet/wallet-header.tsx");
 		assert.match(header, /chain === "test"/);
 		assert.match(header, /<TestnetBadge \/>/);
-		assert.match(header, /href=\{faucet\}/);
+		assert.doesNotMatch(header, /faucet/);
+		const status = read("components/wallet/wallet-home-status.tsx");
+		assert.match(status, /if \(chain !== "test" \|\| !faucet\) return null;/);
+		assert.match(status, /href=\{faucet\}/);
+		const home = read("components/wallet/wallet-home.tsx");
+		const balance = home.indexOf('data-testid="wallet-balance"');
+		const faucet = home.indexOf("<TestnetFaucetLink />");
+		assert.ok(balance > 0 && faucet > balance);
+		assert.ok(faucet < home.indexOf("<WalletHomeActions />"));
 		assert.match(
 			read("components/wallet/testnet-badge.tsx"),
 			/Testnet account\. Coins have no real value\./,
@@ -184,18 +187,23 @@ describe("testnet surfaces", () => {
 		assert.match(route, /subscribeWalletChain\(refreshOnMainnet\)/);
 	});
 
-	it("renders no chain-specific 1Color notice before the client knows the chain", () => {
+	it("decides nothing chain-specific about 1Color before the client knows the chain", () => {
 		const grid = read("components/wallet/one-color-grid.tsx");
+		assert.match(grid, /const mounted = useMounted\(\);/);
+		const mounted = read("lib/hooks/use-mounted.ts");
 		assert.match(
-			grid,
+			mounted,
 			/useSyncExternalStore\(\s*noSubscription,\s*\(\) => true,\s*\(\) => false,\s*\)/,
 		);
 		assert.doesNotMatch(grid, /Switch the network/);
 		assert.doesNotMatch(grid, /\/wallet\/settings/);
-		assert.match(grid, /this wallet is a mainnet\s+account\./);
-		const loaderAt = grid.indexOf("if (!mounted) return <OneColorLoading");
-		assert.ok(loaderAt > 0);
-		assert.ok(loaderAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
+		// No "testnet only" notice anywhere: mainnet never shows 1Color.
+		assert.doesNotMatch(grid, /mainnet\s+account/);
+		const loadingAt = grid.indexOf('if (!mounted) return "loading";');
+		assert.ok(loadingAt > 0);
+		assert.ok(loadingAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
+		// The Tokens group renders nothing at all on a chain without 1Color.
+		assert.match(grid, /if \(access === "unavailable"\) return null;/);
 	});
 
 	it("drops cached 1Color holdings when the wallet identity changes", () => {

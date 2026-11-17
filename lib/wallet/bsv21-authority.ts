@@ -1,4 +1,7 @@
 import {
+	BSV21_AUTH_TAG,
+	BSV21_BASKET,
+	bsv21FieldsFromOutput,
 	deployBsv21Auth,
 	mintBsv21,
 	type OneSatContext,
@@ -116,4 +119,33 @@ export async function executeBsv21AuthorityIntent(
 				endMinting: true,
 			});
 	}
+}
+
+/**
+ * Whether the wallet holds a spendable mint authority for `tokenId`: the
+ * same auth-tagged outputs of the BSV-21 basket that minting spends, matched
+ * to the token the same way (a deploy+auth output's id is its outpoint).
+ * One local listOutputs, without transactions.
+ */
+export async function holdsBsv21MintAuthority(
+	ctx: Pick<OneSatContext, "wallet">,
+	tokenId: string,
+): Promise<boolean> {
+	const { outputs } = await ctx.wallet.listOutputs({
+		basket: BSV21_BASKET,
+		tags: [BSV21_AUTH_TAG],
+		tagQueryMode: "all",
+		includeTags: true,
+		includeCustomInstructions: true,
+		limit: 1000,
+	});
+	const wanted = normalizeBsv21TokenId(tokenId);
+	return outputs.some((output) => {
+		const { tokenId: id } = bsv21FieldsFromOutput({
+			tags: output.tags,
+			customInstructions: output.customInstructions,
+			outpoint: output.outpoint,
+		});
+		return id !== undefined && normalizeBsv21TokenId(id) === wanted;
+	});
 }

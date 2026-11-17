@@ -10,7 +10,10 @@ import { Notice } from "@/components/ui/notice";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WalletConnectCarousel } from "@/components/wallet/wallet-connect-carousel";
 import { WalletHomeActions } from "@/components/wallet/wallet-home-actions";
-import { WalletHomeStatus } from "@/components/wallet/wallet-home-status";
+import {
+	TestnetFaucetLink,
+	WalletHomeStatus,
+} from "@/components/wallet/wallet-home-status";
 import { WalletLocks } from "@/components/wallet/wallet-locks";
 import { PRIVACY_MODE_KEY } from "@/lib/constants";
 import { useSettingsStorage } from "@/lib/wallet-storage";
@@ -160,6 +163,7 @@ function ConnectedWalletHome() {
 									)}
 								</>
 							)}
+							<TestnetFaucetLink />
 						</div>
 						<WalletHomeActions />
 					</div>

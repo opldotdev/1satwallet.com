@@ -61,10 +61,9 @@ const commands: Array<{
 		feature: "ordinals",
 	},
 	{
-		label: "Wallet BSV21",
-		href: "/wallet/bsv21",
+		label: "Wallet tokens",
+		href: "/wallet/tokens",
 		shortcut: "G 1",
-		feature: "bsv21",
 	},
 	{ label: "Wallet history", href: "/wallet/history", shortcut: "G Y" },
 	{ label: "Wallet settings", href: "/wallet/settings", shortcut: "G ," },
@@ -143,7 +142,7 @@ export function KeyboardShortcuts() {
 						if (features?.ordinals) go("/wallet/ordinals");
 						break;
 					case "1":
-						if (features?.bsv21) go("/wallet/bsv21");
+						go("/wallet/tokens");
 						break;
 					case ",":
 						go("/wallet/settings");

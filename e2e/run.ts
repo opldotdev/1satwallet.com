@@ -23,6 +23,7 @@ const SUITES = {
 			"./e2e/mobile-layout-wallet.e2e.ts",
 			"./e2e/mobile-layout-overview.e2e.ts",
 			"./e2e/mobile-lists.e2e.ts",
+			"./e2e/tokens-section-wallet.e2e.ts",
 		],
 	],
 	mainnet: [
@@ -32,6 +33,7 @@ const SUITES = {
 			"./e2e/mobile-layout.e2e.ts",
 			"./e2e/onboarding-layout.e2e.ts",
 			"./e2e/wallet-sections.e2e.ts",
+			"./e2e/tokens-section.e2e.ts",
 		],
 	],
 } as const;

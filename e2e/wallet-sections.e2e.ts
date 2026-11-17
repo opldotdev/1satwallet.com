@@ -27,7 +27,7 @@ const SECTIONS = [
 	{ path: "/wallet/opns", label: "OpNS" },
 	{ path: "/wallet/identity", label: "Identity" },
 	{ path: "/wallet/certificates", label: "Certificates" },
-	{ path: "/wallet/bsv21", label: "BSV21" },
+	{ path: "/wallet/tokens", label: "Tokens" },
 	{ path: "/wallet/history", label: "History" },
 ] as const;
 
@@ -41,6 +41,12 @@ const SUB_PAGES = [
 		path: "/wallet/create",
 		title: "Create wallet",
 		back: { label: "Back to Wallet", href: "/wallet" },
+	},
+	{
+		// Any well-formed token ID: a visitor sees the unlock prompt under it.
+		path: `/wallet/bsv21/${"0".repeat(64)}_0`,
+		title: "BSV-21 token",
+		back: { label: "Back to Tokens", href: "/wallet/tokens" },
 	},
 	{
 		path: "/wallet/import/json",

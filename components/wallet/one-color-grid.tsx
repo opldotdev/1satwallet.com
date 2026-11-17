@@ -1,94 +1,41 @@
 "use client";
 
-import { Coins, KeyRound, Loader2 } from "lucide-react";
-import Image from "next/image";
-import Link from "next/link";
-import { type ReactNode, useSyncExternalStore } from "react";
+import { Coins, KeyRound, Loader2, RefreshCw } from "lucide-react";
+import type { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { useOneColorBalances } from "@/hooks/use-one-color-balances";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
+import { useMounted } from "@/lib/hooks/use-mounted";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
-import { type OneColorBalance, oneColorTicker } from "@/lib/wallet/one-color";
+import { tokenDetailHref } from "@/lib/wallet/create-token";
+import { oneColorTicker } from "@/lib/wallet/one-color";
+import { shortOutpoint } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { OneColorReceiveDialog } from "./one-color-receive";
+import {
+	TokenGroup,
+	TokenList,
+	TokenRow,
+	TokenRowsSkeleton,
+} from "./token-row";
 
-/** The token's deploy icon, else a coin, in a rounded tile of `size` pixels. */
-export function OneColorIcon({
-	icon,
-	size,
+/** Marks a token this wallet can mint: it holds a mint authority. */
+export function OneColorAuthorityChip({
+	authorities,
 }: {
-	icon: string | undefined;
-	size: 48 | 80;
+	authorities: number;
 }) {
+	if (authorities <= 0) return null;
 	return (
-		<div
-			className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted ${size === 80 ? "size-20 border" : "size-12"}`}
+		<span
+			className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-primary text-xs"
+			title={`${authorities} mint authorit${authorities === 1 ? "y" : "ies"}: this wallet can mint`}
 		>
-			{icon ? (
-				<Image
-					src={icon}
-					alt=""
-					fill
-					sizes={`${size}px`}
-					className="object-cover"
-					unoptimized
-				/>
-			) : (
-				<Coins
-					className={`text-muted-foreground ${size === 80 ? "size-10" : "size-6"}`}
-				/>
-			)}
-		</div>
-	);
-}
-
-/** The "1Color" chip and, for an authority holder, the "Authority" chip. */
-export function OneColorChips({ authorities }: { authorities: number }) {
-	return (
-		<>
-			<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs uppercase">
-				1Color
-			</span>
-			{authorities > 0 ? (
-				<span
-					className="inline-flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 text-primary text-xs"
-					title={`${authorities} authority output${authorities === 1 ? "" : "s"}: this wallet can mint`}
-				>
-					<KeyRound className="size-3" />
-					Authority
-				</span>
-			) : null}
-		</>
-	);
-}
-
-function OneColorCard({ token }: { token: OneColorBalance }) {
-	const ticker = oneColorTicker(token);
-	return (
-		<Link
-			href={`/wallet/1color/${token.assetId}`}
-			className="flex items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-		>
-			<OneColorIcon icon={token.icon} size={48} />
-			<div className="min-w-0 flex-1">
-				<div className="flex flex-wrap items-center gap-2">
-					<span className="font-semibold text-foreground">{ticker}</span>
-					<OneColorChips authorities={token.authorities} />
-				</div>
-				<div className="truncate text-muted-foreground text-sm">
-					{formatBsv21Amount(token.available, token.dec)} available
-					{token.pending > 0n
-						? ` · ${formatBsv21Amount(token.pending, token.dec)} pending`
-						: ""}
-				</div>
-			</div>
-			<div
-				className="hidden max-w-24 truncate font-mono text-muted-foreground text-xs sm:block"
-				title={token.assetId}
-			>
-				{token.assetId.slice(0, 8)}…
-			</div>
-		</Link>
+			<KeyRound aria-hidden="true" className="size-3" />
+			Can mint
+		</span>
 	);
 }
 
@@ -113,116 +60,130 @@ export function OneColorLoading({ label }: { label: string }) {
 	);
 }
 
-const noSubscription = () => () => {};
-
 /**
- * What every 1Color page shows before it can read the built-in wallet: the
- * mainnet notice, the unlock prompt, the external-wallet notice. Renders
- * `children` once the built-in wallet is ready on a chain with 1Color.
+ * Whether the built-in wallet's 1Color tokens can be read here, before any
+ * read: "unavailable" on a chain without 1Color, "locked" with no wallet
+ * open, "external" while an external wallet (which keeps its own tokens) is
+ * connected.
  */
-export function OneColorGate({ children }: { children: ReactNode }) {
+export type OneColorAccess =
+	| "loading"
+	| "unavailable"
+	| "locked"
+	| "external"
+	| "ready";
+
+export function useOneColorAccess(): OneColorAccess {
 	const { chain, connectionMode, isInitialized, isInitializing } =
 		useWalletToolbox();
-	// The page prerenders as mainnet, so nothing chain-specific renders until
-	// the client knows the active account's network: a testnet account never
-	// flashes the "testnet only" notice and hydration never mismatches.
-	const mounted = useSyncExternalStore(
-		noSubscription,
-		() => true,
-		() => false,
+	// Pages prerender as mainnet, so nothing chain-specific is decided until
+	// the client knows the active account's network: a testnet account is
+	// never sent away from a 1Color page, and hydration never mismatches.
+	const mounted = useMounted();
+	if (!mounted) return "loading";
+	if (!isOneColorAvailable(chain)) return "unavailable";
+	if (isInitializing) return "loading";
+	if (!isInitialized) return "locked";
+	if (connectionMode === "external") return "external";
+	return "ready";
+}
+
+/** An external wallet keeps its own 1Color tokens; this site reads its own. */
+export function OneColorExternalWallet() {
+	return (
+		<EmptyState
+			description="This site shows 1Color tokens held in its own wallet only."
+			icon={Coins}
+			title={describeAssetSurface(
+				{ kind: "unsupported", capability: "provider-managed" },
+				"token",
+			)}
+		/>
 	);
-
-	if (!mounted) return <OneColorLoading label="Loading wallet…" />;
-
-	if (!isOneColorAvailable(chain)) {
-		return (
-			<OneColorNotice>
-				<p>
-					1Color tokens are on testnet only, and this wallet is a mainnet
-					account.
-				</p>
-			</OneColorNotice>
-		);
-	}
-
-	if (isInitializing) return <OneColorLoading label="Loading wallet…" />;
-
-	if (!isInitialized) {
-		return (
-			<OneColorNotice>
-				<p>Please unlock or connect a wallet to view your 1Color tokens.</p>
-			</OneColorNotice>
-		);
-	}
-
-	if (connectionMode === "external") {
-		return (
-			<OneColorNotice>
-				<p>
-					{describeAssetSurface(
-						{ kind: "unsupported", capability: "provider-managed" },
-						"token",
-					)}
-				</p>
-			</OneColorNotice>
-		);
-	}
-
-	return children;
 }
 
 function OneColorList() {
 	const query = useOneColorBalances();
 
-	let content: ReactNode;
-	let heading = "1Color tokens";
-	if (query.isPending) {
-		content = <OneColorLoading label="Loading 1Color tokens…" />;
-	} else if (query.isError) {
-		content = (
-			<OneColorNotice>
-				<p>
-					{describeAssetSurface(
-						{ kind: "error", message: query.error.message },
-						"token",
-					)}
-				</p>
-			</OneColorNotice>
-		);
-	} else if (query.data.length === 0) {
-		content = (
-			<OneColorNotice>
-				<p>No 1Color tokens found in your wallet.</p>
-			</OneColorNotice>
-		);
-	} else {
-		const tokens = query.data;
-		heading = `${tokens.length} 1Color token${tokens.length === 1 ? "" : "s"}`;
-		content = (
-			<div className="space-y-2">
-				{tokens.map((token) => (
-					<OneColorCard key={token.assetId} token={token} />
-				))}
-			</div>
+	if (query.isPending) return <TokenRowsSkeleton />;
+	if (query.isError) {
+		return (
+			<EmptyState
+				icon={Coins}
+				title={describeAssetSurface(
+					{ kind: "error", message: query.error.message },
+					"token",
+				)}
+				action={
+					<Button onClick={() => void query.refetch()} variant="outline">
+						<RefreshCw data-icon="inline-start" /> Retry
+					</Button>
+				}
+			/>
 		);
 	}
-
+	if (query.data.length === 0) {
+		return (
+			<EmptyState
+				description="Tokens sent to your handle, or created here, show up here."
+				icon={Coins}
+				title="No 1Color tokens yet"
+			/>
+		);
+	}
 	return (
-		<div className="space-y-4">
-			<div className="flex items-center justify-between gap-2">
-				<h2 className="text-lg font-medium">{heading}</h2>
-				<OneColorReceiveDialog />
-			</div>
-			{content}
-		</div>
+		<TokenList>
+			{query.data.map((token) => (
+				<TokenRow
+					amount={formatBsv21Amount(token.available, token.dec)}
+					badge={<OneColorAuthorityChip authorities={token.authorities} />}
+					caption={
+						token.pending > 0n
+							? `${formatBsv21Amount(token.pending, token.dec)} pending`
+							: shortOutpoint(token.assetId)
+					}
+					href={tokenDetailHref("1color", token.assetId)}
+					icon={token.icon}
+					key={token.assetId}
+					ticker={oneColorTicker(token)}
+				/>
+			))}
+		</TokenList>
 	);
 }
 
-/** 1Color (BRC-162) tokens held by the wallet. Read-only. */
+/**
+ * The 1Color group of the Tokens section (testnet only): BRC-162 holdings
+ * of the built-in wallet. The heading stays while the wallet loads, is
+ * locked or is external; a chain without 1Color renders nothing at all.
+ */
 export default function OneColorGrid() {
+	const access = useOneColorAccess();
+	if (access === "unavailable") return null;
+
+	let content: ReactNode;
+	if (access === "loading") {
+		content = <TokenRowsSkeleton />;
+	} else if (access === "locked") {
+		content = (
+			<EmptyState
+				icon={Coins}
+				title="Unlock your wallet to see your 1Color tokens"
+			/>
+		);
+	} else if (access === "external") {
+		content = <OneColorExternalWallet />;
+	} else {
+		content = <OneColorList />;
+	}
+
 	return (
-		<OneColorGate>
-			<OneColorList />
-		</OneColorGate>
+		<TokenGroup
+			action={access === "ready" ? <OneColorReceiveDialog /> : undefined}
+			id="tokens-1color"
+			title="1Color"
+		>
+			{content}
+		</TokenGroup>
 	);
 }

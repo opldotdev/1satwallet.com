@@ -520,10 +520,19 @@ describe("1Color surfaces per chain", () => {
 		]);
 	});
 
-	it("the 1Color tab and route exist on testnet only", () => {
-		assert.ok(walletTabsFor("test").some((tab) => tab.value === "1color"));
-		assert.ok(!walletTabsFor("main").some((tab) => tab.value === "1color"));
+	it("1Color is a group of the Tokens section and its routes exist on testnet only", () => {
+		// One Tokens tab on both chains; the 1Color group shows on testnet only.
+		for (const chain of ["main", "test"] as const) {
+			assert.ok(walletTabsFor(chain).some((tab) => tab.value === "tokens"));
+		}
+		const section = readFileSync(
+			new URL("../components/wallet/tokens-section.tsx", import.meta.url),
+			"utf8",
+		);
+		assert.match(section, /const oneColor = isOneColorAvailable\(chain\);/);
+		assert.match(section, /\{oneColor \? <OneColorGrid \/> : null\}/);
 		assert.equal(isRouteAvailableOn("test", "/wallet/1color"), true);
+		assert.equal(isRouteAvailableOn("test", "/wallet/1color/abc_0"), true);
 		assert.equal(isRouteAvailableOn("main", "/wallet/1color"), false);
 		assert.equal(isRouteAvailableOn("main", "/wallet/1color/abc_0"), false);
 		assert.equal(isRouteAvailableOn("main", "/wallet/1colorx"), true);

@@ -1,11 +1,6 @@
-import { OneColorDeploy } from "@/components/wallet/one-color-deploy";
-import OneColorGrid from "@/components/wallet/one-color-grid";
+import { redirect } from "next/navigation";
 
+/** 1Color tokens are in the Tokens section now (testnet only). */
 export default function WalletOneColorPage() {
-	return (
-		<div className="space-y-6">
-			<OneColorGrid />
-			<OneColorDeploy />
-		</div>
-	);
+	redirect("/wallet/tokens");
 }

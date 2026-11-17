@@ -3,13 +3,13 @@
 import { ChevronRight, Moon, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
-import { useSyncExternalStore } from "react";
 import { SettingsGroup, SettingsRow } from "@/components/settings/settings-row";
 import { ThemeTokenPicker } from "@/components/settings/theme-token-picker";
 import { Card, CardContent } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { Switch } from "@/components/ui/switch";
 import { useSound } from "@/hooks/use-sound";
+import { useMounted } from "@/lib/hooks/use-mounted";
 
 const SHORTCUTS: readonly {
 	group: string;
@@ -49,11 +49,7 @@ const SHORTCUTS: readonly {
 export function SettingsForm() {
 	const { play } = useSound();
 	const { theme, setTheme } = useTheme();
-	const mounted = useSyncExternalStore(
-		() => () => {},
-		() => true,
-		() => false,
-	);
+	const mounted = useMounted();
 
 	if (!mounted) return null;
 

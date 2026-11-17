@@ -2,12 +2,11 @@
 
 import {
 	AtSign,
-	CircleDollarSign,
+	Coins,
 	Fingerprint,
 	Gem,
 	History,
 	type LucideIcon,
-	Palette,
 	ShieldCheck,
 	Wallet,
 } from "lucide-react";
@@ -28,11 +27,10 @@ import styles from "./wallet-tabs.module.css";
 const icons: Record<WalletTabValue, LucideIcon> = {
 	overview: Wallet,
 	ordinals: Gem,
+	tokens: Coins,
 	opns: AtSign,
 	identity: Fingerprint,
 	certificates: ShieldCheck,
-	bsv21: CircleDollarSign,
-	"1color": Palette,
 	history: History,
 };
 

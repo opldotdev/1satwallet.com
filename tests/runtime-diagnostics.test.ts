@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import {
 	clearDiagnostics,
+	errorNameOf,
 	getDiagnosticEvents,
 	reportDiagnostic,
 	sanitizeDiagnosticContext,
@@ -35,6 +36,17 @@ describe("runtime diagnostics", () => {
 			const source = readFileSync(join(process.cwd(), file), "utf8");
 			assert.doesNotMatch(source, /console\.(?:error|warn|log)\s*\(/, file);
 		}
+	});
+
+	it("names an error by its class, never its message", () => {
+		const secret = new TypeError(`bad key ${secretWif}`);
+		assert.equal(errorNameOf(secret), "TypeError");
+		assert.equal(errorNameOf("plain"), "string");
+		const context = sanitizeDiagnosticContext({
+			errorName: errorNameOf(secret),
+		});
+		assert.deepEqual(context, { errorName: "TypeError" });
+		assert.doesNotMatch(JSON.stringify(context), new RegExp(secretWif));
 	});
 
 	it("retains only allowlisted, non-secret context", () => {

@@ -2,15 +2,16 @@
 
 import { type Bsv21Balance, getBsv21Balances } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { Coins, Loader2, RefreshCw, Send } from "lucide-react";
-import Image from "next/image";
-import Link from "next/link";
+import { Coins, KeyRound, Loader2, RefreshCw, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import { DialogFooter } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
 	DialogContent,
 	DialogDescription,
@@ -20,11 +21,14 @@ import {
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
 import { useSound } from "@/hooks/use-sound";
-import { isRouteAvailableOn } from "@/lib/chain-surfaces";
-import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import type { Chain } from "@/lib/chain-endpoints";
+import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import {
+	type AssetSurfaceState,
+	describeAssetSurface,
+} from "@/lib/wallet/asset-query-state";
 import {
 	bsv21ActionFailureMessage,
 	executeBsv21Send,
@@ -32,27 +36,86 @@ import {
 	parseBsv21Amount,
 	parseBsv21Destination,
 } from "@/lib/wallet/bsv21-actions";
+import { tokenDetailHref } from "@/lib/wallet/create-token";
+import { shortOutpoint } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { Bsv21AuthorityManager } from "./bsv21-authority-manager";
+import {
+	TokenGroup,
+	TokenList,
+	TokenRow,
+	TokenRowsSkeleton,
+} from "./token-row";
 
-interface TokenCardProps {
-	token: Bsv21Balance;
-	bsv21Available: boolean;
+/** A BSV-21 token's ticker: its symbol, else the start of its id. */
+export const bsv21Ticker = (token: { sym?: string; id: string }) =>
+	token.sym || token.id.slice(0, 8);
+
+/**
+ * What the wallet can send of a BSV-21 token: its whole balance. The
+ * wallet's balance read counts spendable outputs only, so nothing is pending.
+ */
+export const bsv21Spendable = (token: Bsv21Balance) => BigInt(token.amt);
+
+/** Why BSV-21 balances aren't shown, with a Retry after a failed read. */
+export function Bsv21Unreadable({ state }: { state: AssetSurfaceState }) {
+	const { refreshBalance } = useWalletToolbox();
+	return (
+		<EmptyState
+			action={
+				state.kind === "error" ? (
+					<Button onClick={refreshBalance} variant="outline">
+						<RefreshCw data-icon="inline-start" /> Retry
+					</Button>
+				) : undefined
+			}
+			icon={Coins}
+			title={describeAssetSurface(state, "token")}
+		/>
+	);
 }
 
-function TokenCard({ token, bsv21Available }: TokenCardProps) {
+/** A BSV-21 token's icon, else its deploy inscription's thumbnail. */
+export const bsv21Icon = (token: Bsv21Balance, chain: Chain) =>
+	token.icon || getOrdinalThumbnail(token.id, 100, chain);
+
+/** Says why BSV-21 sends, mints and creates are off, once the stack has answered. */
+export function Bsv21UnavailableNotice() {
+	const { available, checking } = useBsv21Availability();
+	if (available || checking) return null;
+	return (
+		<Notice tone="warning">
+			The wallet service isn't offering BSV-21 right now, so sending, minting
+			and creating BSV-21 tokens is off until it is.
+		</Notice>
+	);
+}
+
+/**
+ * Send a BSV-21 token to an address or identity key: enter, check the
+ * amount and recipient, then send. The balance and the token's overlay
+ * status are read again just before sending.
+ */
+export function Bsv21SendDialog({
+	token,
+	onSent,
+}: {
+	token: Bsv21Balance;
+	onSent: (message: string) => void;
+}) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const { play } = useSound();
 	const { chain, oneSatContext, refreshBalance } = useWalletToolbox();
+	const { available: bsv21Available } = useBsv21Availability();
 	const [open, setOpen] = useState(false);
 	const [recipient, setRecipient] = useState("");
 	const [sendAmount, setSendAmount] = useState("");
 	const [reviewAmount, setReviewAmount] = useState<bigint | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [txid, setTxid] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
-	const ticker = token.sym || token.id.slice(0, 8);
-	const balance = BigInt(token.amt);
+	const ticker = bsv21Ticker(token);
+	const balance = bsv21Spendable(token);
 
 	const refresh = useCallback(async () => {
 		refreshBalance();
@@ -70,14 +133,14 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 		try {
 			const amount = parseBsv21Amount(sendAmount, token.dec);
 			if (!amount) {
-				throw new Error(
-					`Enter a positive amount with at most ${token.dec} decimals.`,
-				);
+				setError(`Enter a positive amount with at most ${token.dec} decimals.`);
+				return;
 			}
 			if (!parseBsv21Destination(recipient, chain)) {
-				throw new Error(
+				setError(
 					"Enter a valid address for this network or a compressed identity key.",
 				);
+				return;
 			}
 			oneSatContext.services.bsv21.clearCache();
 			const [details, balances] = await Promise.all([
@@ -86,19 +149,25 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 			]);
 			const current = balances.find((item) => item.id === token.id);
 			if (!details.status?.is_active) {
-				throw new Error("This token is not active in the overlay.");
+				setError("This token is not active in the overlay.");
+				return;
 			}
 			if (!current || BigInt(current.amt) < amount) {
-				throw new Error("The wallet no longer has enough spendable tokens.");
+				setError("The wallet no longer has enough spendable tokens.");
+				return;
 			}
 			setReviewAmount(amount);
 		} catch (cause) {
+			console.error(`[bsv21] send review of ${token.id} failed:`, cause);
+			reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "wallet.bsv21.send-review",
+				recoverable: true,
+				context: { retryable: true },
+			});
 			setReviewAmount(null);
-			setError(
-				cause instanceof Error && cause.message.startsWith("Enter")
-					? cause.message
-					: bsv21ActionFailureMessage(cause),
-			);
+			setError(bsv21ActionFailureMessage(cause));
 		} finally {
 			setBusy(false);
 		}
@@ -112,7 +181,7 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 		token.id,
 	]);
 
-	const authorize = useCallback(async () => {
+	const send = useCallback(async () => {
 		if (!(oneSatContext?.services && reviewAmount && bsv21Available)) return;
 		setBusy(true);
 		setError(null);
@@ -145,7 +214,9 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 				destination,
 			});
 			if (result.error) throw new Error(result.error);
-			setTxid(result.txid ?? "submitted");
+			onSent(
+				`Sent ${formatBsv21Amount(amount, token.dec)} ${ticker}${result.txid ? ` in ${result.txid}` : ""}.`,
+			);
 			setReviewAmount(null);
 			setRecipient("");
 			setSendAmount("");
@@ -153,6 +224,7 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 			play("success");
 			await refresh();
 		} catch (cause) {
+			console.error(`[bsv21] send of ${token.id} failed:`, cause);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -169,251 +241,188 @@ function TokenCard({ token, bsv21Available }: TokenCardProps) {
 		bsv21Available,
 		chain,
 		oneSatContext,
+		onSent,
 		play,
 		recipient,
 		refresh,
 		reviewAmount,
 		sendAmount,
+		ticker,
 		token.dec,
 		token.id,
 	]);
 
-	const marketHref = `/market/bsv21/${token.id}`;
-	const summary = (
-		<>
-			<div className="flex items-center gap-2">
-				<span className="font-semibold text-foreground">{ticker}</span>
-				<span className="rounded bg-muted px-1.5 py-0.5 text-muted-foreground text-xs uppercase">
-					BSV21
-				</span>
-			</div>
-			<div className="truncate text-muted-foreground text-sm">
-				{formatBsv21Amount(token.amt, token.dec)} tokens
-			</div>
-		</>
-	);
-
 	return (
-		<div className="group flex items-center gap-4 rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/50">
-			<div className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-muted">
-				<Image
-					src={token.icon || getOrdinalThumbnail(token.id, 100, chain)}
-					alt=""
-					fill
-					sizes="48px"
-					className="object-cover"
-					unoptimized
-				/>
-			</div>
-			{isRouteAvailableOn(chain, marketHref) ? (
-				<Link
-					className="min-w-0 flex-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-					href={`/market/bsv21/${token.id}`}
-					onClick={() => play("click")}
+		<SoundDialog
+			open={open}
+			onOpenChange={(next) => {
+				if (busy) return;
+				setOpen(next);
+				if (!next) {
+					setReviewAmount(null);
+					setError(null);
+				}
+			}}
+		>
+			<DialogTrigger asChild>
+				<Button
+					variant="outline"
+					disabled={!(oneSatContext && bsv21Available) || balance <= 0n}
 				>
-					{summary}
-				</Link>
-			) : (
-				<div className="min-w-0 flex-1">{summary}</div>
-			)}
-			<div className="hidden max-w-24 truncate font-mono text-muted-foreground text-xs sm:block">
-				{token.id.slice(0, 8)}…
-			</div>
-			<SoundDialog
-				open={open}
-				onOpenChange={(next) => {
-					if (busy) return;
-					setOpen(next);
-					if (!next) {
-						setReviewAmount(null);
-						setError(null);
-					}
-				}}
-			>
-				<DialogTrigger asChild>
-					<Button size="sm" variant="outline" disabled={!bsv21Available}>
-						<Send className="size-4" data-icon="inline-start" /> Send
-					</Button>
-				</DialogTrigger>
-				<DialogContent showCloseButton={!busy}>
-					<DialogHeader>
-						<DialogTitle>Send {ticker}</DialogTitle>
-						<DialogDescription>
-							Review the exact token quantity and destination before asking the
-							active wallet to authorize it.
-						</DialogDescription>
-					</DialogHeader>
-					{reviewAmount ? (
-						<div className="space-y-4">
-							<dl className="grid grid-cols-[auto_1fr] gap-2 rounded-md border p-3 text-sm">
-								<dt>Amount</dt>
-								<dd className="text-right font-mono">
-									{formatBsv21Amount(reviewAmount, token.dec)} {ticker}
-								</dd>
-								<dt>Atomic quantity</dt>
-								<dd className="break-all text-right font-mono">
-									{reviewAmount.toString()}
-								</dd>
-								<dt>Destination</dt>
-								<dd className="break-all text-right font-mono text-xs">
-									{recipient.trim()}
-								</dd>
-								<dt>Overlay fee</dt>
-								<dd className="text-right text-muted-foreground">
-									Per-output fee is reloaded by the action
-								</dd>
-								<dt>Network fee</dt>
-								<dd className="text-right text-muted-foreground">
-									Set by the wallet; not quoted here
-								</dd>
-							</dl>
-							<p className="text-xs text-muted-foreground">
-								The balance and active overlay status are checked again
-								immediately before authorization.
+					<Send data-icon="inline-start" /> Send
+				</Button>
+			</DialogTrigger>
+			<DialogContent showCloseButton={!busy}>
+				<DialogHeader>
+					<DialogTitle>Send {ticker}</DialogTitle>
+					<DialogDescription>
+						{reviewAmount
+							? "Check the amount and recipient."
+							: "To an address or an identity key."}
+					</DialogDescription>
+				</DialogHeader>
+				{reviewAmount ? (
+					<DetailList className="rounded-xl border p-4">
+						<DetailRow label="Amount">
+							{formatBsv21Amount(reviewAmount, token.dec)} {ticker}
+						</DetailRow>
+						<DetailRow label="Recipient" stack>
+							{recipient.trim()}
+						</DetailRow>
+						<DetailRow label="Fee" mono={false}>
+							Set by your wallet
+						</DetailRow>
+					</DetailList>
+				) : (
+					<div className="flex flex-col gap-4">
+						<div className="flex flex-col gap-2">
+							<Label htmlFor={`recipient-${token.id}`}>Recipient</Label>
+							<Input
+								id={`recipient-${token.id}`}
+								onChange={(event) => setRecipient(event.target.value)}
+								placeholder="Address or identity key"
+								value={recipient}
+							/>
+						</div>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor={`amount-${token.id}`}>Amount</Label>
+							<Input
+								id={`amount-${token.id}`}
+								inputMode="decimal"
+								onChange={(event) => setSendAmount(event.target.value)}
+								placeholder="0"
+								value={sendAmount}
+							/>
+							<p className="text-muted-foreground text-xs">
+								Available: {formatBsv21Amount(balance, token.dec)} {ticker}
 							</p>
 						</div>
-					) : (
-						<div className="space-y-4">
-							<div className="space-y-2">
-								<Label htmlFor={`recipient-${token.id}`}>Recipient</Label>
-								<Input
-									id={`recipient-${token.id}`}
-									onChange={(event) => setRecipient(event.target.value)}
-									placeholder="Address or compressed identity key"
-									value={recipient}
-								/>
-							</div>
-							<div className="space-y-2">
-								<Label htmlFor={`amount-${token.id}`}>Amount</Label>
-								<Input
-									id={`amount-${token.id}`}
-									inputMode="decimal"
-									onChange={(event) => setSendAmount(event.target.value)}
-									placeholder="0"
-									value={sendAmount}
-								/>
-								<p className="text-xs text-muted-foreground">
-									Available: {formatBsv21Amount(balance, token.dec)} {ticker}
-								</p>
-							</div>
-						</div>
-					)}
-					{error ? (
-						<p className="text-sm text-destructive" role="alert">
-							{error}
-						</p>
-					) : null}
-					<DialogFooter>
-						<Button
-							type="button"
-							variant="outline"
-							disabled={busy}
-							onClick={() =>
-								reviewAmount ? setReviewAmount(null) : setOpen(false)
-							}
-						>
-							{reviewAmount ? "Edit" : "Cancel"}
-						</Button>
-						<Button
-							type="button"
-							disabled={busy || !recipient.trim() || !sendAmount.trim()}
-							onClick={() =>
-								void (reviewAmount ? authorize() : prepareReview())
-							}
-						>
-							{busy ? (
-								<Loader2
-									className="size-4 animate-spin"
-									data-icon="inline-start"
-								/>
-							) : null}
-							{reviewAmount ? "Authorize transfer" : "Review transfer"}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</SoundDialog>
-			{txid ? (
-				<span className="sr-only" role="status">
-					Transfer submitted: {txid}
-				</span>
-			) : null}
-		</div>
+					</div>
+				)}
+				{error ? (
+					<p className="text-destructive text-sm" role="alert">
+						{error}
+					</p>
+				) : null}
+				<DialogFooter>
+					<Button
+						type="button"
+						variant="outline"
+						disabled={busy}
+						onClick={() =>
+							reviewAmount ? setReviewAmount(null) : setOpen(false)
+						}
+					>
+						{reviewAmount ? "Edit" : "Cancel"}
+					</Button>
+					<Button
+						type="button"
+						disabled={busy || !recipient.trim() || !sendAmount.trim()}
+						onClick={() => void (reviewAmount ? send() : prepareReview())}
+					>
+						{busy ? (
+							<Loader2 className="animate-spin" data-icon="inline-start" />
+						) : null}
+						{reviewAmount ? `Send ${ticker}` : "Review"}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</SoundDialog>
 	);
 }
 
-interface TokenGridProps {
-	className?: string;
-}
-
-export default function TokenGrid({ className = "" }: TokenGridProps) {
+/**
+ * The BSV-21 group of the Tokens section: one row per token, each opening
+ * the token's wallet page. Minting by token ID (for an authority whose token
+ * this wallet holds none of) opens from the group's heading.
+ */
+export default function TokenGrid() {
 	const {
 		bsv21Tokens: tokens,
 		bsv21State,
-		isInitialized,
-		isInitializing,
+		chain,
 		isBalanceLoading,
+		oneSatContext,
 	} = useWalletToolbox();
-	const features = useStackFeatures();
-	const bsv21Available = features.data?.features.bsv21 === true;
+	const { available } = useBsv21Availability();
+	const [authorityStatus, setAuthorityStatus] = useState<string | null>(null);
 
-	if (isInitializing || isBalanceLoading) {
-		return (
-			<div className="flex items-center justify-center py-12">
-				<Loader2 className="size-8 animate-spin text-muted-foreground" />
-				<span className="ml-3 text-muted-foreground">Loading wallet…</span>
-			</div>
+	let content: ReactNode;
+	if (isBalanceLoading) {
+		content = <TokenRowsSkeleton />;
+	} else if (bsv21State.kind !== "ready" && bsv21State.kind !== "empty") {
+		content = <Bsv21Unreadable state={bsv21State} />;
+	} else if (tokens.length === 0) {
+		content = (
+			<EmptyState
+				description="Tokens you receive or create show up here."
+				icon={Coins}
+				title="No BSV-21 tokens yet"
+			/>
 		);
-	}
-
-	if (!isInitialized) {
-		return (
-			<div className="py-12 text-center text-muted-foreground">
-				Please unlock or connect a wallet to view your BSV21 tokens.
-			</div>
+	} else {
+		content = (
+			<TokenList>
+				{tokens.map((token) => (
+					<TokenRow
+						amount={formatBsv21Amount(bsv21Spendable(token), token.dec)}
+						caption={shortOutpoint(token.id)}
+						href={tokenDetailHref("bsv21", token.id)}
+						icon={bsv21Icon(token, chain)}
+						key={token.id}
+						ticker={bsv21Ticker(token)}
+					/>
+				))}
+			</TokenList>
 		);
 	}
 
 	return (
-		<div className={`space-y-4 ${className}`}>
-			{!bsv21Available ? (
-				<div
-					className="flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm"
-					role="status"
-				>
-					<RefreshCw className="mt-0.5 size-4 shrink-0" />
-					<p>
-						{features.isLoading
-							? "Checking BSV21 stack capability…"
-							: "The configured stack is not advertising BSV21. Token actions are disabled until capability checks recover."}
-					</p>
-				</div>
+		<TokenGroup
+			action={
+				<Bsv21AuthorityManager
+					onDone={setAuthorityStatus}
+					trigger={
+						<Button
+							disabled={!(oneSatContext && available)}
+							size="sm"
+							variant="ghost"
+						>
+							<KeyRound data-icon="inline-start" /> Mint by token ID
+						</Button>
+					}
+				/>
+			}
+			id="tokens-bsv21"
+			title="BSV-21"
+		>
+			<Bsv21UnavailableNotice />
+			{authorityStatus ? (
+				<p className="text-primary text-sm wrap-anywhere" role="status">
+					{authorityStatus}
+				</p>
 			) : null}
-			{bsv21State.kind !== "ready" && bsv21State.kind !== "empty" ? (
-				<div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-					<Coins className="mb-4 size-12 opacity-50" />
-					<p>{describeAssetSurface(bsv21State, "token")}</p>
-				</div>
-			) : tokens.length === 0 ? (
-				<div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-					<Coins className="mb-4 size-12 opacity-50" />
-					<p>No BSV21 tokens found in your wallet.</p>
-				</div>
-			) : (
-				<>
-					<h2 className="text-lg font-medium">
-						{tokens.length} BSV21 token{tokens.length === 1 ? "" : "s"}
-					</h2>
-					<div className="space-y-2">
-						{tokens.map((token) => (
-							<TokenCard
-								key={token.id}
-								token={token}
-								bsv21Available={bsv21Available}
-							/>
-						))}
-					</div>
-				</>
-			)}
-		</div>
+			{content}
+		</TokenGroup>
 	);
 }

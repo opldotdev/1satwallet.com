@@ -8,7 +8,7 @@ import {
 } from "@1sat/actions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	type AssetSurfaceState,
 	assetSurfaceFromCount,
@@ -143,13 +143,13 @@ export function useWalletBalance({
 											e === "type:Token",
 									);
 								});
-							} catch {
+							} catch (error) {
 								reportDiagnostic({
 									category: "provider",
 									code: "provider.failed",
 									operation: "wallet.balance.legacy-scan",
 									recoverable: true,
-									context: { retryable: true },
+									context: { retryable: true, errorName: errorNameOf(error) },
 								});
 								return [];
 							}
@@ -194,7 +194,10 @@ export function useWalletBalance({
 					code: "provider.failed",
 					operation: "wallet.balance.list-outputs",
 					recoverable: true,
-					context: { retryable: true },
+					context: {
+						retryable: true,
+						errorName: errorNameOf(balanceResult.error),
+					},
 				});
 			}
 
@@ -211,13 +214,28 @@ export function useWalletBalance({
 				: bsv21Result.ok
 					? assetSurfaceFromCount(bsv21Balances.length)
 					: { kind: "error", message: "Couldn't load. Try again." };
-			if (ordinalsState.kind === "error" || bsv21State.kind === "error") {
+			if (!ordinalsResult.ok && "error" in ordinalsResult) {
 				reportDiagnostic({
 					category: "provider",
 					code: "provider.failed",
-					operation: "wallet.balance.asset-read",
+					operation: "wallet.balance.ordinals-read",
 					recoverable: true,
-					context: { retryable: true, capability: assetRead },
+					context: {
+						retryable: true,
+						errorName: errorNameOf(ordinalsResult.error),
+					},
+				});
+			}
+			if (!bsv21Result.ok && "error" in bsv21Result) {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.balance.bsv21-read",
+					recoverable: true,
+					context: {
+						retryable: true,
+						errorName: errorNameOf(bsv21Result.error),
+					},
 				});
 			}
 

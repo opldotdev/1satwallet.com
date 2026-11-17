@@ -68,10 +68,9 @@ const navData: Array<{
 				feature: "ordinals",
 			},
 			{
-				title: "BSV21",
-				url: "/wallet/bsv21",
+				title: "Tokens",
+				url: "/wallet/tokens",
 				shortcut: "g 1",
-				feature: "bsv21",
 			},
 			{
 				title: "History",

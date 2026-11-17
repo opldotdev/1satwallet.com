@@ -57,8 +57,8 @@ export default async function MarketBSV21Page({
 					no token-registry method. This site does not fall back to a
 					handwritten endpoint. Tokens already held by the active wallet remain
 					available in{" "}
-					<Link className="underline" href="/wallet/bsv21">
-						Wallet → BSV21
+					<Link className="underline" href="/wallet/tokens">
+						Wallet → Tokens
 					</Link>
 					.
 				</p>
