@@ -16,3 +16,12 @@ export function useStackFeatures() {
 		refetchInterval: 60_000,
 	});
 }
+
+/** Whether the stack serves BSV-21, and whether it is still being asked. */
+export function useBsv21Availability() {
+	const features = useStackFeatures();
+	return {
+		available: features.data?.features.bsv21 === true,
+		checking: features.isLoading,
+	};
+}
