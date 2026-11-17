@@ -513,28 +513,38 @@ export const COLOR_STORE_DELETE_TIMEOUT_MS = 5000;
 /**
  * Delete one database. A delete that another connection blocks is logged and
  * still finishes once that connection closes; it is waited for at most
- * `timeoutMs`, so one blocked store never holds up the others.
+ * `timeoutMs`, so one blocked store never holds up the others. An outcome
+ * that arrives after the timeout is logged: a late success as info, a late
+ * failure in full.
  */
 const deleteDatabase = (name: string, timeoutMs: number): Promise<void> =>
 	new Promise((resolve, reject) => {
 		const scope = name.slice(PERMISSION_DATABASE.length + 1);
-		const timer = setTimeout(
-			() =>
-				reject(
-					new Error(
-						`Deleting ${name} did not finish within ${timeoutMs} ms; it completes once the connection holding it closes.`,
-					),
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			reject(
+				new Error(
+					`Deleting ${name} did not finish within ${timeoutMs} ms; it completes once the connection holding it closes.`,
 				),
-			timeoutMs,
-		);
+			);
+		}, timeoutMs);
 		const request = indexedDB.deleteDatabase(name);
 		request.onsuccess = () => {
 			clearTimeout(timer);
+			if (timedOut)
+				console.info(
+					"[wallet] 1Color grant store: delete finished after the timeout",
+					{ scope, timeoutMs },
+				);
 			resolve();
 		};
 		request.onerror = () => {
 			clearTimeout(timer);
-			reject(request.error ?? new Error(`Could not delete ${name}`));
+			const error = request.error ?? new Error(`Could not delete ${name}`);
+			if (timedOut)
+				logStoreFailure("delete-after-timeout", { scope, timeoutMs }, error);
+			reject(error);
 		};
 		request.onblocked = () => {
 			const event = reportDiagnostic({

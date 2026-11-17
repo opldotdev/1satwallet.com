@@ -6,9 +6,10 @@ import {
 	assetBasket,
 	ColorConsentDeclinedError,
 	type ColorPermissionModule,
+	ColorPlan,
 	colorProtocolID,
 } from "@bsv/color-permission-module";
-import type { WalletInterface } from "@bsv/sdk";
+import { PrivateKey, Utils, type WalletInterface } from "@bsv/sdk";
 import {
 	type PermissionsManagerConfig,
 	WalletPermissionsManager,
@@ -30,6 +31,7 @@ import {
 	LIST_SCAN_MAX,
 	LIST_SCAN_PAGE,
 	listActionsForApp,
+	listOutputsForApp,
 	MisroutedModuleIdentifierError,
 } from "@/lib/wallet/module-identifier-guard";
 
@@ -919,7 +921,9 @@ describe("apps see p color actions in listActions only through the color consent
 				(action.outputs as { basket: string }[]).map((o) => o.basket),
 			]),
 			[
-				["a", ["p color plan 0 1 ab", "payments"], []],
+				// The plan label it named is not handed back (see the plan
+				// label tests below); its other labels are.
+				["a", ["payments"], []],
 				["b", ["payments"], ["default", "p 1sat ordinals"]],
 				["d", ["p nosend expiry never"], ["tokens"]],
 			],
@@ -1239,5 +1243,167 @@ describe("apps never read 1Color custody records", () => {
 			ADMIN,
 		);
 		assert.equal(actions.actions[0].outputs?.[0].customInstructions, custody);
+	});
+});
+
+describe("apps never read 1Color plan labels", () => {
+	// A mint's plan: its owned output names the wallet's identity key (a real
+	// point, as the plan checks), filed on the action as hex `p color plan`
+	// labels.
+	const identity = new PrivateKey(7).toPublicKey().toString();
+	const plan = ColorPlan.toLabels({
+		version: 1,
+		assets: [ASSET],
+		ownedOutputs: [
+			{
+				outputIndex: 0,
+				assetId: ASSET,
+				derivationPrefix: "cHJlZml4",
+				derivationSuffix: "c3VmZml4",
+				senderIdentityKey: identity,
+			},
+		],
+		operations: [{ assetId: ASSET, operation: "mint" }],
+		inputPositions: [],
+		changePositions: [],
+		sighashTypes: [],
+	});
+	const keyHex = Utils.toHex(Utils.toArray(identity, "utf8"));
+	const labels = [...plan, "payments"];
+	const listed: Listed = {
+		outputs: [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				labels,
+				tags: ["p color tag"],
+			},
+		],
+		actions: [
+			{
+				txid: "a",
+				labels,
+				outputs: [{ outputIndex: 0, basket: BASKET }],
+			},
+			{ txid: "b", labels: ["payments"], outputs: [] },
+		],
+	};
+
+	/** Fails when `value` carries a plan label or the identity key, raw or hex. */
+	const assertNoLeak = (value: unknown) => {
+		const text = JSON.stringify(value);
+		assert.ok(!text.includes("p color plan"), text);
+		assert.ok(!text.includes(identity), text);
+		assert.ok(!text.includes(keyHex), text);
+	};
+
+	it("is a real leak without the guard: the plan labels hold the identity key", () => {
+		assert.ok(plan.length > 1);
+		const hex = plan.map((label) => label.split(" ")[5]).join("");
+		assert.ok(hex.includes(keyHex));
+	});
+
+	it("drops labels from an app's p color basket read, even on a saved grant", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		for (let read = 0; read < 2; read++) {
+			const result = await manager.listOutputs(
+				{ basket: BASKET, includeLabels: true, includeTags: true },
+				APP,
+			);
+			assert.equal(result.outputs.length, 1);
+			assert.ok(!("labels" in result.outputs[0]));
+			assert.deepEqual(result.outputs[0].tags, ["p color tag"]);
+			assertNoLeak(result);
+		}
+		// The second read was answered by the saved grant, without a prompt.
+		assert.equal(colorPrompts.length, 1);
+	});
+
+	it("drops labels from the p color assets inventory an app reads", () => {
+		const result = listOutputsForApp(
+			{ basket: "p color assets", includeLabels: true },
+			{ totalOutputs: 1, outputs: structuredClone(listed.outputs) },
+		) as { outputs: Record<string, unknown>[] };
+		assert.deepEqual(result.outputs, [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				tags: ["p color tag"],
+			},
+		]);
+		assertNoLeak(result);
+	});
+
+	it("keeps an app's other labels on outputs of its own baskets", async () => {
+		const { manager } = setup(listed, true);
+		const result = await manager.listOutputs(
+			{ basket: "tokens", includeLabels: true },
+			APP,
+		);
+		assert.deepEqual(result.outputs[0].labels, ["payments"]);
+		assertNoLeak(result);
+	});
+
+	it("drops every plan label from the actions of a plan label the app named", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		const result = await manager.listActions(
+			{ labels: [plan[0]], includeOutputs: true, includeLabels: true },
+			APP,
+		);
+		assert.equal(colorPrompts.length, 1);
+		assert.deepEqual(
+			result.actions.map((action) => [action.txid, action.labels]),
+			[
+				["a", ["payments"]],
+				["b", ["payments"]],
+			],
+		);
+		assertNoLeak(result);
+	});
+
+	it("treats a call with no originator as an app", async () => {
+		const raw = {
+			listOutputs: async () => ({
+				totalOutputs: 1,
+				outputs: structuredClone(listed.outputs),
+			}),
+			listActions: async (args: unknown) => listFrom(listed, args),
+		};
+		const guarded = guardModuleIdentifiers(raw, ADMIN) as unknown as {
+			listOutputs: (args: unknown) => Promise<unknown>;
+			listActions: (args: unknown) => Promise<{
+				actions: Record<string, unknown>[];
+			}>;
+		};
+		const outputs = await guarded.listOutputs({
+			basket: BASKET,
+			includeLabels: true,
+		});
+		assertNoLeak(outputs);
+		const actions = await guarded.listActions({
+			labels: [plan[0]],
+			includeLabels: true,
+		});
+		assert.deepEqual(
+			actions.actions.map((action) => action.labels),
+			[["payments"], ["payments"]],
+		);
+		assertNoLeak(actions);
+	});
+
+	it("leaves the wallet's own reads with every label", async () => {
+		const { manager } = setup(listed, true);
+		const outputs = await manager.listOutputs(
+			{ basket: BASKET, includeLabels: true },
+			ADMIN,
+		);
+		assert.deepEqual(outputs.outputs[0].labels, labels);
+		const actions = await manager.listActions(
+			{ labels: [plan[0]], includeLabels: true },
+			ADMIN,
+		);
+		assert.deepEqual(actions.actions[0].labels, labels);
 	});
 });

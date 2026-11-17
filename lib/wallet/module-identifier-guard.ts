@@ -328,9 +328,20 @@ const withoutCustody = (output: unknown): unknown => {
 };
 
 /**
- * An action as the app sees it: consent-only outputs and unasked labels gone,
- * and, on an action with a consent-only label, no output's custom
- * instructions.
+ * `labels` without consent-only labels. A `p color plan` label is a hex
+ * chunk of the action's BRC-207 plan, whose `ownedOutputs[].senderIdentityKey`
+ * is the wallet's identity key on the wallet's own mints, sends and splits,
+ * and the color module (0.2.3) keeps them on the action as written. Every
+ * other label stays.
+ */
+const appLabels = (labels: unknown[]): unknown[] =>
+	labels.filter((label) => !isConsentOnlyName(label));
+
+/**
+ * An action as the app sees it: consent-only outputs and consent-only labels
+ * (`p color plan …`, see `appLabels`) gone, its other labels only when the
+ * app asked for them (`includeLabels: true`), and, on an action with a
+ * consent-only label, no output's custom instructions.
  */
 const forApp = (
 	action: ListedAction,
@@ -346,25 +357,45 @@ const forApp = (
 		next.outputs = consentOnly ? outputs.map(withoutCustody) : outputs;
 	}
 	if (args.includeLabels !== true) delete next.labels;
+	else if (Array.isArray(next.labels)) next.labels = appLabels(next.labels);
 	return next;
 };
 
 /**
- * An app's `listOutputs` of a consent-only basket (e.g. a `p color` asset
- * basket) without the outputs' custom instructions; see `withoutCustody`.
+ * One output of an app's `listOutputs`. From a consent-only basket (a
+ * `p color` asset basket or `p color assets`) it has no custom instructions
+ * (see `withoutCustody`) and no `labels`: those are its transaction's labels,
+ * which on a token output are the action's `p color plan` labels (see
+ * `appLabels`). From any other basket only consent-only labels go.
+ */
+const outputForApp = (output: unknown, consentOnly: boolean): unknown => {
+	if (consentOnly) {
+		const fields = record(withoutCustody(output));
+		if (!fields || !("labels" in fields)) return fields ?? output;
+		const { labels: _labels, ...rest } = fields;
+		return rest;
+	}
+	const fields = record(output);
+	if (!fields || !Array.isArray(fields.labels)) return output;
+	return { ...fields, labels: appLabels(fields.labels) };
+};
+
+/**
+ * An app's `listOutputs` result without the wallet's identity key: no custom
+ * instructions or labels on the outputs of a consent-only basket, and no
+ * consent-only label on any other output; see `outputForApp`.
  */
 export const listOutputsForApp = (
 	args: Record<string, unknown> | null,
 	result: unknown,
 ): unknown => {
 	const listing = record(result);
-	if (
-		!isConsentOnlyName(args?.basket) ||
-		!listing ||
-		!Array.isArray(listing.outputs)
-	)
-		return result;
-	return { ...listing, outputs: listing.outputs.map(withoutCustody) };
+	if (!listing || !Array.isArray(listing.outputs)) return result;
+	const consentOnly = isConsentOnlyName(args?.basket);
+	return {
+		...listing,
+		outputs: listing.outputs.map((output) => outputForApp(output, consentOnly)),
+	};
 };
 
 /**
@@ -398,7 +429,9 @@ export const createListScanCache = (): ListScanCache => new Map();
  * An app's `listActions` result without consent-only module data: actions
  * with a consent-only label (e.g. `p color …`) are left out unless the app
  * named one of their labels, and outputs in a consent-only basket (read only
- * through the module's own basket consent) are stripped from the rest.
+ * through the module's own basket consent) are stripped from the rest. No
+ * returned action carries a consent-only label, not even one the app named,
+ * since `p color plan` labels carry the wallet's identity key (see `forApp`).
  *
  * `offset` and `limit` count visible actions. A label-only scan reads forward
  * only until `offset + limit` visible actions are found or the wallet's list
@@ -563,10 +596,10 @@ export async function listActionsForApp(
  * Wrap the permissions manager so no BRC-100 call can carry a misrouted
  * reserved name. Every BRC-100 call is checked before it reaches the manager;
  * calls from any originator but `adminOriginator` (exact match, the same test
- * the 1Color consent uses) are held to the app rules too, and an app's
- * `listActions` result, and its `listOutputs` of a consent-only basket, are
- * filtered. A refusal is reported in full and the
- * caller gets `MisroutedModuleIdentifierError`. The manager's own methods
+ * the 1Color consent uses, so a missing originator is an app) are held to
+ * the app rules too, and an app's `listActions` and `listOutputs` results are
+ * filtered (no consent-only actions, custody or `p color` labels). A refusal
+ * is reported in full and the caller gets `MisroutedModuleIdentifierError`. The manager's own methods
  * (callbacks, grants, token listings) pass through, bound to the manager.
  */
 export function guardModuleIdentifiers<T extends object>(

@@ -202,9 +202,55 @@ describe("deleting color grant stores", () => {
 		} finally {
 			held.close();
 		}
-		// Once the holder closes, the pending delete goes through.
+		// Once the holder closes, the pending delete goes through, and its late
+		// success is logged rather than dropped.
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.deepEqual(await databaseNames(), []);
+		assert.deepEqual(informed.at(-1), [
+			"[wallet] 1Color grant store: delete finished after the timeout",
+			{ scope: `1satwallet-color-test-${WALLET_B}`, timeoutMs: 50 },
+		]);
+	});
+
+	it("logs a delete that fails after the timeout", async () => {
+		const deleteDatabase = indexedDB.deleteDatabase;
+		let request: { onerror?: () => void; error: DOMException } | undefined;
+		Object.defineProperty(indexedDB, "deleteDatabase", {
+			configurable: true,
+			value: () => {
+				request = { error: new DOMException("disk gone", "UnknownError") };
+				return request;
+			},
+		});
+		try {
+			await assert.rejects(
+				deleteColorPermissionStores(
+					{ chain: "test", identityKey: WALLET_A },
+					10,
+				),
+				(error: unknown) => {
+					assert.ok(error instanceof AggregateError);
+					assert.match(String(error.errors[0]), /did not finish within 10 ms/);
+					return true;
+				},
+			);
+		} finally {
+			Object.defineProperty(indexedDB, "deleteDatabase", {
+				configurable: true,
+				value: deleteDatabase,
+			});
+		}
+		logged = [];
+		request?.onerror?.();
+		const late = logged.filter(
+			(args) =>
+				args[0] === "[wallet] 1Color grant store: delete-after-timeout failed",
+		);
+		assert.equal(late.length, 1);
+		const detail = late[0][1] as Record<string, unknown>;
+		assert.equal(detail.scope, `1satwallet-color-test-${WALLET_A}`);
+		assert.equal(detail.timeoutMs, 10);
+		assert.match(String(detail.error), /disk gone/);
 	});
 
 	it("deletes the current store even when listing databases fails", async () => {
