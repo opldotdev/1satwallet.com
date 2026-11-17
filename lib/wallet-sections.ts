@@ -88,9 +88,15 @@ const SUB_PAGES: readonly SubPage[] = [
 	},
 	{
 		path: "/wallet/bsv21/",
-		title: "BSV21 token",
-		parentHref: "/wallet/bsv21",
-		parentTitle: "BSV21",
+		title: "BSV-21 token",
+		parentHref: "/wallet/tokens",
+		parentTitle: "Tokens",
+	},
+	{
+		path: "/wallet/1color/",
+		title: "1Color token",
+		parentHref: "/wallet/tokens",
+		parentTitle: "Tokens",
 	},
 	// An app's request: nothing to go back to, and no tabs to wander off by.
 	{ path: "/wallet/cwi", title: "Authorize request" },
