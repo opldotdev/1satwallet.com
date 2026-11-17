@@ -14,7 +14,9 @@ import { type IndexedOutput, normalizeOutpoint } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
+	BSV20_UNCONFIRMED_REASON,
 	excludeUnsweepableTokens,
+	hasIndexedBsv20Amount,
 	isListedOutput,
 	isolateListedBatches,
 } from "@/lib/wallet/migration-listings";
@@ -52,6 +54,8 @@ export interface SweepResult {
 	bsv21Txids: string[];
 	/** Wallet-owned listings cancelled before the sweep */
 	cancelTxids?: string[];
+	/** Moves from the pay-key wallet to the identity root's deposit address */
+	transferTxids?: string[];
 	/** Listed legacy outputs whose OrdLock was cancelled inside a sweep spend */
 	cancelledListings: string[];
 	errors: string[];
@@ -310,11 +314,25 @@ export async function executeMigrationSweep(
 	}
 
 	const fundingChunks = chunk(funding, FUNDING_CHUNK_SIZE);
-	const ordinalChunks = chunk(ordinals, ORDINAL_CHUNK_SIZE);
+	const ordinalChunks = isolateListedBatches(ordinals, ORDINAL_CHUNK_SIZE);
 	const activeTokens = excludeUnsweepableTokens(bsv21Tokens).filter(
 		(t) => t.outputs.length > 0,
 	);
-	const activeBsv20 = bsv20Tokens.filter((t) => t.outputs.length > 0);
+	// Only amounts the indexer gives are swept (see splitBsv20Outputs); an
+	// amount from the inscription JSON alone could over-claim and burn.
+	const activeBsv20 = bsv20Tokens
+		.map((t) => {
+			const unconfirmed = t.outputs.filter((o) => !hasIndexedBsv20Amount(o));
+			for (const o of unconfirmed) {
+				result.errors.push(
+					`BSV-20 ${t.tick} output ${o.outpoint} was not swept: ${BSV20_UNCONFIRMED_REASON}.`,
+				);
+			}
+			return unconfirmed.length === 0
+				? t
+				: { ...t, outputs: t.outputs.filter(hasIndexedBsv20Amount) };
+		})
+		.filter((t) => t.outputs.length > 0);
 	const bsv20Batches = new Map(
 		activeBsv20.map((t) => [
 			t.tick,
@@ -525,7 +543,8 @@ export async function executeMigrationSweep(
 	}
 
 	// 2. Ordinals (listed ordinals are swept via OrdLock cancel inside the
-	// action; BSV-20 content is refused by the action's guard)
+	// action, one per tx so a v1 or bad listing fails alone; BSV-20 content is
+	// refused by the action's guard)
 	if (ordinalChunks.length > 0) {
 		await sweepChunked(
 			"ordinals",

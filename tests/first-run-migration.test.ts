@@ -1,19 +1,22 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import type { OneSatContext } from "@1sat/actions";
 import type { OneSatServices } from "@1sat/client";
 import { wifToHex } from "@1sat/utils";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import { emptySweepResult } from "@/lib/sweep-migration";
 import {
+	ListingCancelError,
 	type MigrationTarget,
+	partialRunResult,
 	requireMigrationTarget,
 	runFirstRunMigration,
 	runMigrationOnTarget,
 } from "@/lib/wallet/first-run-migration";
 import type { ListedAsset } from "@/lib/wallet/migration-listings";
+import { PayKeyTransferIncompleteError } from "@/lib/wallet/pay-key-transfer";
 
 const identityKey = PrivateKey.fromHex("03".repeat(32));
 const identityWif = identityKey.toWif();
@@ -46,6 +49,7 @@ function harness(
 	const log: string[] = [];
 	const swept: MigrationTarget[] = [];
 	const cancelledOn: OneSatContext[] = [];
+	const transferredFrom: OneSatContext[] = [];
 	const deps = {
 		current: legacy,
 		listings: [listing],
@@ -67,31 +71,58 @@ function harness(
 			cancelledOn.push(ctx);
 			return { ok: true, txids: ["cancel-1"], errors: [] };
 		},
+		transferPayKeyWallet: async (ctx: OneSatContext, wif: string) => {
+			log.push("transfer");
+			transferredFrom.push(ctx);
+			assert.equal(wif, identityWif);
+			return { address: "identity-deposit", txids: ["move-1"] };
+		},
 		sweep: async (target: MigrationTarget) => {
 			log.push("sweep");
 			swept.push(target);
 			return emptySweepResult({ bsvTxids: ["bsv-1"] });
 		},
 	};
-	return { deps, legacy, log, swept, cancelledOn };
+	return { deps, legacy, log, swept, cancelledOn, transferredFrom };
 }
 
 describe("first-run migration re-root", () => {
+	// The failure paths log in full; keep test output (and Next's patched
+	// console in a full run) out of it.
+	const originalError = console.error;
+	beforeEach(() => {
+		console.error = () => undefined;
+	});
+	afterEach(() => {
+		console.error = originalError;
+	});
+
 	it("sweeps into the wallet initializeWallet returned, never the destroyed one", async () => {
 		const fresh = fakeTarget(identityKey, "identity wallet");
 		let rootSeen = "";
-		const { deps, legacy, log, swept, cancelledOn } = harness(async (hex) => {
-			rootSeen = hex;
-			return fresh;
-		});
+		const { deps, legacy, log, swept, cancelledOn, transferredFrom } = harness(
+			async (hex) => {
+				rootSeen = hex;
+				return fresh;
+			},
+		);
 
 		const run = await runFirstRunMigration(deps);
 
 		assert.equal(rootSeen, wifToHex(identityWif));
-		assert.deepEqual(log, ["cancel", "persist", "destroy", "init", "sweep"]);
+		assert.deepEqual(log, [
+			"cancel",
+			"transfer",
+			"persist",
+			"destroy",
+			"init",
+			"sweep",
+		]);
 		// The wallet's own listings belong to the running wallet: cancelled
-		// there, before anything is changed.
+		// there, before anything is changed, then everything it holds moves.
 		assert.equal(cancelledOn[0], legacy.oneSatContext);
+		assert.equal(transferredFrom[0], legacy.oneSatContext);
+		assert.deepEqual(run.transferTxids, ["move-1"]);
 		assert.equal(swept.length, 1);
 		assert.equal(swept[0], fresh);
 		assert.notEqual(swept[0].wallet, legacy.wallet);
@@ -134,10 +165,103 @@ describe("first-run migration re-root", () => {
 		};
 		await assert.rejects(runFirstRunMigration(failing), (error: Error) => {
 			assert.match(error.message, /Listings must be cancelled/);
-			assert.deepEqual(error.cause, ["Listing x: declined"]);
+			assert.match(error.message, /Listing x: declined/);
 			return true;
 		});
 		assert.deepEqual(log, []);
+	});
+
+	it("names each failed cancel and returns the cancels that went through", async () => {
+		const { deps, log } = harness(async () =>
+			fakeTarget(identityKey, "identity wallet"),
+		);
+		const partial = {
+			...deps,
+			listings: [listing, { ...listing, outpoint: `${"bb".repeat(32)}.0` }],
+			cancelListings: async () => ({
+				ok: false,
+				txids: ["cancel-ok"],
+				errors: [`Listing ${"bb".repeat(32)}.0: declined`],
+			}),
+		};
+		await assert.rejects(runFirstRunMigration(partial), (error: unknown) => {
+			assert.ok(error instanceof ListingCancelError);
+			assert.match(error.message, /1 of 2 not cancelled/);
+			assert.match(error.message, /bbbb.*: declined/);
+			assert.match(error.message, /Cancelled 1: cancel-ok/);
+			assert.deepEqual(error.cancelTxids, ["cancel-ok"]);
+			assert.deepEqual(partialRunResult(error)?.cancelTxids, ["cancel-ok"]);
+			return true;
+		});
+		assert.deepEqual(log, []);
+	});
+
+	it("does not re-root while the pay-key wallet still holds anything", async () => {
+		const { deps, log } = harness(async () =>
+			fakeTarget(identityKey, "identity wallet"),
+		);
+		const stuck = new PayKeyTransferIncompleteError(
+			[
+				{
+					basket: "lock",
+					outpoint: `${"cc".repeat(32)}.0`,
+					reason: "time-locked BSV; unlock it once the lock ends, then migrate",
+				},
+			],
+			["move-1"],
+			[],
+		);
+		const blocked = {
+			...deps,
+			transferPayKeyWallet: async () => {
+				log.push("transfer");
+				throw stuck;
+			},
+		};
+		await assert.rejects(runFirstRunMigration(blocked), (error: unknown) => {
+			assert.equal(error, stuck);
+			assert.match(stuck.message, /not switched to the identity key/);
+			assert.match(stuck.message, /1 in "lock"/);
+			assert.match(stuck.message, /time-locked/);
+			assert.match(stuck.message, /move-1/);
+			assert.deepEqual(partialRunResult(error), {
+				cancelTxids: ["cancel-1"],
+				transferTxids: ["move-1"],
+				errors: [],
+			});
+			return true;
+		});
+		// Nothing after the transfer ran: keys unchanged, wallet not destroyed.
+		assert.deepEqual(log, ["cancel", "transfer"]);
+	});
+
+	it("skips the transfer for a wallet already rooted at the identity key", async () => {
+		const { deps, log } = harness(async () =>
+			fakeTarget(identityKey, "identity wallet"),
+		);
+		const run = await runFirstRunMigration({
+			...deps,
+			current: fakeTarget(identityKey, "already identity-rooted"),
+		});
+		assert.deepEqual(log, ["cancel", "persist", "destroy", "init", "sweep"]);
+		assert.deepEqual(run.transferTxids, []);
+	});
+
+	it("says where the assets went when saving the keys fails after the move", async () => {
+		const { deps, log } = harness(async () =>
+			fakeTarget(identityKey, "identity wallet"),
+		);
+		await assert.rejects(
+			runFirstRunMigration({
+				...deps,
+				persistIdentity: async () => {
+					log.push("persist");
+					throw new Error("Failed to re-encrypt wallet.");
+				},
+			}),
+			/Failed to re-encrypt wallet\. .*identity key's deposit address \(move-1\).*run it again/,
+		);
+		assert.deepEqual(log, ["cancel", "transfer", "persist"]);
 	});
 
 	it("refuses to run a step on a wallet that is not open", () => {
@@ -167,7 +291,11 @@ describe("first-run migration re-root", () => {
 			},
 		});
 		assert.deepEqual(seen, [live.oneSatContext, live]);
-		assert.deepEqual(run, { cancelTxids: ["c"], sweep: null });
+		assert.deepEqual(run, {
+			cancelTxids: ["c"],
+			transferTxids: [],
+			sweep: null,
+		});
 	});
 });
 

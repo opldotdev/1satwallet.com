@@ -1,5 +1,6 @@
 import {
 	type Bsv20Balance,
+	groupBsv20Tokens,
 	isListedOutput as isOrdLockV2Listing,
 	type OneSatContext,
 	type TokenBalance,
@@ -53,6 +54,67 @@ export type MigrationPlan<T extends TaggedOutput = TaggedOutput> = {
  */
 export const MNEE_TOKEN_ID =
 	"ae59f3b898ec61acbdb6cc7a245fabeded0c094bf046f35206a3aec60ef88127_0";
+
+/** A BSV-20 output the sweep leaves where it is, and why. */
+export interface UnsweepableBsv20 {
+	output: IndexedOutput;
+	reason: string;
+}
+
+export const BSV20_UNREADABLE_REASON = "no readable ticker or amount";
+export const BSV20_UNCONFIRMED_REASON =
+	"amount comes only from the inscription text, not from the indexer, so a sweep could claim more than the output holds and burn it";
+
+function bsv20Record(output: TaggedOutput): Record<string, unknown> | null {
+	const data = output.data;
+	if (!data || typeof data !== "object") return null;
+	const bsv20 = (data as Record<string, unknown>).bsv20;
+	return bsv20 && typeof bsv20 === "object"
+		? (bsv20 as Record<string, unknown>)
+		: null;
+}
+
+/**
+ * True when the indexer itself gives this BSV-20 output's amount: an `amt:`
+ * event or `data.bsv20.amt`. parseBsv20Token falls back to the inscription's
+ * JSON, which anyone can write and no indexer has checked.
+ */
+export function hasIndexedBsv20Amount(output: TaggedOutput): boolean {
+	if (output.events?.some((event) => event.startsWith("amt:"))) return true;
+	const amt = bsv20Record(output)?.amt;
+	return (typeof amt === "string" && amt.length > 0) || typeof amt === "number";
+}
+
+/**
+ * Group BSV-20 outputs by ticker for the sweep. Only outputs whose amount the
+ * indexer gives are swept: one with an amount from its inscription JSON alone
+ * is left at its address with a reason, never batched or swept on its own,
+ * since an over-claimed transfer can burn the tokens.
+ */
+export function splitBsv20Outputs(outputs: IndexedOutput[]): {
+	balances: Bsv20Balance[];
+	unsweepable: UnsweepableBsv20[];
+} {
+	const indexed = outputs.filter(hasIndexedBsv20Amount);
+	const balances = groupBsv20Tokens(indexed);
+	const grouped = new Set(
+		balances.flatMap((balance) => balance.outputs.map((o) => o.outpoint)),
+	);
+	const unsweepable = outputs.flatMap((output) => {
+		if (grouped.has(output.outpoint)) return [];
+		const fromJsonOnly =
+			!hasIndexedBsv20Amount(output) && groupBsv20Tokens([output]).length > 0;
+		return [
+			{
+				output,
+				reason: fromJsonOnly
+					? BSV20_UNCONFIRMED_REASON
+					: BSV20_UNREADABLE_REASON,
+			},
+		];
+	});
+	return { balances, unsweepable };
+}
 
 /** Drops tokens the generic BSV-21 sweep cannot sign for (MNEE). */
 export function excludeUnsweepableTokens<T extends { tokenId: string }>(
@@ -267,6 +329,10 @@ export async function cancelListedAssets(
 				errors.push(`Listing ${item.outpoint}: ${result.error}`);
 			} else if (result.txid) {
 				txids.push(result.txid);
+			} else {
+				errors.push(
+					`Listing ${item.outpoint}: cancel returned no transaction id`,
+				);
 			}
 		} catch (error) {
 			console.error(

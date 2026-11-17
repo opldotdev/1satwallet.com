@@ -55,7 +55,7 @@ import {
 	type ReceiveAddressState,
 	saveReceiveAddressState,
 } from "@/lib/receive-address-state";
-import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { reportDiagnostic, reportFailure } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
@@ -255,6 +255,8 @@ interface WalletToolboxContextValue {
 	isInitialized: boolean;
 	isInitializing: boolean;
 	initError: string | null;
+	/** Show why the built-in wallet did not start (the bridge's own failures). */
+	reportInitFailure: (message: string) => void;
 	chain: Chain;
 	identityKey: string | null;
 
@@ -378,6 +380,10 @@ export function WalletToolboxProvider({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const initGuardRef = useRef(false);
 	const [initError, setInitError] = useState<string | null>(null);
+
+	const reportInitFailure = useCallback((message: string) => {
+		setInitError(message);
+	}, []);
 
 	useEffect(() => {
 		const carried = carriedInitError;
@@ -1145,17 +1151,16 @@ export function WalletToolboxProvider({
 				for (const module of pendingPermissionModules) module.dispose();
 				await pendingResult?.destroy();
 				if (generation !== connectionGenerationRef.current) return null;
-				reportDiagnostic({
-					category: "provider",
-					code: "provider.failed",
-					operation: "wallet.initialize",
-					recoverable: true,
-					context: {
-						mode: "built-in",
-						retryable: true,
-						errorName: errorNameOf(error),
+				reportFailure(
+					{
+						category: "provider",
+						code: "provider.failed",
+						operation: "wallet.initialize",
+						recoverable: true,
+						context: { mode: "built-in", retryable: true },
 					},
-				});
+					error,
+				);
 				setInitError(
 					"Built-in wallet initialization failed. Lock and unlock the wallet, then try again.",
 				);
@@ -1387,6 +1392,7 @@ export function WalletToolboxProvider({
 			isInitialized,
 			isInitializing,
 			initError,
+			reportInitFailure,
 			chain,
 			identityKey,
 			depositAddress,
@@ -1433,6 +1439,7 @@ export function WalletToolboxProvider({
 			isInitialized,
 			isInitializing,
 			initError,
+			reportInitFailure,
 			chain,
 			identityKey,
 			depositAddress,

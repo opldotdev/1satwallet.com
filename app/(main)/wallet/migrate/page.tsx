@@ -37,7 +37,9 @@ import {
 	type SweepResult,
 } from "@/lib/sweep-migration";
 import {
+	ListingCancelError,
 	type MigrationTarget,
+	partialRunResult,
 	requireMigrationTarget,
 	runFirstRunMigration,
 	runMigrationOnTarget,
@@ -535,7 +537,13 @@ export default function MigratePage() {
 					}),
 				);
 				setError(
-					"Listings must be cancelled before this step can finish. Nothing else was moved.",
+					`${
+						new ListingCancelError(
+							plan.cancel.length,
+							cancelled.txids,
+							cancelled.errors,
+						).message
+					} Nothing else was moved.`,
 				);
 				setPhase("error");
 				return;
@@ -584,7 +592,14 @@ export default function MigratePage() {
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
-	}, [assets, legacy, plan.sweepListed, runDelist, toolbox]);
+	}, [
+		assets,
+		legacy,
+		plan.cancel.length,
+		plan.sweepListed,
+		runDelist,
+		toolbox,
+	]);
 
 	// Run migration (or sweep-only re-entry for already-migrated wallets)
 	const runMigration = useCallback(async () => {
@@ -635,7 +650,10 @@ export default function MigratePage() {
 			};
 			const onStage = (stage: string) => {
 				if (stage === "cancel") setProgress("Cancelling listings...");
-				else if (stage === "persist") {
+				else if (stage === "transfer") {
+					setProgress("Moving this wallet's assets to your identity key...");
+					setProgressPercent(20);
+				} else if (stage === "persist") {
 					setProgress("Updating encrypted wallet...");
 					setProgressPercent(25);
 				} else if (stage === "reroot") {
@@ -688,8 +706,9 @@ export default function MigratePage() {
 			setSweepResult({
 				...(run.sweep ?? emptySweepResult()),
 				cancelTxids: run.cancelTxids,
+				transferTxids: run.transferTxids,
 			});
-			if (run.sweep) {
+			if (run.sweep || run.transferTxids.length > 0) {
 				// Refresh so the banner and any re-entry reflect what's left
 				assets.rescan();
 				toolbox.refreshBalance();
@@ -699,6 +718,8 @@ export default function MigratePage() {
 			setPhase("complete");
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.run", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
@@ -824,7 +845,10 @@ export default function MigratePage() {
 								onToggle={handleToggleType}
 							/>
 
-							<ListingsSection listings={listings} />
+							<ListingsSection
+								reRoot={legacy ? !legacy.sweepOnly : false}
+								listings={listings}
+							/>
 
 							{selectedTypes.has("bsv") && (
 								<FundingSection

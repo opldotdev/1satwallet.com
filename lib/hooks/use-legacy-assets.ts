@@ -2,7 +2,6 @@
 
 import {
 	type Bsv20Balance,
-	groupBsv20Tokens,
 	type ScanProgress,
 	type ScanResult,
 	scanAddresses,
@@ -11,7 +10,11 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
-import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
+import {
+	excludeUnsweepableTokens,
+	splitBsv20Outputs,
+	type UnsweepableBsv20,
+} from "@/lib/wallet/migration-listings";
 
 export type { Bsv20Balance, TokenBalance };
 
@@ -35,7 +38,8 @@ export interface LegacyAssets {
 	/** BSV-20 outputs grouped by ticker: the ones the sweep can move */
 	bsv20Balances: Bsv20Balance[];
 	/** BSV-20 outputs with no readable tick or amount: left in place */
-	bsv20Unsweepable: IndexedOutput[];
+	/** BSV-20 outputs left at their address, each with the reason */
+	bsv20Unsweepable: UnsweepableBsv20[];
 	/** OrdLock v2 listings at the scanned addresses, in every class */
 	listings: IndexedOutput[];
 	locked: IndexedOutput[];
@@ -142,17 +146,10 @@ export function useLegacyAssets(
 		};
 	}, [legacyPayAddress, legacyOrdAddress, legacyIdentityAddress, scanTrigger]);
 
-	const bsv20 = useMemo(() => {
-		const outputs = result?.bsv20Tokens ?? [];
-		const balances = groupBsv20Tokens(outputs);
-		const grouped = new Set(
-			balances.flatMap((balance) => balance.outputs.map((o) => o.outpoint)),
-		);
-		return {
-			balances,
-			unsweepable: outputs.filter((o) => !grouped.has(o.outpoint)),
-		};
-	}, [result]);
+	const bsv20 = useMemo(
+		() => splitBsv20Outputs(result?.bsv20Tokens ?? []),
+		[result],
+	);
 
 	return {
 		loading,

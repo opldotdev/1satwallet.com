@@ -41,10 +41,13 @@ import {
 	type SweepProgress,
 	type SweepResult,
 } from "@/lib/sweep-migration";
-import { runFirstRunMigration } from "@/lib/wallet/first-run-migration";
+import {
+	cancelWalletListings,
+	partialRunResult,
+	runFirstRunMigration,
+} from "@/lib/wallet/first-run-migration";
 import {
 	type AssetType,
-	cancelListedAssets,
 	defaultAssetTypes,
 	type ListedAsset,
 	listedFromLegacy,
@@ -340,6 +343,9 @@ export function MigrationWizard() {
 					if (stage === "cancel") {
 						setProgress("Cancelling listings...");
 						setProgressPercent(15);
+					} else if (stage === "transfer") {
+						setProgress("Moving this wallet's assets to your identity key...");
+						setProgressPercent(20);
 					} else if (stage === "persist") {
 						setProgress("Updating encrypted wallet...");
 						setProgressPercent(25);
@@ -381,8 +387,9 @@ export function MigrationWizard() {
 			setSweepResult({
 				...(run.sweep ?? emptySweepResult()),
 				cancelTxids: run.cancelTxids,
+				transferTxids: run.transferTxids,
 			});
-			if (run.sweep) {
+			if (run.sweep || run.transferTxids.length > 0) {
 				assets.rescan();
 				toolbox.refreshBalance();
 			}
@@ -392,6 +399,8 @@ export function MigrationWizard() {
 			setStep("complete");
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.run", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
@@ -419,23 +428,19 @@ export function MigrationWizard() {
 		setProgress("Cancelling listings...");
 		setProgressPercent(20);
 		try {
-			const cancelled = await cancelListedAssets(
+			const cancelTxids = await cancelWalletListings(
 				toolbox.oneSatContext,
 				listings.filter((item) => item.source === "wallet"),
 			);
-			if (!cancelled.ok) {
-				throw new Error(
-					"Listings must be cancelled before this step can finish.",
-					{ cause: cancelled.errors },
-				);
-			}
-			setSweepResult(emptySweepResult({ cancelTxids: cancelled.txids }));
+			setSweepResult(emptySweepResult({ cancelTxids }));
 			assets.rescan();
 			toolbox.refreshBalance();
 			setProgressPercent(100);
 			setStep("complete");
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.delist", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
@@ -758,7 +763,7 @@ function PreviewStep({
 					counts={typeCounts}
 					onToggle={onToggleType}
 				/>
-				<ListingsSection listings={listings} />
+				<ListingsSection reRoot listings={listings} />
 				{selectedTypes.has("bsv") && (
 					<FundingSection funding={assets.funding} totalBsv={assets.totalBsv} />
 				)}

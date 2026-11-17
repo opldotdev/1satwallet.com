@@ -15,7 +15,11 @@ import {
 	type SweepResult,
 	type SweepStepState,
 } from "@/lib/sweep-migration";
-import type { AssetType, ListedAsset } from "@/lib/wallet/migration-listings";
+import type {
+	AssetType,
+	ListedAsset,
+	UnsweepableBsv20,
+} from "@/lib/wallet/migration-listings";
 
 const ORDINALS_PER_PAGE = 20;
 
@@ -86,7 +90,14 @@ export function TypeChecklist({
 	);
 }
 
-export function ListingsSection({ listings }: { listings: ListedAsset[] }) {
+export function ListingsSection({
+	listings,
+	reRoot,
+}: {
+	listings: ListedAsset[];
+	/** First run: the wallet moves to the identity key after the cancels. */
+	reRoot: boolean;
+}) {
 	if (listings.length === 0) return null;
 
 	return (
@@ -101,8 +112,9 @@ export function ListingsSection({ listings }: { listings: ListedAsset[] }) {
 				</Badge>
 			</div>
 			<p className="text-xs text-muted-foreground mb-3">
-				These listings are being retired. Cancelling returns each listed item to
-				your wallet.
+				{reRoot
+					? "These listings are being retired. Items listed from this wallet come back to it when cancelled, then move with its BSV, ordinals and tokens to your identity key's deposit address, where your migrated wallet picks them up. Items listed from your old addresses are swept straight into the migrated wallet."
+					: "These listings are being retired. Items listed from this wallet come back to it when cancelled; items listed from your old addresses are swept into it."}
 			</p>
 			<ul className="space-y-1">
 				{listings.map((item) => (
@@ -349,7 +361,7 @@ export function Bsv20Section({
 	unsweepable,
 }: {
 	tokens: Bsv20Balance[];
-	unsweepable: IndexedOutput[];
+	unsweepable: UnsweepableBsv20[];
 }) {
 	if (tokens.length === 0 && unsweepable.length === 0) return null;
 
@@ -383,11 +395,21 @@ export function Bsv20Section({
 				))}
 			</div>
 			{unsweepable.length > 0 && (
-				<p className="mt-3 text-xs text-muted-foreground">
-					{unsweepable.length} BSV-20 output
-					{unsweepable.length !== 1 ? "s have" : " has"} no readable ticker or
-					amount and will stay at your legacy address.
-				</p>
+				<div className="mt-3 space-y-1 text-xs text-muted-foreground">
+					<p>
+						{unsweepable.length} BSV-20 output
+						{unsweepable.length !== 1 ? "s" : ""} will stay at your legacy
+						address:
+					</p>
+					<ul className="space-y-1">
+						{unsweepable.map(({ output, reason }) => (
+							<li key={output.outpoint} className="break-all">
+								<span className="font-mono text-[11px]">{output.outpoint}</span>
+								: {reason}
+							</li>
+						))}
+					</ul>
+				</div>
 			)}
 		</div>
 	);
@@ -408,6 +430,10 @@ export function SweepResultRows({
 		...result.bsv21Txids.map((txid) => ({ label: "Token Sweep", txid })),
 		...(result.cancelTxids ?? []).map((txid) => ({
 			label: "Listing cancelled",
+			txid,
+		})),
+		...(result.transferTxids ?? []).map((txid) => ({
+			label: "Moved to identity wallet",
 			txid,
 		})),
 	];
@@ -436,6 +462,7 @@ export function sweepResultIsEmpty(result: SweepResult): boolean {
 		result.ordinalTxids.length === 0 &&
 		result.bsv20Txids.length === 0 &&
 		result.bsv21Txids.length === 0 &&
+		(result.transferTxids?.length ?? 0) === 0 &&
 		cancelledListingCount(result) === 0 &&
 		result.errors.length === 0
 	);

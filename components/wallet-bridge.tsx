@@ -9,7 +9,7 @@
 
 import { useEffect, useRef } from "react";
 import { wifToRootKeyHex } from "@/lib/keys";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { reportFailure } from "@/lib/runtime-diagnostics";
 import { useWallet } from "@/providers/wallet-provider";
 import {
 	useWalletToolbox,
@@ -32,6 +32,7 @@ export function WalletBridge({ children }: { children: React.ReactNode }) {
 		connectionMode,
 		initializeWallet,
 		destroyWallet,
+		reportInitFailure,
 	} = toolbox;
 
 	useEffect(() => {
@@ -71,14 +72,20 @@ export function WalletBridge({ children }: { children: React.ReactNode }) {
 				const rootKeyHex = wifToRootKeyHex(rootWif);
 
 				await initializeWallet(rootKeyHex);
-			} catch {
-				reportDiagnostic({
-					category: "provider",
-					code: "provider.failed",
-					operation: "wallet.bridge.initialize",
-					recoverable: true,
-					context: { mode: "built-in", retryable: true },
-				});
+			} catch (error) {
+				reportFailure(
+					{
+						category: "provider",
+						code: "provider.failed",
+						operation: "wallet.bridge.initialize",
+						recoverable: true,
+						context: { mode: "built-in", retryable: true },
+					},
+					error,
+				);
+				reportInitFailure(
+					"The built-in wallet could not start from your saved keys. Lock and unlock the wallet, then try again.",
+				);
 			}
 		};
 
@@ -90,6 +97,7 @@ export function WalletBridge({ children }: { children: React.ReactNode }) {
 		isInitialized,
 		isInitializing,
 		initializeWallet,
+		reportInitFailure,
 		connectionMode,
 	]);
 

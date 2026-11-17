@@ -11,6 +11,12 @@ import {
 	type SweepActions,
 	type SweepProgress,
 } from "@/lib/sweep-migration";
+import {
+	BSV20_UNCONFIRMED_REASON,
+	BSV20_UNREADABLE_REASON,
+	hasIndexedBsv20Amount,
+	splitBsv20Outputs,
+} from "@/lib/wallet/migration-listings";
 
 const payKey = PrivateKey.fromHex("01".repeat(32));
 const ordKey = PrivateKey.fromHex("02".repeat(32));
@@ -130,10 +136,10 @@ describe("legacy sweep key lookup", () => {
 
 describe("legacy sweep: BSV-20", () => {
 	it("sweeps each ticker in its own step, listed outputs one per tx, amounts by canonical outpoint", async () => {
-		const listed = out(1, [`own:${ordAddress}`, "ordlock2"]);
-		const a = out(2);
-		const b = out(3);
-		const c = out(4);
+		const listed = out(1, [`own:${ordAddress}`, "ordlock2", "amt:10"]);
+		const a = out(2, [`own:${ordAddress}`, "amt:20"]);
+		const b = { ...out(3), data: { bsv20: { tick: "PEPE", amt: "30" } } };
+		const c = out(4, [`own:${ordAddress}`, "amt:5"]);
 		const tokens: Bsv20Balance[] = [
 			{
 				tick: "PEPE",
@@ -190,7 +196,7 @@ describe("legacy sweep: BSV-20", () => {
 	});
 
 	it("never sends a token input without its amount", async () => {
-		const a = out(1);
+		const a = out(1, [`own:${ordAddress}`, "amt:7"]);
 		const { actions, calls } = fakeActions();
 		const { result } = await sweep(
 			{
@@ -208,6 +214,112 @@ describe("legacy sweep: BSV-20", () => {
 		);
 		assert.equal(calls.length, 0);
 		assert.match(result.errors.join("\n"), /no token amount for output/);
+	});
+
+	it("never batches or sweeps an amount the indexer did not give", async () => {
+		// Same ticker: one indexer-confirmed output, one whose amount is only in
+		// its inscription JSON (and could over-claim).
+		const confirmed = out(1, [`own:${ordAddress}`, "amt:10"]);
+		const jsonOnly = {
+			...out(2),
+			data: {
+				insc: {
+					json: { p: "bsv-20", op: "transfer", tick: "PEPE", amt: "999999" },
+				},
+			},
+		};
+		const { actions, calls } = fakeActions();
+		const { result } = await sweep(
+			{
+				bsv20Tokens: [
+					{
+						tick: "PEPE",
+						decimals: 0,
+						totalAmount: 1000009n,
+						outputs: [confirmed, jsonOnly],
+						amounts: new Map([
+							[confirmed.outpoint, "10"],
+							[jsonOnly.outpoint, "999999"],
+						]),
+					},
+				],
+			},
+			actions,
+		);
+		assert.deepEqual(
+			calls.map((call) => call.inputs.map((i) => i.outpoint)),
+			[[confirmed.outpoint]],
+		);
+		assert.match(
+			result.errors.join("\n"),
+			new RegExp(
+				`${jsonOnly.outpoint} was not swept: amount comes only from the inscription text`,
+			),
+		);
+	});
+});
+
+describe("BSV-20 sweep selection", () => {
+	it("leaves JSON-only amounts at their address with a reason", () => {
+		const viaEvent = out(1, [`own:${ordAddress}`, "tick:PEPE", "amt:10"]);
+		const viaData = { ...out(2), data: { bsv20: { tick: "PEPE", amt: "5" } } };
+		const jsonOnly = {
+			...out(3),
+			data: {
+				insc: {
+					json: { p: "bsv-20", op: "transfer", tick: "PEPE", amt: "50" },
+				},
+			},
+		};
+		const unreadable = out(4);
+		const { balances, unsweepable } = splitBsv20Outputs([
+			viaEvent,
+			viaData,
+			jsonOnly,
+			unreadable,
+		]);
+		assert.equal(balances.length, 1);
+		assert.deepEqual(
+			balances[0].outputs.map((o) => o.outpoint),
+			[viaEvent.outpoint, viaData.outpoint],
+		);
+		assert.equal(balances[0].totalAmount, 15n);
+		assert.deepEqual(
+			unsweepable.map((u) => [u.output.outpoint, u.reason]),
+			[
+				[jsonOnly.outpoint, BSV20_UNCONFIRMED_REASON],
+				[unreadable.outpoint, BSV20_UNREADABLE_REASON],
+			],
+		);
+		assert.equal(hasIndexedBsv20Amount(jsonOnly), false);
+	});
+});
+
+describe("legacy sweep: ordinals", () => {
+	it("puts each listed ordinal (v1 or v2) in its own transaction", async () => {
+		const v1 = out(1, [`own:${ordAddress}`, "ordlock"]);
+		const v2 = out(2, [`own:${ordAddress}`, "ordlock2"]);
+		const plain = [out(3), out(4), out(5)];
+		const { actions, calls } = fakeActions({
+			sweepOrdinals: async (_ctx, request) => {
+				const outpoints = request.inputs.map((i) => i.outpoint);
+				calls.push({
+					action: "ordinals",
+					inputs: request.inputs as unknown as Record<string, unknown>[],
+				});
+				// A bad v1 listing fails alone.
+				return outpoints.includes(v1.outpoint)
+					? { error: "bad listing" }
+					: { txid: `ord-${calls.length}` };
+			},
+		});
+		const { result } = await sweep({ ordinals: [v1, ...plain, v2] }, actions);
+		assert.deepEqual(
+			calls.map((call) => call.inputs.map((i) => i.outpoint)),
+			[[v1.outpoint], [v2.outpoint], plain.map((o) => o.outpoint)],
+		);
+		assert.equal(result.ordinalTxids.length, 2);
+		assert.match(result.errors.join("\n"), /bad listing/);
 	});
 });
 

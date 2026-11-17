@@ -7,6 +7,11 @@ import {
 	cancelListedAssets,
 	type ListedAsset,
 } from "@/lib/wallet/migration-listings";
+import {
+	PayKeyTransferIncompleteError,
+	type PayKeyTransferResult,
+	transferPayKeyWallet,
+} from "@/lib/wallet/pay-key-transfer";
 
 /** A live BRC-100 wallet a migration step runs against. */
 export interface MigrationTarget {
@@ -39,8 +44,29 @@ export function requireMigrationTarget(current: {
 }
 
 /**
+ * Some listings were not cancelled. The message names each failure and the
+ * cancels that did go through; `cancelTxids` carries those txids.
+ */
+export class ListingCancelError extends Error {
+	readonly cancelTxids: string[];
+	readonly errors: string[];
+	constructor(total: number, cancelTxids: string[], errors: string[]) {
+		const done =
+			cancelTxids.length > 0
+				? ` Cancelled ${cancelTxids.length}: ${cancelTxids.join(", ")}.`
+				: "";
+		super(
+			`Listings must be cancelled before migration can finish. ${errors.length} of ${total} not cancelled: ${errors.join("; ")}.${done}`,
+		);
+		this.name = "ListingCancelError";
+		this.cancelTxids = cancelTxids;
+		this.errors = errors;
+	}
+}
+
+/**
  * Cancel the wallet's own listings on `ctx`. A listing left open blocks the
- * migration; its per-listing errors travel as the thrown error's cause.
+ * migration with a ListingCancelError.
  */
 export async function cancelWalletListings(
 	ctx: OneSatContext,
@@ -50,11 +76,35 @@ export async function cancelWalletListings(
 	if (listings.length === 0) return [];
 	const cancelled = await cancel(ctx, listings);
 	if (!cancelled.ok) {
-		throw new Error("Listings must be cancelled before migration can finish.", {
-			cause: cancelled.errors,
-		});
+		console.error("[migration] listing cancel failed", cancelled.errors);
+		throw new ListingCancelError(
+			listings.length,
+			cancelled.txids,
+			cancelled.errors,
+		);
 	}
 	return cancelled.txids;
+}
+
+/** What a failed run already did on chain, for the result rows. */
+export function partialRunResult(
+	error: unknown,
+): { cancelTxids: string[]; transferTxids: string[]; errors: string[] } | null {
+	if (error instanceof ListingCancelError) {
+		return {
+			cancelTxids: error.cancelTxids,
+			transferTxids: [],
+			errors: error.errors,
+		};
+	}
+	if (error instanceof PayKeyTransferIncompleteError) {
+		return {
+			cancelTxids: error.cancelTxids,
+			transferTxids: error.transferTxids,
+			errors: error.errors,
+		};
+	}
+	return null;
 }
 
 export interface ReRootDeps {
@@ -96,13 +146,25 @@ export async function reRootWallet(deps: ReRootDeps): Promise<MigrationTarget> {
 	return target;
 }
 
-export type FirstRunStage = "cancel" | "persist" | "reroot" | "sweep";
+export type FirstRunStage =
+	| "cancel"
+	| "transfer"
+	| "persist"
+	| "reroot"
+	| "sweep";
+
+type TransferPayKeyWallet = (
+	ctx: OneSatContext,
+	identityWif: string,
+) => Promise<PayKeyTransferResult>;
 
 export interface FirstRunMigrationDeps extends ReRootDeps {
 	/** The wallet running now (pay-key rooted); it owns `listings`. */
 	current: Parameters<typeof requireMigrationTarget>[0];
 	listings: ListedAsset[];
 	cancelListings?: CancelListings;
+	/** Move everything the pay-key wallet holds to the identity root. */
+	transferPayKeyWallet?: TransferPayKeyWallet;
 	/** Save the keys with the identity key added; throws on failure. */
 	persistIdentity: () => Promise<void>;
 	/** Sweep into the re-rooted wallet; null when nothing is selected. */
@@ -112,6 +174,8 @@ export interface FirstRunMigrationDeps extends ReRootDeps {
 
 export interface MigrationRun {
 	cancelTxids: string[];
+	/** Moves from the pay-key wallet to the identity root (first run only). */
+	transferTxids: string[];
 	sweep: SweepResult | null;
 }
 
@@ -119,17 +183,22 @@ export interface MigrationRun {
  * First migration of an original 1Sat wallet:
  * 1. cancel the wallet's own listings on the wallet that holds them (the
  *    running pay-key wallet), before anything changes;
- * 2. save the keys with the identity key;
- * 3. re-root the BRC-100 wallet at the identity key;
- * 4. sweep the legacy addresses into the wallet step 3 returned.
+ * 2. move everything that wallet holds (BSV, ordinals, BSV-21, BSV-20, the
+ *    items step 1 returned) to the identity root's deposit address, which the
+ *    identity wallet syncs. Wallet storage is per identity key, so anything
+ *    left would be hidden after step 4: if anything is left, this throws and
+ *    nothing below runs;
+ * 3. save the keys with the identity key;
+ * 4. re-root the BRC-100 wallet at the identity key;
+ * 5. sweep the legacy addresses into the wallet step 4 returned.
  */
 export async function runFirstRunMigration(
 	deps: FirstRunMigrationDeps,
 ): Promise<MigrationRun> {
+	const current = requireMigrationTarget(deps.current);
 	let cancelTxids: string[] = [];
 	if (deps.listings.length > 0) {
 		deps.onStage?.("cancel");
-		const current = requireMigrationTarget(deps.current);
 		cancelTxids = await cancelWalletListings(
 			current.oneSatContext,
 			deps.listings,
@@ -137,14 +206,46 @@ export async function runFirstRunMigration(
 		);
 	}
 
+	let transferTxids: string[] = [];
+	const identityPubKey = PrivateKey.fromWif(deps.identityWif)
+		.toPublicKey()
+		.toString();
+	const { publicKey: currentRoot } = await current.wallet.getPublicKey({
+		identityKey: true,
+	});
+	// A wallet already rooted at the identity key holds nothing to move.
+	if (currentRoot !== identityPubKey) {
+		deps.onStage?.("transfer");
+		const transfer = deps.transferPayKeyWallet ?? transferPayKeyWallet;
+		try {
+			transferTxids = (await transfer(current.oneSatContext, deps.identityWif))
+				.txids;
+		} catch (error) {
+			if (error instanceof PayKeyTransferIncompleteError) {
+				// Cancels that went through still count in the result.
+				error.cancelTxids = cancelTxids;
+			}
+			throw error;
+		}
+	}
+
 	deps.onStage?.("persist");
-	await deps.persistIdentity();
+	try {
+		await deps.persistIdentity();
+	} catch (error) {
+		if (transferTxids.length === 0) throw error;
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`${reason} This wallet's assets were already moved to your identity key's deposit address (${transferTxids.join(", ")}); they show up once the migration finishes, so run it again.`,
+			{ cause: error },
+		);
+	}
 
 	deps.onStage?.("reroot");
 	const target = await reRootWallet(deps);
 
 	deps.onStage?.("sweep");
-	return { cancelTxids, sweep: await deps.sweep(target) };
+	return { cancelTxids, transferTxids, sweep: await deps.sweep(target) };
 }
 
 /**
@@ -170,5 +271,5 @@ export async function runMigrationOnTarget(
 		);
 	}
 	deps.onStage?.("sweep");
-	return { cancelTxids, sweep: await deps.sweep(target) };
+	return { cancelTxids, transferTxids: [], sweep: await deps.sweep(target) };
 }
