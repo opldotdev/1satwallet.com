@@ -97,13 +97,11 @@ const defaultSweepActions: SweepActions = {
 	sweepBsv21: sweepBsv21.execute,
 };
 
-export interface MigrationSweepParams {
+/** Everything a sweep run needs besides the keys that sign it. */
+interface SweepRunOptions {
 	wallet: WalletInterface;
 	services: OneSatServices;
 	chain?: "main" | "test";
-	legacyPayWif: string;
-	legacyOrdWif: string;
-	legacyIdentityWif?: string;
 	onProgress: (progress: SweepProgress) => void;
 	funding: IndexedOutput[];
 	ordinals: IndexedOutput[];
@@ -111,6 +109,26 @@ export interface MigrationSweepParams {
 	/** BSV-20 balances grouped by ticker (groupBsv20Tokens) */
 	bsv20Tokens?: Bsv20Balance[];
 	actions?: Partial<SweepActions>;
+	/** Prefix for this run's console logs; the migration's is "[migration]" */
+	logPrefix?: string;
+}
+
+export interface MigrationSweepParams extends SweepRunOptions {
+	legacyPayWif: string;
+	legacyOrdWif: string;
+	legacyIdentityWif?: string;
+}
+
+/** One signing key for a sweep, named for the messages that mention it. */
+export interface SweepKey {
+	/** Shown in errors, e.g. "Legacy pay" or "Pasted"; never the key itself */
+	label: string;
+	wif: string;
+}
+
+export interface KeySweepParams extends SweepRunOptions {
+	/** Every key whose address the outputs may name in their own: events */
+	keys: readonly SweepKey[];
 }
 
 const chunk = <T>(items: T[], size: number): T[][] => {
@@ -265,6 +283,21 @@ async function prepareInputsConcurrent(
 	return { prepared, failures };
 }
 
+/** The migration's three named legacy keys as a key list; unset ones are left out. */
+export function migrationSweepKeys(
+	params: Pick<
+		MigrationSweepParams,
+		"legacyPayWif" | "legacyOrdWif" | "legacyIdentityWif"
+	>,
+): SweepKey[] {
+	const keys: [string, string | undefined][] = [
+		["Legacy pay", params.legacyPayWif],
+		["Legacy ord", params.legacyOrdWif],
+		["Legacy identity", params.legacyIdentityWif],
+	];
+	return keys.flatMap(([label, wif]) => (wif ? [{ label, wif }] : []));
+}
+
 /**
  * Sweep legacy assets into the BRC-100 wallet. Mirrors the yours-wallet /
  * @1sat/sweep-ui sweeper — BEEF-derived locking scripts, per-output key
@@ -274,18 +307,31 @@ async function prepareInputsConcurrent(
 export async function executeMigrationSweep(
 	params: MigrationSweepParams,
 ): Promise<SweepResult> {
+	const { legacyPayWif, legacyOrdWif, legacyIdentityWif, ...options } = params;
+	return executeKeySweep({
+		...options,
+		keys: migrationSweepKeys({ legacyPayWif, legacyOrdWif, legacyIdentityWif }),
+	});
+}
+
+/**
+ * The sweep engine behind executeMigrationSweep, for any list of keys: each
+ * output is signed by the one key whose address its own: events name.
+ */
+export async function executeKeySweep(
+	params: KeySweepParams,
+): Promise<SweepResult> {
 	const {
 		wallet,
 		services,
 		chain = "main",
-		legacyPayWif,
-		legacyOrdWif,
-		legacyIdentityWif,
+		keys,
 		onProgress,
 		funding,
 		ordinals,
 		bsv21Tokens,
 		bsv20Tokens = [],
+		logPrefix = "[migration]",
 	} = params;
 	const actions: SweepActions = { ...defaultSweepActions, ...params.actions };
 
@@ -294,21 +340,18 @@ export async function executeMigrationSweep(
 	const result = emptySweepResult();
 
 	const keyMap = new Map<string, PrivateKey>();
-	const legacyKeys: [string, string | undefined][] = [
-		["pay", legacyPayWif],
-		["ord", legacyOrdWif],
-		["identity", legacyIdentityWif],
-	];
-	for (const [role, wif] of legacyKeys) {
-		if (!wif) continue;
+	for (const { label, wif } of keys) {
 		try {
 			const key = PrivateKey.fromWif(wif);
 			keyMap.set(key.toPublicKey().toAddress(), key);
 		} catch (error) {
 			// Never the WIF itself: only which key and why it did not parse.
-			console.error(`[migration] legacy ${role} key could not be read`, error);
+			console.error(
+				`${logPrefix} ${label.toLowerCase()} key could not be read`,
+				error,
+			);
 			result.errors.push(
-				`Legacy ${role} key could not be read (${error instanceof Error ? error.message : String(error)}); outputs at its address were not swept.`,
+				`${label} key could not be read (${error instanceof Error ? error.message : String(error)}); outputs at its address were not swept.`,
 			);
 		}
 	}
@@ -468,7 +511,7 @@ export async function executeMigrationSweep(
 					if (txResult.error) {
 						chunkFailed = true;
 						console.error(
-							`[migration] ${errorLabel}${batchLabel} failed`,
+							`${logPrefix} ${errorLabel}${batchLabel} failed`,
 							txResult.error,
 						);
 						result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
@@ -508,7 +551,7 @@ export async function executeMigrationSweep(
 				}
 			} catch (error) {
 				chunkFailed = true;
-				console.error(`[migration] ${errorLabel}${batchLabel} failed`, error);
+				console.error(`${logPrefix} ${errorLabel}${batchLabel} failed`, error);
 				result.errors.push(
 					`${errorLabel}${batchLabel}: ${error instanceof Error ? error.message : String(error)}`,
 				);

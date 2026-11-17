@@ -7,7 +7,9 @@ import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
 	buildKeys,
 	cancelledListingCount,
+	executeKeySweep,
 	executeMigrationSweep,
+	migrationSweepKeys,
 	type SweepActions,
 	type SweepProgress,
 } from "@/lib/sweep-migration";
@@ -423,5 +425,144 @@ describe("legacy sweep: unreadable keys", () => {
 		assert.equal(result.errors.length, 1);
 		assert.match(result.errors[0], /Legacy ord key could not be read/);
 		assert.doesNotMatch(result.errors[0], new RegExp(badWif));
+	});
+});
+
+describe("key-list sweep", () => {
+	const keyA = PrivateKey.fromHex("05".repeat(32));
+	const keyB = PrivateKey.fromHex("06".repeat(32));
+	const addressA = keyA.toPublicKey().toAddress();
+	const addressB = keyB.toPublicKey().toAddress();
+
+	function sweepKeys(
+		keys: { label: string; wif: string }[],
+		params: Partial<Parameters<typeof executeKeySweep>[0]>,
+		actions: Partial<SweepActions>,
+	) {
+		const originalError = console.error;
+		console.error = () => undefined;
+		return executeKeySweep({
+			wallet: {} as WalletInterface,
+			services: {} as OneSatServices,
+			keys,
+			onProgress: () => undefined,
+			funding: [],
+			ordinals: [],
+			bsv21Tokens: [],
+			...params,
+			actions,
+		}).finally(() => {
+			console.error = originalError;
+		});
+	}
+
+	it("signs each output with the listed key its own: event names", async () => {
+		const signed: string[][] = [];
+		const { actions } = fakeActions({
+			sweepBsv: (async (_ctx: unknown, request: { keys: PrivateKey[] }) => {
+				signed.push(request.keys.map((k) => k.toWif()));
+				return { txid: "bsv-1" };
+			}) as unknown as SweepActions["sweepBsv"],
+		});
+		const result = await sweepKeys(
+			[
+				{ label: "First", wif: keyA.toWif() },
+				{ label: "Second", wif: keyB.toWif() },
+			],
+			{
+				funding: [
+					out(1, [`own:${addressB}`], 1000),
+					out(2, [`own:${addressA}`], 2000),
+				],
+			},
+			actions,
+		);
+		assert.deepEqual(result.bsvTxids, ["bsv-1"]);
+		assert.deepEqual(result.errors, []);
+		assert.deepEqual(signed, [[keyB.toWif(), keyA.toWif()]]);
+	});
+
+	it("names an unreadable key by its label, never its text, and sweeps with the rest", async () => {
+		const badWif = `${keyB.toWif().slice(0, -4)}0OIl`;
+		const { actions, calls } = fakeActions();
+		const result = await sweepKeys(
+			[
+				{ label: "Pasted", wif: badWif },
+				{ label: "Backup", wif: keyA.toWif() },
+			],
+			{ funding: [out(1, [`own:${addressA}`], 1000)] },
+			actions,
+		);
+		assert.equal(calls.length, 1);
+		assert.equal(result.errors.length, 1);
+		assert.match(result.errors[0], /^Pasted key could not be read/);
+		assert.doesNotMatch(result.errors[0], new RegExp(badWif));
+	});
+
+	it("does not sign an output at an address no listed key owns", async () => {
+		const { actions, calls } = fakeActions();
+		const result = await sweepKeys(
+			[{ label: "Pasted", wif: keyA.toWif() }],
+			{ funding: [out(1, [`own:${payAddress}`], 1000)] },
+			actions,
+		);
+		assert.equal(calls.length, 0);
+		assert.match(result.errors[0], /No key for output/);
+	});
+
+	it("keeps the migration's three named keys, in order, without unset ones", () => {
+		assert.deepEqual(
+			migrationSweepKeys({
+				legacyPayWif: payKey.toWif(),
+				legacyOrdWif: ordKey.toWif(),
+			}),
+			[
+				{ label: "Legacy pay", wif: payKey.toWif() },
+				{ label: "Legacy ord", wif: ordKey.toWif() },
+			],
+		);
+		assert.equal(
+			migrationSweepKeys({
+				legacyPayWif: payKey.toWif(),
+				legacyOrdWif: ordKey.toWif(),
+				legacyIdentityWif: "x",
+			})[2].label,
+			"Legacy identity",
+		);
+	});
+});
+
+describe("sweep log prefix", () => {
+	const badWif = `${payKey.toWif().slice(0, -4)}0OIl`;
+	async function logged(prefix?: string) {
+		const lines: string[] = [];
+		const originalError = console.error;
+		console.error = (first: unknown) => lines.push(String(first));
+		try {
+			const { actions } = fakeActions();
+			await executeKeySweep({
+				wallet: {} as WalletInterface,
+				services: {} as OneSatServices,
+				keys: [{ label: "Legacy pay", wif: badWif }],
+				onProgress: () => undefined,
+				funding: [],
+				ordinals: [],
+				bsv21Tokens: [],
+				actions,
+				...(prefix ? { logPrefix: prefix } : {}),
+			});
+		} finally {
+			console.error = originalError;
+		}
+		return lines;
+	}
+
+	it("keeps the migration's log text and uses the caller's prefix", async () => {
+		assert.deepEqual(await logged(), [
+			"[migration] legacy pay key could not be read",
+		]);
+		assert.deepEqual(await logged("[sweep]"), [
+			"[sweep] legacy pay key could not be read",
+		]);
 	});
 });

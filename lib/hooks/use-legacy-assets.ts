@@ -4,12 +4,16 @@ import {
 	type Bsv20Balance,
 	type ScanProgress,
 	type ScanResult,
-	scanAddresses,
+	scanAddress,
 	type TokenBalance,
 } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
+import {
+	type AddressScanStatus,
+	scanAddressList,
+} from "@/lib/wallet/address-scan";
 import { legacyAddressKey } from "@/lib/wallet/legacy-scan-state";
 import {
 	excludeUnsweepableTokens,
@@ -51,6 +55,8 @@ export interface LegacyAssets {
 	locked: IndexedOutput[];
 	run: IndexedOutput[];
 	totalBsv: number;
+	/** Each scanned address and where its scan stands, in scan order */
+	addressStatus: AddressScanStatus[];
 	rescan: () => void;
 }
 
@@ -84,10 +90,10 @@ const resolveIconUrl = (tokenId: string, icon?: string): string => {
 };
 
 /**
- * Scan legacy addresses via the 1sat stack (@1sat/actions scanAddresses):
- * forced indexer re-sync, event-tag categorization (funding vs ordinals vs
- * OPNS vs BSV-21 vs locked vs RUN), and overlay-validated BSV-21 amounts —
- * the same scan the yours-wallet sweep tool uses.
+ * Scan legacy addresses via the 1sat stack (@1sat/actions scanAddress for
+ * each address): forced indexer re-sync, event-tag categorization (funding vs
+ * ordinals vs OPNS vs BSV-21 vs locked vs RUN), and overlay-validated BSV-21
+ * amounts — the same scan the yours-wallet sweep tool uses.
  */
 export function useLegacyAssets(
 	legacyPayAddress: string | null,
@@ -95,15 +101,29 @@ export function useLegacyAssets(
 	legacyIdentityAddress?: string | null,
 	onScanProgress?: (p: ScanProgress) => void,
 ): LegacyAssets {
+	return useAddressAssets(
+		[legacyPayAddress, legacyOrdAddress, legacyIdentityAddress],
+		onScanProgress,
+	);
+}
+
+/** useLegacyAssets for any list of addresses (unset entries are skipped). */
+export function useAddressAssets(
+	addresses: readonly (string | null | undefined)[],
+	onScanProgress?: (p: ScanProgress) => void,
+): LegacyAssets {
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<ScanResult | null>(null);
 	const [scannedKey, setScannedKey] = useState<string | null>(null);
-	const addressKey = legacyAddressKey([
-		legacyPayAddress,
-		legacyOrdAddress,
-		legacyIdentityAddress,
-	]);
+	const [addressStatus, setAddressStatus] = useState<AddressScanStatus[]>([]);
+	const addressKey = legacyAddressKey(addresses);
+
+	// Scan order is the caller's order; the key only says when it changed.
+	const addressListRef = useRef<string[]>([]);
+	addressListRef.current = [
+		...new Set(addresses.filter((a): a is string => !!a)),
+	];
 
 	// Scanning needs services only (no wallet) — a standalone instance so the
 	// banner works even when the BRC-100 wallet failed to initialize
@@ -123,31 +143,27 @@ export function useLegacyAssets(
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scanTrigger is an intentional rescan signal
 	useEffect(() => {
-		if (!legacyPayAddress && !legacyOrdAddress && !legacyIdentityAddress) {
+		if (addressKey === null) {
+			setAddressStatus([]);
 			return;
 		}
 
 		let cancelled = false;
-		const scanKey = legacyAddressKey([
-			legacyPayAddress,
-			legacyOrdAddress,
-			legacyIdentityAddress,
-		]);
+		const scanKey = addressKey;
+		const scanList = addressListRef.current;
 
 		async function scan() {
 			setLoading(true);
 			setError(null);
 			setScannedKey(null);
 			try {
-				const addresses = [
-					...new Set(
-						[legacyPayAddress, legacyOrdAddress, legacyIdentityAddress].filter(
-							(a): a is string => !!a,
-						),
-					),
-				];
-				const scanResult = await scanAddresses(services, addresses, (p) =>
-					progressRef.current?.(p),
+				const scanResult = await scanAddressList(
+					(address, onProgress) => scanAddress(services, address, onProgress),
+					scanList,
+					(status) => {
+						if (!cancelled) setAddressStatus(status);
+					},
+					(p) => progressRef.current?.(p),
 				);
 				if (cancelled) return;
 				setResult(scanResult);
@@ -170,7 +186,7 @@ export function useLegacyAssets(
 		return () => {
 			cancelled = true;
 		};
-	}, [legacyPayAddress, legacyOrdAddress, legacyIdentityAddress, scanTrigger]);
+	}, [addressKey, scanTrigger]);
 
 	const bsv20 = useMemo(
 		() => splitBsv20Outputs(result?.bsv20Tokens ?? []),
@@ -217,6 +233,7 @@ export function useLegacyAssets(
 		locked: lists.locked,
 		run: lists.run,
 		totalBsv: result?.totalFundingSats ?? 0,
+		addressStatus,
 		rescan,
 	};
 }

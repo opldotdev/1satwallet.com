@@ -12,6 +12,7 @@ const MAINNET_ONLY_ROUTES = [
 	"/inscribe",
 	"/wallet/opns",
 	"/wallet/migrate",
+	"/wallet/sweep",
 ] as const;
 
 /** 1Color routes: only on a chain with a color overlay (testnet today). */
