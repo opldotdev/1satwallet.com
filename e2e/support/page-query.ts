@@ -7,6 +7,7 @@
 const ROLES = {
 	alert: '[role="alert"]',
 	button: 'button,[role="button"]',
+	checkbox: 'input[type="checkbox"],[role="checkbox"]',
 	dialog: '[role="dialog"],[role="alertdialog"]',
 	img: 'img,[role="img"]',
 	link: 'a[href],[role="link"]',

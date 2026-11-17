@@ -2,7 +2,7 @@
 
 import { listOpns, type WalletOutput } from "@1sat/actions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw } from "lucide-react";
+import { AtSign, RefreshCw, Search, Send, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -12,6 +12,10 @@ import {
 } from "@/components/opns/opns-action-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Notice } from "@/components/ui/notice";
+import { SectionHeader } from "@/components/ui/section-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import {
 	isOpnsListed,
@@ -19,12 +23,44 @@ import {
 	opnsAssetId,
 	ownedOpnsName,
 } from "@/lib/opns";
-import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
-import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
+import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import {
+	getDisplayOutpoint,
+	shortOutpoint,
+} from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 const PAGE_SIZE = 50;
 
+/** Rows of the same shape as the list, while it loads. */
+function OwnedOpnsSkeleton() {
+	return (
+		<div role="status" className="flex flex-col gap-3">
+			<div className="flex items-center justify-between gap-4">
+				<Skeleton className="h-6 w-24" />
+				<Skeleton className="size-9 max-md:size-11" />
+			</div>
+			<div className="flex flex-col divide-y divide-border/60">
+				{["one", "two", "three"].map((id) => (
+					<div key={id} className="flex flex-col gap-3 py-3">
+						<div className="flex items-center justify-between gap-3">
+							<Skeleton className="h-4 w-36" />
+							<Skeleton className="h-5 w-20 rounded-full" />
+						</div>
+						<Skeleton className="h-3 w-24" />
+					</div>
+				))}
+			</div>
+			<span className="sr-only">Loading your OpNS names</span>
+		</div>
+	);
+}
+
+/**
+ * The OpNS names in the wallet. Each row carries its own actions (OpNS has
+ * no wallet detail page): Send and Publish while it is free, Cancel listing
+ * while it is listed.
+ */
 export function OwnedOpns() {
 	const router = useRouter();
 	const queryClient = useQueryClient();
@@ -65,6 +101,24 @@ export function OwnedOpns() {
 		staleTime: 15_000,
 	});
 
+	// Logged once per failed load, after react-query's retries, not per try.
+	const { error: namesError, errorUpdatedAt } = namesQuery;
+	useEffect(() => {
+		if (!namesError) return;
+		reportDiagnostic({
+			category: "action",
+			code: "action.failed",
+			operation: "wallet.opns.list",
+			recoverable: true,
+			context: { retryable: true },
+		});
+		console.error("[opns] listOpns failed", {
+			offset,
+			at: errorUpdatedAt,
+			error: namesError,
+		});
+	}, [namesError, errorUpdatedAt, offset]);
+
 	const refresh = useCallback(async () => {
 		refreshBalance();
 		await Promise.all([
@@ -77,27 +131,21 @@ export function OwnedOpns() {
 	}, [queryClient, refreshBalance, router]);
 
 	if (isInitializing || namesQuery.isLoading) {
-		return (
-			<div
-				className="flex items-center justify-center py-12 text-muted-foreground"
-				role="status"
-			>
-				<Loader2 className="mr-2 size-5 animate-spin" />
-				Loading owned names…
-			</div>
-		);
+		return <OwnedOpnsSkeleton />;
 	}
 
 	if (!isInitialized || !oneSatContext) {
 		return (
-			<div className="rounded-md border p-8 text-center">
-				<p className="text-muted-foreground">
-					Connect or unlock a wallet to view its OpNS basket.
-				</p>
-				<Button asChild className="mt-4" variant="outline">
-					<Link href="/wallet">Connect wallet</Link>
-				</Button>
-			</div>
+			<EmptyState
+				icon={Wallet}
+				title="Wallet locked"
+				description="Connect or unlock a wallet to see its OpNS names."
+				action={
+					<Button asChild variant="outline">
+						<Link href="/wallet">Connect wallet</Link>
+					</Button>
+				}
+			/>
 		);
 	}
 
@@ -105,142 +153,177 @@ export function OwnedOpns() {
 	const total = namesQuery.data?.totalOutputs ?? names.length;
 	const marketAvailable =
 		stackFeatures.data?.capabilities.has("market") ?? false;
+	const anyListed = names.some(isOpnsListed);
 
 	return (
-		<div className="space-y-5">
-			<div className="flex flex-wrap items-center justify-between gap-2">
-				<div>
-					<p className="text-sm text-muted-foreground">
-						Wallet-owned OpNS basket rows. Every action revalidates the row
-						before requesting authorization.
-					</p>
-					<p className="mt-1 text-xs text-muted-foreground" role="status">
-						{LISTING_CREATE_OFF_MESSAGE}
-					</p>
-					{!marketAvailable && !stackFeatures.isPending && (
-						<p className="mt-1 text-xs text-warning" role="status">
-							Market capability is unavailable. Existing wallet OrdLock
-							cancellation remains available.
-						</p>
-					)}
-				</div>
-				<div className="flex gap-2">
-					<Button asChild variant="outline">
-						<Link href="/opns">Discover names</Link>
-					</Button>
-					<Button
-						variant="outline"
-						disabled={namesQuery.isFetching}
-						onClick={() => void refresh()}
-					>
-						<RefreshCw
-							className={`size-4 ${namesQuery.isFetching ? "animate-spin" : ""}`}
-							data-icon="inline-start"
-						/>
-						Refresh
-					</Button>
-				</div>
-			</div>
+		<div className="flex flex-col gap-4">
+			<SectionHeader
+				title={
+					namesQuery.data
+						? `${total} name${total === 1 ? "" : "s"}`
+						: "OpNS names"
+				}
+				action={
+					<>
+						<Button
+							variant="ghost"
+							size="icon"
+							aria-label="Refresh names"
+							disabled={namesQuery.isFetching}
+							onClick={() => void refresh()}
+						>
+							<RefreshCw
+								className={namesQuery.isFetching ? "animate-spin" : undefined}
+							/>
+						</Button>
+						<Button asChild size="sm">
+							<Link href="/opns">
+								<Search data-icon="inline-start" />
+								Find names
+							</Link>
+						</Button>
+					</>
+				}
+			/>
+
+			{anyListed && !marketAvailable && !stackFeatures.isPending && (
+				<Notice tone="warning">
+					The market is unavailable right now. You can still cancel a listing.
+				</Notice>
+			)}
 
 			{namesQuery.isError ? (
-				<p
-					className="rounded-md border border-destructive/50 p-4 text-sm text-destructive"
-					role="alert"
-				>
-					The active wallet could not list its OpNS basket. Retry without
-					changing providers.
-				</p>
+				<Notice tone="danger" title="Couldn't load your OpNS names.">
+					<Button
+						variant="outline"
+						size="sm"
+						className="mt-2"
+						onClick={() => void namesQuery.refetch()}
+					>
+						<RefreshCw data-icon="inline-start" />
+						Retry
+					</Button>
+				</Notice>
 			) : names.length === 0 ? (
-				<div className="rounded-md border p-8 text-center text-muted-foreground">
-					No OpNS names are present in this wallet.
-				</div>
+				<EmptyState
+					icon={AtSign}
+					title="No names yet"
+					description="OpNS names this wallet owns show up here."
+				/>
 			) : (
-				<div className="divide-y rounded-md border">
+				<ul className="flex flex-col divide-y divide-border/60">
 					{names.map((output) => {
 						const id = opnsAssetId(output);
 						const listed = isOpnsListed(output);
 						const published = isOpnsPublished(output);
+						const outpoint = getDisplayOutpoint(output);
 						return (
-							<div key={output.outpoint} className="space-y-3 p-4">
-								<div className="flex flex-wrap items-start justify-between gap-3">
-									<div className="min-w-0">
-										<p className="font-medium">{ownedOpnsName(output)}</p>
-										<p className="break-all font-mono text-xs text-muted-foreground">
-											{getDisplayOutpoint(output)}
-										</p>
-									</div>
-									<div className="flex gap-2">
-										<Badge variant={published ? "default" : "outline"}>
-											{published ? "Published" : "Unpublished"}
-										</Badge>
-										{listed && (
-											<Badge variant="secondary">Wallet OrdLock</Badge>
+							<li
+								key={output.outpoint}
+								data-slot="opns-row"
+								className="flex flex-col gap-3 py-3"
+							>
+								<div className="flex flex-col gap-1">
+									<div className="flex items-center justify-between gap-3">
+										<span className="min-w-0 truncate font-medium">
+											{ownedOpnsName(output)}
+										</span>
+										{(listed || published) && (
+											<div className="flex shrink-0 gap-1">
+												{published && (
+													<Badge
+														variant="outline"
+														className="rounded-full px-2 font-medium"
+													>
+														Published
+													</Badge>
+												)}
+												{listed && (
+													<Badge
+														variant="secondary"
+														className="rounded-full px-2 font-medium"
+													>
+														Listed
+													</Badge>
+												)}
+											</div>
 										)}
 									</div>
+									<span
+										className="font-mono text-xs text-muted-foreground"
+										title={outpoint}
+									>
+										{shortOutpoint(outpoint)}
+									</span>
 								</div>
-								{!id && (
-									<p className="text-sm text-destructive" role="alert">
-										This row has no canonical asset ID and cannot be changed.
-									</p>
-								)}
-								<div className="flex flex-wrap gap-2">
-									<Button
-										size="sm"
-										variant="outline"
-										disabled={!id || listed}
-										onClick={() =>
-											setAction({
-												kind: published ? "unpublish" : "publish",
-												output,
-											})
-										}
-									>
-										{published ? "Unpublish" : "Publish profile"}
-									</Button>
-									<Button
-										size="sm"
-										variant="outline"
-										disabled={!id || listed}
-										onClick={() => setAction({ kind: "send", output })}
-									>
-										Send
-									</Button>
-									{listed && (
+								{!id ? (
+									<Notice tone="danger">
+										This name is missing its asset ID, so it can't be changed.
+										Refresh to try again.
+									</Notice>
+								) : listed ? (
+									<div className="flex flex-wrap gap-2">
 										<Button
 											size="sm"
 											variant="outline"
-											disabled={!id}
 											onClick={() => setAction({ kind: "cancel", output })}
 										>
 											Cancel listing
 										</Button>
-									)}
-								</div>
-							</div>
+									</div>
+								) : (
+									<div className="flex flex-wrap gap-2">
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={() => setAction({ kind: "send", output })}
+										>
+											<Send data-icon="inline-start" />
+											Send
+										</Button>
+										<Button
+											size="sm"
+											variant="outline"
+											onClick={() =>
+												setAction({
+													kind: published ? "unpublish" : "publish",
+													output,
+												})
+											}
+										>
+											{published ? "Unpublish" : "Publish profile"}
+										</Button>
+									</div>
+								)}
+							</li>
 						);
 					})}
-				</div>
+				</ul>
 			)}
 
 			{total > PAGE_SIZE && (
-				<div className="flex items-center justify-between">
-					<Button
-						variant="outline"
-						disabled={offset === 0}
-						onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-					>
-						Previous
-					</Button>
-					<span className="text-sm text-muted-foreground">
+				<div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+					<span className="tabular-nums">
 						{offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
 					</span>
-					<Button
-						variant="outline"
-						disabled={offset + PAGE_SIZE >= total}
-						onClick={() => setOffset(offset + PAGE_SIZE)}
-					>
-						Next
-					</Button>
+					<div className="flex gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={offset === 0}
+							onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+						>
+							Previous
+						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							disabled={offset + PAGE_SIZE >= total}
+							onClick={() => setOffset(offset + PAGE_SIZE)}
+						>
+							Next
+						</Button>
+					</div>
 				</div>
 			)}
 
