@@ -7,7 +7,6 @@ import {
 	ExternalLink,
 	Loader2,
 	RefreshCw,
-	Sparkles,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useState } from "react";
@@ -28,6 +27,7 @@ import {
 } from "@/hooks/use-one-color-history";
 import { useOneColorToken } from "@/hooks/use-one-color-token";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { cn } from "@/lib/utils";
 import { actionExplorerUrl } from "@/lib/wallet/action-history";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
 import { NoColorOverlayError } from "@/lib/wallet/color-overlay";
@@ -40,6 +40,7 @@ import {
 } from "@/lib/wallet/one-color";
 import type { OneColorSendOutcome } from "@/lib/wallet/one-color-actions";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { OneColorMintDialog } from "./one-color-mint";
 import { OneColorReceiveDialog } from "./one-color-receive";
 import { OneColorPendingSends, OneColorSendDialog } from "./one-color-send";
 
@@ -82,39 +83,35 @@ function useOverlayOrigin(assetId: string) {
 	});
 }
 
-/**
- * Receive, Send and Mint. Mint is offered only to an authority holder and
- * stays disabled until its batch lands.
- */
+/** Receive, Send and Mint. Mint is offered only to an authority holder. */
 function OneColorActions({
 	token,
-	onSendStart,
+	onWriteStart,
 	onSendOutcome,
+	onMinted,
+	onMintFailed,
 }: {
 	token: OneColorBalance;
-	onSendStart: () => void;
+	/** A send or mint is starting: the last one's result no longer applies. */
+	onWriteStart: () => void;
 	onSendOutcome: (outcome: DeliveredSend) => void;
+	onMinted: (message: string) => void;
+	onMintFailed: (message: string) => void;
 }) {
 	return (
-		<div className="space-y-1">
-			<div className="flex flex-wrap gap-2">
-				<OneColorReceiveDialog />
-				<OneColorSendDialog
-					token={token}
-					onStart={onSendStart}
-					onOutcome={onSendOutcome}
-				/>
-				{token.authorities > 0 ? (
-					<Button size="sm" variant="outline" disabled>
-						<Sparkles className="size-4" data-icon="inline-start" /> Mint
-					</Button>
-				) : null}
-			</div>
-			{token.authorities > 0 ? (
-				<p className="text-xs text-muted-foreground">
-					Mint isn't available yet.
-				</p>
-			) : null}
+		<div className="flex flex-wrap gap-2">
+			<OneColorReceiveDialog />
+			<OneColorSendDialog
+				token={token}
+				onStart={onWriteStart}
+				onOutcome={onSendOutcome}
+			/>
+			<OneColorMintDialog
+				token={token}
+				onStart={onWriteStart}
+				onMinted={onMinted}
+				onFailed={onMintFailed}
+			/>
 		</div>
 	);
 }
@@ -255,6 +252,29 @@ function OneColorHistory({ assetId, dec }: { assetId: string; dec: number }) {
 	);
 }
 
+// Shown in every state of the page: a failed re-read after a mint must not hide its outcome.
+function LastMintNotice({
+	lastMint,
+	className,
+}: {
+	lastMint: { ok: boolean; message: string } | null;
+	className?: string;
+}) {
+	if (!lastMint) return null;
+	return (
+		<p
+			className={cn(
+				"text-sm",
+				lastMint.ok ? "text-primary" : "text-destructive",
+				className,
+			)}
+			role={lastMint.ok ? "status" : "alert"}
+		>
+			{lastMint.message}
+		</p>
+	);
+}
+
 function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const { chain, identityKey, colorOverlay } = useWalletToolbox();
 	const queryClient = useQueryClient();
@@ -265,7 +285,23 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 	const [undelivered, setUndelivered] = useState<ReadonlySet<string>>(
 		() => new Set(),
 	);
-	const onSendStart = useCallback(() => setLastSend(null), []);
+	const [lastMint, setLastMint] = useState<{
+		ok: boolean;
+		message: string;
+	} | null>(null);
+	const onWriteStart = useCallback(() => {
+		setLastSend(null);
+		setLastMint(null);
+	}, []);
+	// Kept here, not only in the dialog: the re-read after a mint can unmount it.
+	const onMinted = useCallback(
+		(message: string) => setLastMint({ ok: true, message }),
+		[],
+	);
+	const onMintFailed = useCallback(
+		(message: string) => setLastMint({ ok: false, message }),
+		[],
+	);
 	const onSendOutcome = useCallback((outcome: DeliveredSend) => {
 		setLastSend(outcome);
 		if (outcome.kind === "undelivered") {
@@ -285,6 +321,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 		return (
 			<OneColorNotice>
 				<p>This isn't a 1Color token.</p>
+				<LastMintNotice lastMint={lastMint} className="mt-3" />
 			</OneColorNotice>
 		);
 	}
@@ -301,6 +338,7 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 				>
 					<RefreshCw data-icon="inline-start" /> Retry
 				</Button>
+				<LastMintNotice lastMint={lastMint} className="mt-3" />
 			</OneColorNotice>
 		);
 	}
@@ -344,9 +382,12 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 					</div>
 					<OneColorActions
 						token={token}
-						onSendStart={onSendStart}
+						onWriteStart={onWriteStart}
 						onSendOutcome={onSendOutcome}
+						onMinted={onMinted}
+						onMintFailed={onMintFailed}
 					/>
+					<LastMintNotice lastMint={lastMint} />
 					{lastSend ? (
 						<p
 							className={`text-sm ${lastSend.kind === "sent" ? "text-primary" : "text-destructive"}`}

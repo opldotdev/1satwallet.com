@@ -57,6 +57,11 @@ export type OneColorBalance = OneColorAssetInfo & {
 	pending: bigint;
 	/** Authority outputs held (available + reserved). */
 	authorities: number;
+	/**
+	 * The deploy could not be read, so `dec` is a placeholder 0, not the
+	 * token's decimals: amounts must not be parsed or written against it.
+	 */
+	infoUnreadable?: true;
 };
 
 /** A value output the module reports as reserved, with what it is worth. */
@@ -302,8 +307,8 @@ export const getOneColorAssetInfo = (
 
 /**
  * The wallet's 1Color balances, one per asset held, with display fields. An
- * asset whose deploy cannot be read is listed with 0 decimals and no symbol;
- * the failure is logged in full.
+ * asset whose deploy cannot be read is listed with a placeholder 0 decimals,
+ * no symbol and `infoUnreadable`; the failure is logged in full.
  */
 export const getOneColorBalances = async (
 	ctx: OneSatContext,
@@ -319,10 +324,11 @@ export const getOneColorBalances = async (
 	);
 	return Promise.all(
 		holdings.map(async ({ reservedOutputs, ...h }) => {
-			let info: OneColorAssetInfo = { dec: 0 };
+			let info: OneColorAssetInfo & { infoUnreadable?: true };
 			try {
 				info = await getOneColorAssetInfo(ctx, h.assetId);
 			} catch (error) {
+				info = { dec: 0, infoUnreadable: true };
 				console.error(`[1color] deploy of ${h.assetId} not readable:`, error);
 				reportDiagnostic({
 					category: "provider",
