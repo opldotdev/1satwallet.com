@@ -200,7 +200,7 @@ describe("dialogs", () => {
 			"components/modal/artifact-modal.tsx",
 			"components/wallet/wallet-home-actions.tsx",
 			"components/wallet/one-color-send.tsx",
-			"components/wallet/one-color-deploy.tsx",
+			"components/wallet/create-token.tsx",
 		];
 		for (const file of callers) {
 			const src = read(file);
@@ -232,7 +232,7 @@ describe("dialogs", () => {
 			"components/wallet/certificate-center.tsx",
 			"components/wallet/wallet-home-actions.tsx",
 			"components/wallet/one-color-send.tsx",
-			"components/wallet/one-color-deploy.tsx",
+			"components/wallet/create-token.tsx",
 		]) {
 			assert.doesNotMatch(
 				read(file),

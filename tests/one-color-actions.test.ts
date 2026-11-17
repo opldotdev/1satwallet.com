@@ -454,11 +454,10 @@ describe("1Color deploy entry point", () => {
 	const read = (path: string) =>
 		readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-	it("is on the 1Color page, testnet only, and writes through colorContext", () => {
-		assert.match(
-			read("app/(main)/wallet/1color/page.tsx"),
-			/<OneColorDeploy \/>/,
-		);
+	it("is the Create token sheet's 1Color choice, testnet only, and writes through colorContext", () => {
+		const sheet = read("components/wallet/create-token.tsx");
+		assert.match(sheet, /<OneColorDeployForm \{\.\.\.form\} \/>/);
+		assert.match(sheet, /tokenStandardsFor\(chain\)/);
 		const component = read("components/wallet/one-color-deploy.tsx");
 		assert.match(component, /isOneColorAvailable\(chain\)/);
 		assert.match(component, /runOneColorDeploy\(colorContext, review,/);
@@ -466,7 +465,7 @@ describe("1Color deploy entry point", () => {
 		assert.match(component, /queryKey: \["one-color"\]/);
 	});
 
-	it("closes the review after a possible deploy and keeps Authorize busy until holdings are re-read", () => {
+	it("closes the review after a possible deploy and keeps Create busy until holdings are re-read", () => {
 		const component = read("components/wallet/one-color-deploy.tsx");
 		assert.match(
 			component,
@@ -477,8 +476,9 @@ describe("1Color deploy entry point", () => {
 		assert.ok(runAt < component.lastIndexOf("setBusy(false)"));
 		// The shared dialog surface scrolls; no per-screen height patch.
 		assert.doesNotMatch(component, /max-h-\[calc\(100dvh-2rem\)\]/);
-		assert.match(component, /Supply model/);
-		assert.match(component, /Mint authority/);
+		// The shared fields: symbol, decimals, supply type, supply.
+		assert.match(component, /<TokenDraftFields/);
+		assert.match(component, /keeps the only mint authority/);
 	});
 });
 

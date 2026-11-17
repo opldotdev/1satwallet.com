@@ -2,32 +2,15 @@
 
 import { deployBsv21Mint } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Plus } from "lucide-react";
-import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-	DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-	Select,
-	SelectContent,
-	SelectItem,
-	SelectTrigger,
-	SelectValue,
-} from "@/components/ui/select";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
+import { DialogFooter } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 import { useSound } from "@/hooks/use-sound";
-import { isRouteAvailableOn } from "@/lib/chain-surfaces";
-import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	formatBsv21Amount,
@@ -39,42 +22,52 @@ import {
 	executeBsv21AuthorityIntent,
 	prepareLiveBsv21AuthorityExecution,
 } from "@/lib/wallet/bsv21-authority";
+import {
+	type CreateTokenFormProps,
+	parseDraftDecimals,
+} from "@/lib/wallet/create-token";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
-import { Bsv21AuthorityManager } from "./bsv21-authority-manager";
+import { TokenDraftFields } from "./token-draft-fields";
+import { Bsv21UnavailableNotice } from "./token-grid";
 
 const VALID_SYMBOL = /^[^\p{Cc}\p{Cs}]{1,32}$/u;
 
 type DeploymentReview =
 	| { kind: "fixed"; symbol: string; decimals: number; amount: bigint }
-	| { kind: "authority"; symbol: string; decimals: number };
+	| { kind: "mintable"; symbol: string; decimals: number };
 
-export function Bsv21Deploy() {
+/**
+ * The BSV-21 body of the Create token sheet: the shared fields, then a
+ * review, then the deploy. Fixed supply deploys the whole supply to this
+ * wallet (`deployBsv21Mint`); mintable deploys zero supply and one mint
+ * authority kept by this wallet.
+ */
+export function Bsv21DeployForm({
+	draft,
+	onDraftChange,
+	onStatusChange,
+	onCreated,
+	onCancel,
+}: CreateTokenFormProps) {
 	const router = useRouter();
 	const queryClient = useQueryClient();
 	const { play } = useSound();
-	const { chain, oneSatContext, refreshBalance } = useWalletToolbox();
-	const features = useStackFeatures();
-	const [open, setOpen] = useState(false);
-	const [createMode, setCreateMode] = useState<"fixed" | "authority">("fixed");
-	const [symbol, setSymbol] = useState("");
-	const [amount, setAmount] = useState("");
-	const [decimalsText, setDecimalsText] = useState("0");
+	const { oneSatContext, refreshBalance } = useWalletToolbox();
+	const { available: bsv21Available } = useBsv21Availability();
 	const [review, setReview] = useState<DeploymentReview | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [createdTokenId, setCreatedTokenId] = useState<string | null>(null);
-	const [createdAuthorityTokenId, setCreatedAuthorityTokenId] = useState<
-		string | null
-	>(null);
-	const bsv21Available = features.data?.features.bsv21 === true;
-	const decimals = /^\d+$/.test(decimalsText)
-		? Number.parseInt(decimalsText, 10)
-		: Number.NaN;
+	const decimals = parseDraftDecimals(draft.decimals);
+	const ready = Boolean(oneSatContext) && bsv21Available;
+
+	useEffect(() => {
+		onStatusChange({ busy, reviewing: review !== null });
+	}, [busy, review, onStatusChange]);
 
 	const prepareReview = useCallback(() => {
 		setError(null);
-		const normalizedSymbol = symbol.trim();
-		if (!VALID_SYMBOL.test(normalizedSymbol)) {
+		const symbol = draft.symbol.trim();
+		if (!VALID_SYMBOL.test(symbol)) {
 			setError("Enter a printable symbol between 1 and 32 characters.");
 			return;
 		}
@@ -82,43 +75,38 @@ export function Bsv21Deploy() {
 			setError("Decimals must be a whole number from 0 through 18.");
 			return;
 		}
-		if (createMode === "authority") {
-			setReview({ kind: "authority", symbol: normalizedSymbol, decimals });
+		if (draft.supply === "mintable") {
+			setReview({ kind: "mintable", symbol, decimals });
 			return;
 		}
-		const atomic = parseBsv21Amount(amount, decimals);
+		const atomic = parseBsv21Amount(draft.amount, decimals);
 		if (!atomic) {
-			setError(
-				`Enter a positive fixed supply with at most ${decimals} decimals.`,
-			);
+			setError(`Enter a positive supply with at most ${decimals} decimals.`);
 			return;
 		}
-		setReview({
-			kind: "fixed",
-			symbol: normalizedSymbol,
-			decimals,
-			amount: atomic,
-		});
-	}, [amount, createMode, decimals, symbol]);
+		setReview({ kind: "fixed", symbol, decimals, amount: atomic });
+	}, [decimals, draft]);
 
 	const deploy = useCallback(async () => {
 		if (!(oneSatContext && review && bsv21Available)) return;
 		setBusy(true);
 		setError(null);
 		try {
-			const normalizedSymbol = symbol.trim();
+			const symbol = draft.symbol.trim();
 			const atomic =
-				review.kind === "fixed" ? parseBsv21Amount(amount, decimals) : null;
+				review.kind === "fixed"
+					? parseBsv21Amount(draft.amount, decimals)
+					: null;
 			if (
-				review.kind !== createMode ||
-				review.symbol !== normalizedSymbol ||
+				review.kind !== draft.supply ||
+				review.symbol !== symbol ||
 				review.decimals !== decimals ||
-				!VALID_SYMBOL.test(normalizedSymbol) ||
+				!VALID_SYMBOL.test(symbol) ||
 				!Number.isInteger(decimals) ||
 				(review.kind === "fixed" && atomic !== review.amount)
 			) {
 				setReview(null);
-				throw new Error("Review details changed. Review the deployment again.");
+				throw new Error("Review details changed. Review the token again.");
 			}
 			await prepareLiveBsv21AuthorityExecution(oneSatContext);
 			const result =
@@ -136,13 +124,15 @@ export function Bsv21Deploy() {
 						});
 			if (result.error) throw new Error(result.error);
 			if (!result.txid) throw new Error(BSV21_ACTION_CONFIRMATION_MISSING);
-			setCreatedTokenId(result.tokenId ?? null);
-			setCreatedAuthorityTokenId(
-				review.kind === "authority" ? (result.tokenId ?? null) : null,
-			);
-			setReview(null);
-			setOpen(false);
 			play("success");
+			onCreated({
+				standard: "bsv21",
+				id: result.tokenId ?? null,
+				message:
+					review.kind === "fixed"
+						? `${review.symbol} was created. It shows in your list once the BSV-21 overlay indexes it.`
+						: `${review.symbol} was created with no supply yet. Mint from its page once the BSV-21 overlay indexes it.`,
+			});
 			refreshBalance();
 			await Promise.all([
 				queryClient.invalidateQueries({ queryKey: ["wallet-balance"] }),
@@ -150,6 +140,7 @@ export function Bsv21Deploy() {
 			]);
 			router.refresh();
 		} catch (cause) {
+			console.error(`[bsv21] deploy (${review.kind}) failed:`, cause);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -163,205 +154,83 @@ export function Bsv21Deploy() {
 			setBusy(false);
 		}
 	}, [
-		amount,
 		bsv21Available,
-		createMode,
 		decimals,
+		draft,
 		oneSatContext,
+		onCreated,
 		play,
 		queryClient,
 		refreshBalance,
 		review,
 		router,
-		symbol,
 	]);
 
 	return (
-		<section
-			aria-labelledby="deploy-bsv21-title"
-			className="space-y-4 rounded-lg border p-4"
-		>
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div>
-					<h2 id="deploy-bsv21-title" className="text-lg font-semibold">
-						Create a BSV21 token
-					</h2>
-					<p className="text-sm text-muted-foreground">
-						Deploy a permanently fixed supply or a controlled mint authority
-						through canonical wallet actions.
-					</p>
+		<>
+			{review ? (
+				<div className="flex flex-col gap-4">
+					<Notice tone="warning">
+						{review.kind === "fixed"
+							? "The whole supply is created now and can never change."
+							: "The supply starts at zero. This wallet keeps the only mint authority; whoever holds it can mint."}
+					</Notice>
+					<DetailList className="rounded-xl border p-4">
+						<DetailRow label="Standard" mono={false}>
+							BSV-21
+						</DetailRow>
+						<DetailRow label="Symbol">{review.symbol}</DetailRow>
+						<DetailRow label="Decimals">{review.decimals}</DetailRow>
+						<DetailRow label="Supply">
+							{review.kind === "fixed"
+								? formatBsv21Amount(review.amount, review.decimals)
+								: "Mintable"}
+						</DetailRow>
+						<DetailRow label="Fee" mono={false}>
+							Set by your wallet
+						</DetailRow>
+					</DetailList>
 				</div>
-				<Dialog open={open} onOpenChange={(next) => !busy && setOpen(next)}>
-					<DialogTrigger asChild>
-						<Button disabled={!oneSatContext || !bsv21Available}>
-							<Plus className="size-4" data-icon="inline-start" />
-							Deploy token
-						</Button>
-					</DialogTrigger>
-					<DialogContent showCloseButton={!busy}>
-						<DialogHeader>
-							<DialogTitle>Deploy BSV21 token</DialogTitle>
-							<DialogDescription>
-								Choose a permanently fixed supply or a controlled mint
-								authority. Deployment is irreversible.
-							</DialogDescription>
-						</DialogHeader>
-						{review ? (
-							<div className="space-y-4">
-								<dl className="grid grid-cols-[auto_1fr] gap-2 rounded-md border p-3 text-sm">
-									<dt>Symbol</dt>
-									<dd className="text-right font-mono">{review.symbol}</dd>
-									<dt>Supply model</dt>
-									<dd className="text-right">
-										{review.kind === "fixed" ? "Fixed" : "Mint authority"}
-									</dd>
-									{review.kind === "fixed" ? (
-										<>
-											<dt>Supply</dt>
-											<dd className="break-all text-right font-mono">
-												{formatBsv21Amount(review.amount, review.decimals)}
-											</dd>
-											<dt>Atomic supply</dt>
-											<dd className="break-all text-right font-mono">
-												{review.amount.toString()}
-											</dd>
-										</>
-									) : null}
-									<dt>Decimals</dt>
-									<dd className="text-right font-mono">{review.decimals}</dd>
-									<dt>Token output</dt>
-									<dd className="text-right font-mono">1 sat</dd>
-									<dt>Network fee</dt>
-									<dd className="text-right text-muted-foreground">
-										Set by the wallet; not quoted here
-									</dd>
-								</dl>
-								<div className="flex gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
-									<AlertTriangle className="mt-0.5 size-4 shrink-0" />
-									<p>
-										{review.kind === "fixed"
-											? "This creates the entire supply permanently. There is no mint authority or undo action."
-											: "This creates zero supply and one mint authority controlled by this wallet. Anyone controlling that authority can mint or transfer it."}
-									</p>
-								</div>
-							</div>
-						) : (
-							<div className="space-y-4">
-								<div className="space-y-2">
-									<Label htmlFor="bsv21-supply-model">Supply model</Label>
-									<Select
-										value={createMode}
-										onValueChange={(value: "fixed" | "authority") =>
-											setCreateMode(value)
-										}
-									>
-										<SelectTrigger id="bsv21-supply-model">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="fixed">Fixed supply</SelectItem>
-											<SelectItem value="authority">Mint authority</SelectItem>
-										</SelectContent>
-									</Select>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="bsv21-symbol">Symbol</Label>
-									<Input
-										id="bsv21-symbol"
-										maxLength={32}
-										value={symbol}
-										onChange={(event) => setSymbol(event.target.value)}
-									/>
-								</div>
-								<div className="space-y-2">
-									<Label htmlFor="bsv21-decimals">Decimals</Label>
-									<Input
-										id="bsv21-decimals"
-										inputMode="numeric"
-										value={decimalsText}
-										onChange={(event) => setDecimalsText(event.target.value)}
-									/>
-								</div>
-								{createMode === "fixed" ? (
-									<div className="space-y-2">
-										<Label htmlFor="bsv21-supply">Fixed supply</Label>
-										<Input
-											id="bsv21-supply"
-											inputMode="decimal"
-											value={amount}
-											onChange={(event) => setAmount(event.target.value)}
-										/>
-									</div>
-								) : (
-									<p className="text-sm text-muted-foreground">
-										Initial supply is zero. Mint only after the deployment is
-										indexed by the BSV21 overlay.
-									</p>
-								)}
-							</div>
-						)}
-						{error ? (
-							<p className="text-sm text-destructive" role="alert">
-								{error}
-							</p>
-						) : null}
-						<DialogFooter>
-							<Button
-								type="button"
-								variant="outline"
-								disabled={busy}
-								onClick={() => (review ? setReview(null) : setOpen(false))}
-							>
-								{review ? "Edit" : "Cancel"}
-							</Button>
-							<Button
-								type="button"
-								disabled={busy}
-								onClick={() => void (review ? deploy() : prepareReview())}
-							>
-								{busy ? (
-									<Loader2
-										className="size-4 animate-spin"
-										data-icon="inline-start"
-									/>
-								) : null}
-								{review
-									? "Authorize irreversible deployment"
-									: "Review deployment"}
-							</Button>
-						</DialogFooter>
-					</DialogContent>
-				</Dialog>
-			</div>
-			{createdTokenId ? (
-				<p className="text-sm text-primary" role="status">
-					Deployment submitted. Indexing is not yet confirmed.
-					{isRouteAvailableOn(chain, "/market/bsv21") ? (
-						<>
-							{" "}
-							<Link
-								className="underline"
-								href={`/market/bsv21/${createdTokenId}`}
-							>
-								Open token {createdTokenId}
-							</Link>
-						</>
+			) : (
+				<>
+					{oneSatContext ? (
+						<Bsv21UnavailableNotice />
 					) : (
-						` Token ${createdTokenId}.`
+						<Notice>Unlock or connect a wallet to create a token.</Notice>
 					)}
+					<TokenDraftFields
+						draft={draft}
+						mintableHint="The supply starts at zero. Mint from the token's page once the BSV-21 overlay indexes it."
+						onDraftChange={onDraftChange}
+						symbolMaxLength={32}
+					/>
+				</>
+			)}
+			{error ? (
+				<p className="text-destructive text-sm" role="alert">
+					{error}
 				</p>
 			) : null}
-			{!bsv21Available ? (
-				<p className="text-sm text-destructive" role="status">
-					Token deployment and authority actions are disabled until the
-					configured stack advertises BSV21.
-				</p>
-			) : null}
-			<Bsv21AuthorityManager
-				key={createdAuthorityTokenId ?? "authority-manager"}
-				bsv21Available={bsv21Available}
-				suggestedTokenId={createdAuthorityTokenId}
-			/>
-		</section>
+			<DialogFooter>
+				<Button
+					disabled={busy}
+					onClick={() => (review ? setReview(null) : onCancel())}
+					type="button"
+					variant="outline"
+				>
+					{review ? "Edit" : "Cancel"}
+				</Button>
+				<Button
+					disabled={busy || !ready}
+					onClick={() => void (review ? deploy() : prepareReview())}
+					type="button"
+				>
+					{busy ? (
+						<Loader2 className="animate-spin" data-icon="inline-start" />
+					) : null}
+					{review ? "Create token" : "Review"}
+				</Button>
+			</DialogFooter>
+		</>
 	);
 }
