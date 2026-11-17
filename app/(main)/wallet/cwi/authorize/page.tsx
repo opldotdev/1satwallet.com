@@ -107,11 +107,13 @@ function AuthorizeContent() {
 				setRequestData(data as PendingAuthRequest);
 			} catch (error) {
 				if (cancelled) return;
-				const message =
-					error instanceof Error
-						? error.message
-						: "Failed to load authorization request.";
-				setRequestError(message);
+				console.error("[cwi] could not load the authorization request", {
+					requestId,
+					error,
+				});
+				setRequestError(
+					"The request couldn't be loaded. It may have expired; start again from the app.",
+				);
 			} finally {
 				if (!cancelled) {
 					setIsLoadingRequest(false);
@@ -209,6 +211,10 @@ function AuthorizeContent() {
 			});
 			redirectToCallback(completion.redirectUrl);
 		} catch (error) {
+			console.error("[cwi] requested call failed", {
+				requestId: requestData.requestId,
+				error,
+			});
 			const wireError = toCWIErrorFields(
 				error,
 				process.env.NODE_ENV !== "production",
@@ -252,9 +258,11 @@ function AuthorizeContent() {
 			});
 			redirectToCallback(completion.redirectUrl);
 		} catch (error) {
-			const description =
-				error instanceof Error ? error.message : "Failed to deny request.";
-			setRequestError(description);
+			console.error("[cwi] could not send the denial", {
+				requestId: requestData.requestId,
+				error,
+			});
+			setRequestError("Couldn't send the denial. Try again.");
 			setIsSubmitting(false);
 		}
 	}, [requestData, completeAuthorization, redirectToCallback]);
@@ -442,10 +450,14 @@ function AuthorizeContent() {
 	);
 }
 
-/** Fills the screen; the card sits at the top on phones, centered from sm. */
+/**
+ * The card sits under the wallet header: at the top on phones, where any
+ * extra height would only push the page past the screen, and centered in
+ * most of the remaining height from sm.
+ */
 function AuthorizeScreen({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="flex min-h-dvh items-start justify-center sm:items-center">
+		<div className="flex items-start justify-center sm:min-h-[60dvh] sm:items-center">
 			{children}
 		</div>
 	);

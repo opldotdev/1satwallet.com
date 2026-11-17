@@ -171,6 +171,7 @@ export default function ImportJsonPage() {
 				<input
 					aria-label="Wallet backup file"
 					ref={fileInputRef}
+					tabIndex={-1}
 					type="file"
 					className="sr-only"
 					accept=".json,.zip,.bep,application/json,application/zip,text/plain"

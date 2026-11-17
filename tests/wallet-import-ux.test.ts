@@ -86,10 +86,11 @@ describe("wallet import ux", () => {
 		assert.match(grid, /onClick=\{\(\) => setDetectionFailed\(false\)\}/);
 		assert.match(grid, /role="status"/);
 		assert.match(grid, /Searching wallet paths…/);
-		// Next stays disabled while the search runs or no path is resolved.
+		// Next stays disabled while the search runs or no path is resolved
+		// (canSubmitPaths, tested in mnemonic-paths.test.ts).
 		assert.match(
 			grid,
-			/disabled=\{[\s\S]*?processing[\s\S]*?\(!pendingPaths && !useCustomPaths\)/,
+			/disabled=\{\s*!canSubmitPaths\(\{ isValid, processing, paths: pendingPaths \}\)/,
 		);
 	});
 

@@ -1,4 +1,7 @@
+"use client";
+
 import type * as React from "react";
+import { useEffect, useRef } from "react";
 import {
 	Card,
 	CardContent,
@@ -33,6 +36,12 @@ export function OnboardingStep({
 	actions?: React.ReactNode;
 	form?: Omit<React.ComponentProps<"form">, "className" | "children">;
 }) {
+	// Each step is its own page: take focus to its heading, so keyboard and
+	// screen-reader users land on the new step instead of the old button.
+	const headingRef = useRef<HTMLHeadingElement>(null);
+	useEffect(() => {
+		headingRef.current?.focus({ preventScroll: true });
+	}, []);
 	const body = (
 		<>
 			<CardContent>{children}</CardContent>
@@ -53,7 +62,11 @@ export function OnboardingStep({
 					Step {step} of {total}
 				</p>
 				<CardTitle>
-					<h2 className="text-lg leading-tight font-semibold tracking-tight">
+					<h2
+						ref={headingRef}
+						tabIndex={-1}
+						className="text-lg leading-tight font-semibold tracking-tight outline-none"
+					>
 						{title}
 					</h2>
 				</CardTitle>

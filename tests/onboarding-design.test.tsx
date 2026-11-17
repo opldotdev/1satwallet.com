@@ -164,6 +164,20 @@ describe("mnemonic grid", () => {
 		);
 	});
 
+	it("keeps the browser from completing, capitalizing or correcting seed words", () => {
+		const grid = read("components/wallet/mnemonic-grid.tsx");
+		const fields = grid.match(
+			/aria-label=\{`Mnemonic word \$\{(?:idx|slot) \+ 1\}`\}[\s\S]*?\/>/g,
+		);
+		assert.equal(fields?.length, 2);
+		for (const field of fields ?? []) {
+			assert.match(field, /autoComplete="off"/);
+			assert.match(field, /autoCapitalize="none"/);
+			assert.match(field, /autoCorrect="off"/);
+			assert.match(field, /spellCheck=\{false\}/);
+		}
+	});
+
 	it("lets the spot-check fields take the full width", () => {
 		const grid = read("components/wallet/mnemonic-grid.tsx");
 		assert.doesNotMatch(grid, /max-w-48/);
@@ -250,20 +264,38 @@ describe("D5 screens", () => {
 	});
 
 	it("size the CWI prompts to the dynamic viewport", () => {
-		for (const file of [
-			"app/(main)/wallet/cwi/authorize/page.tsx",
-			"app/(embed)/wallet/cwi/page.tsx",
-		]) {
-			const source = read(file);
-			assert.doesNotMatch(source, /min-h-screen/, file);
-			assert.match(source, /min-h-dvh/, file);
-		}
+		const embed = read("app/(embed)/wallet/cwi/page.tsx");
+		assert.doesNotMatch(embed, /min-h-screen/);
+		assert.match(embed, /min-h-dvh/);
+		// Inside the wallet layout a full-screen minimum always overflows on
+		// a phone, so it applies only from sm.
+		const authorize = read("app/(main)/wallet/cwi/authorize/page.tsx");
+		assert.doesNotMatch(authorize, /min-h-screen|(?<!sm:)min-h-dvh/);
+		assert.match(authorize, /sm:min-h-\[60dvh\]/);
 	});
 
 	it("keep the authorize decision clear of the home indicator on phones", () => {
 		assert.match(
 			read("app/(main)/wallet/cwi/authorize/page.tsx"),
 			/max-sm:sticky max-sm:bottom-0[^"]*env\(safe-area-inset-bottom\)/,
+		);
+	});
+
+	it("log authorize failures and show short fixed messages", () => {
+		const page = read("app/(main)/wallet/cwi/authorize/page.tsx");
+		assert.match(page, /console\.error\("\[cwi\] requested call failed"/);
+		assert.match(page, /console\.error\("\[cwi\] could not send the denial"/);
+		assert.match(
+			page,
+			/console\.error\("\[cwi\] could not load the authorization request"/,
+		);
+		assert.match(page, /"Couldn't send the denial\. Try again\."/);
+	});
+
+	it("keep the hidden backup file input out of the tab order", () => {
+		assert.match(
+			read("app/(main)/wallet/import/json/page.tsx"),
+			/aria-label="Wallet backup file"[\s\S]{0,80}tabIndex=\{-1\}/,
 		);
 	});
 

@@ -1,5 +1,5 @@
 import { Check, Copy, Loader2, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { DetailList, DetailRow } from "@/components/ui/detail-list";
@@ -23,6 +23,12 @@ import {
 } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
+import {
+	canSubmitPaths,
+	detectionResultApplies,
+	pathsAfterCustomToggle,
+	type WalletPaths,
+} from "@/lib/wallet/mnemonic-paths";
 
 interface MnemonicGridProps {
 	onSubmit?: (keys: Keys) => void;
@@ -50,14 +56,15 @@ export function MnemonicGrid({
 	const [processing, setProcessing] = useState(false);
 	const [useCustomPaths, setUseCustomPaths] = useState(false);
 	const [detectionFailed, setDetectionFailed] = useState(false);
-	const [pendingPaths, setPendingPaths] = useState<
-		| {
-				changeAddressPath: string;
-				ordAddressPath: string;
-				identityAddressPath?: string;
-		  }
-		| undefined
-	>();
+	const [pendingPaths, setPendingPaths] = useState<WalletPaths | undefined>();
+	// What the words and switch are now, for a path search that returns
+	// after they changed.
+	const phraseRef = useRef("");
+	const customRef = useRef(false);
+	useEffect(() => {
+		phraseRef.current = inputMnemonic.join(" ");
+		customRef.current = useCustomPaths;
+	}, [inputMnemonic, useCustomPaths]);
 
 	// Copy to clipboard state (view mode)
 	const [copied, setCopied] = useState(false);
@@ -178,7 +185,9 @@ export function MnemonicGrid({
 	};
 
 	const toggleCustomPaths = () => {
-		setUseCustomPaths(!useCustomPaths);
+		const turningOn = !useCustomPaths;
+		setUseCustomPaths(turningOn);
+		setPendingPaths((paths) => pathsAfterCustomToggle(turningOn, paths));
 		setDetectionFailed(false);
 	};
 
@@ -195,8 +204,16 @@ export function MnemonicGrid({
 			if (inputMnemonic.some((w) => !w)) return;
 
 			setProcessing(true);
+			const stillApplies = () =>
+				detectionResultApplies(phrase, {
+					phrase: phraseRef.current,
+					useCustomPaths: customRef.current,
+				});
 			try {
 				const keys = await findKeysFromMnemonic(phrase);
+				// The words or the switch changed while it ran: drop the result,
+				// and the search runs again for what is there now.
+				if (!stillApplies()) return;
 				if (keys.ordAddressPath !== undefined) {
 					setPendingPaths({
 						changeAddressPath: (keys.changeAddressPath as string) || "m/0",
@@ -207,7 +224,7 @@ export function MnemonicGrid({
 					setDetectionFailed(true);
 				}
 			} catch (error) {
-				setDetectionFailed(true);
+				if (stillApplies()) setDetectionFailed(true);
 				// Logged without its message: it may quote the phrase.
 				console.error("[mnemonic] wallet path detection failed", {
 					name: error instanceof Error ? error.name : typeof error,
@@ -277,15 +294,23 @@ export function MnemonicGrid({
 											: ""
 									}`}
 									autoComplete="off"
+									autoCapitalize="none"
+									autoCorrect="off"
 									spellCheck={false}
 								/>
 								{/* The slot is always there, so the field keeps its width. */}
-								<span className="flex size-4 shrink-0 items-center">
+								<span
+									role="status"
+									className="flex size-4 shrink-0 items-center"
+								>
 									{hasInput && isCorrect && (
-										<Check
-											aria-label="Correct"
-											className="size-4 text-success"
-										/>
+										<>
+											<Check
+												aria-hidden="true"
+												className="size-4 text-success"
+											/>
+											<span className="sr-only">Word {idx + 1} is correct</span>
+										</>
 									)}
 								</span>
 							</div>
@@ -365,6 +390,10 @@ export function MnemonicGrid({
 									onChange={(e) => handleWordChange(slot, e.target.value)}
 									onPaste={(e) => handlePaste(e, slot)}
 									readOnly={mode === "view"}
+									autoComplete="off"
+									autoCapitalize="none"
+									autoCorrect="off"
+									spellCheck={false}
 									className={`pl-8 font-mono ${
 										!bip39words.includes(word) && word && mode === "edit"
 											? "border-destructive focus-visible:ring-destructive"
@@ -399,7 +428,9 @@ export function MnemonicGrid({
 				<div className="flex flex-col gap-3 rounded-lg border p-3">
 					{!useCustomPaths && (
 						<DetailList>
-							<DetailRow label="Payment path">m/0</DetailRow>
+							<DetailRow label="Payment path">
+								{pendingPaths?.changeAddressPath ?? "m/0"}
+							</DetailRow>
 							<DetailRow label="Ordinals path">
 								{processing ? (
 									<span
@@ -448,14 +479,7 @@ export function MnemonicGrid({
 			{useCustomPaths && mode === "edit" && (
 				<div className="flex flex-col gap-3">
 					<div className="flex flex-wrap gap-2">
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => {
-								setPendingPaths(undefined);
-								toggleCustomPaths();
-							}}
-						>
+						<Button variant="outline" size="sm" onClick={toggleCustomPaths}>
 							1Sat
 						</Button>
 						<Button
@@ -572,11 +596,10 @@ export function MnemonicGrid({
 						<Button
 							className="sm:ml-auto"
 							disabled={
-								!isValid || processing || (!pendingPaths && !useCustomPaths)
+								!canSubmitPaths({ isValid, processing, paths: pendingPaths })
 							}
 							onClick={() => {
-								if (!onSubmit) return;
-								if (!pendingPaths) return;
+								if (!onSubmit || !pendingPaths) return;
 								const keys = getKeysFromMnemonicAndPaths(
 									inputMnemonic.join(" "),
 									{
