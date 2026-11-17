@@ -20,9 +20,14 @@ import {
 	paymailSyncFailed,
 	syncAccountPeerPayInbox,
 } from "@/lib/wallet/peerpay-inbox";
+import {
+	openReceiveAddressStore,
+	syncReceiveAddresses,
+} from "@/lib/wallet/receive-address-sync";
 
 export type SyncTaskName =
 	| "addresses"
+	| "receiveAddresses"
 	| "payments"
 	| "cosignDeliveries"
 	| "handleInbox";
@@ -48,10 +53,16 @@ interface SyncTaskResult {
 	failed: number;
 }
 
-type SyncJobs = Record<SyncTaskName, () => Promise<SyncTaskResult>>;
+type SyncJob = () => Promise<SyncTaskResult>;
+
+/** The Receive address task is optional; a run given no job for it skips it. */
+type SyncJobs = Record<Exclude<SyncTaskName, "receiveAddresses">, SyncJob> & {
+	receiveAddresses?: SyncJob;
+};
 
 const TASK_NAMES: readonly SyncTaskName[] = [
 	"addresses",
+	"receiveAddresses",
 	"payments",
 	"cosignDeliveries",
 	"handleInbox",
@@ -163,12 +174,14 @@ export function createSyncCoordinator(
 		active = (async () => {
 			for (const name of TASK_NAMES) {
 				if (!names.includes(name)) continue;
+				const job = jobs[name];
+				if (!job) continue;
 				if (runGeneration !== generation) return false;
 				if (!silent) {
 					update(name, { ...state[name], status: "running", error: null });
 				}
 				try {
-					const result = await jobs[name]();
+					const result = await job();
 					if (runGeneration !== generation) return false;
 					finish(name, {
 						status: result.failed > 0 ? "failed" : "succeeded",
@@ -321,6 +334,14 @@ export function useSyncEngine({
 							prefix: RECEIVE_ADDRESS_PREFIX,
 							count,
 						}),
+					// The built-in wallet's own BRC-29 Receive addresses, which
+					// `syncAddresses` does not derive. Its own store and cursor.
+					receiveAddresses: () =>
+						syncReceiveAddresses(
+							ctx,
+							addressManager,
+							openReceiveAddressStore(chain, identityKey),
+						),
 					// PeerPay on every read box first, then paymail on the own box.
 					payments: async () => {
 						const peerPay = await syncAccountPeerPayInbox(

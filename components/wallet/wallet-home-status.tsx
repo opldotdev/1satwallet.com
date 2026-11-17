@@ -158,6 +158,12 @@ export function WalletHomeStatus() {
 								task: syncTasks.addresses,
 							},
 							{
+								id: "receive-addresses",
+								title: "Receive address sync",
+								icon: RefreshCw,
+								task: syncTasks.receiveAddresses,
+							},
+							{
 								id: "payments",
 								title: "Payment inbox",
 								icon: Inbox,
