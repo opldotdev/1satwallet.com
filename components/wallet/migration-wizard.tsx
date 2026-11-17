@@ -5,11 +5,18 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MigrationSweepFlow } from "@/components/wallet/migration-sections";
+import { buildInfo } from "@/lib/build-info";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
 import { useBsv20ContentLabels } from "@/lib/hooks/use-bsv20-content";
 import { useDefaultOrdinalSelection } from "@/lib/hooks/use-default-ordinal-selection";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
+import { type AuditPlan, auditPlanFromScan } from "@/lib/sweep-audit/plan";
+import {
+	migrationAuditSources,
+	sweepAuditIdentityKey,
+	useSweepAudit,
+} from "@/lib/sweep-audit/use-sweep-audit";
 import {
 	emptySweepResult,
 	executeMigrationSweep,
@@ -90,6 +97,11 @@ export function MigrationWizard() {
 
 	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
 		defaultAssetTypes(),
+	);
+	const audit = useSweepAudit();
+	const auditIdentity = useMemo(
+		() => (walletKeys ? sweepAuditIdentityKey(walletKeys) : null),
+		[walletKeys],
 	);
 	const [deferredReady, setDeferredReady] = useState(false);
 	const [deferred, setDeferred] = useState(false);
@@ -261,6 +273,35 @@ export function MigrationWizard() {
 		[plan.sweepBsv21, plan.sweepBsv20],
 	);
 
+	// Starts this run's support record: what the scan found, what this run
+	// sends, and every output it leaves out. Addresses only, never keys.
+	const beginAudit = useCallback(
+		(runPlan: AuditPlan, skippedReason?: string) =>
+			audit.begin(
+				{
+					kind: "migration",
+					chain: toolbox.chain,
+					app: buildInfo(),
+					sources: migrationAuditSources({
+						payAddress: legacyPayAddress,
+						ordAddress: legacyOrdAddress,
+					}),
+					destination: "This wallet, upgraded to its identity key",
+					...auditPlanFromScan(assets, runPlan, { listings, skippedReason }),
+				},
+				auditIdentity,
+			),
+		[
+			audit.begin,
+			toolbox.chain,
+			legacyPayAddress,
+			legacyOrdAddress,
+			assets,
+			listings,
+			auditIdentity,
+		],
+	);
+
 	// Run migration
 	const runMigration = useCallback(async () => {
 		if (!walletKeys || !migrationStatus || migrationStatus.status !== "legacy")
@@ -269,6 +310,7 @@ export function MigrationWizard() {
 		setStep("migrate");
 		setError(null);
 		setProgressPercent(0);
+		const trail = beginAudit(plan);
 
 		try {
 			setProgress("Deriving identity key...");
@@ -303,6 +345,7 @@ export function MigrationWizard() {
 					}
 				},
 				onStage: (stage) => {
+					trail.stage(stage);
 					if (stage === "cancel") {
 						setProgress("Cancelling listings...");
 						setProgressPercent(15);
@@ -335,6 +378,7 @@ export function MigrationWizard() {
 						legacyOrdWif: migrationStatus.legacyOrdWif,
 						legacyIdentityWif: identityWif,
 						onProgress: (p) => {
+							trail.progress(p);
 							setProgress(p.message);
 							setProgressPercent(60 + Math.round((p.percent / 100) * 40));
 							setSweepProgress(p);
@@ -353,11 +397,13 @@ export function MigrationWizard() {
 					run.sweep.errors,
 				);
 			}
-			setSweepResult({
+			const finalResult: SweepResult = {
 				...(run.sweep ?? emptySweepResult()),
 				cancelTxids: run.cancelTxids,
 				transferTxids: run.transferTxids,
-			});
+			};
+			trail.finish(finalResult);
+			setSweepResult(finalResult);
 			if (run.sweep || run.transferTxids.length > 0) {
 				assets.rescan();
 				toolbox.refreshBalance();
@@ -369,6 +415,7 @@ export function MigrationWizard() {
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.run", err);
 			const partial = partialRunResult(err);
+			trail.fail(err, partial);
 			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
@@ -384,6 +431,8 @@ export function MigrationWizard() {
 		plan.sweepFunding,
 		plan.sweepBsv21,
 		plan.sweepBsv20,
+		plan,
+		beginAudit,
 	]);
 
 	const runDelistOnly = useCallback(async () => {
@@ -396,12 +445,27 @@ export function MigrationWizard() {
 		setError(null);
 		setProgress("Cancelling listings...");
 		setProgressPercent(20);
+		const walletListings = listings.filter((item) => item.source === "wallet");
+		const trail = beginAudit(
+			{
+				cancel: walletListings,
+				sweepListed: [],
+				sweepOrdinals: [],
+				sweepFunding: [],
+				sweepBsv21: [],
+				sweepBsv20: [],
+			},
+			"not part of this run (cancel listings only)",
+		);
 		try {
+			trail.stage("cancel");
 			const cancelTxids = await cancelWalletListings(
 				toolbox.oneSatContext,
-				listings.filter((item) => item.source === "wallet"),
+				walletListings,
 			);
-			setSweepResult(emptySweepResult({ cancelTxids }));
+			const result = emptySweepResult({ cancelTxids });
+			trail.finish(result);
+			setSweepResult(result);
 			assets.rescan();
 			toolbox.refreshBalance();
 			setProgressPercent(100);
@@ -409,11 +473,12 @@ export function MigrationWizard() {
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.delist", err);
 			const partial = partialRunResult(err);
+			trail.fail(err, partial);
 			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
-	}, [assets.rescan, listings, toolbox]);
+	}, [assets.rescan, listings, toolbox, beginAudit]);
 
 	const totalAssets = plannedCount(plan);
 
@@ -469,6 +534,7 @@ export function MigrationWizard() {
 
 	const hadErrors = (sweepResult?.errors.length ?? 0) > 0;
 	const retryFailed = () => {
+		audit.clear();
 		setSweepResult(null);
 		setSweepProgress(null);
 		setScanDetail(null);
@@ -567,6 +633,8 @@ export function MigrationWizard() {
 						destination="This wallet, upgraded to your identity key"
 						bsv20={bsv20Display}
 						onStepChange={setWizardStep}
+						auditRecord={audit.record}
+						auditSaveError={audit.saveError}
 					/>
 				)}
 			</div>

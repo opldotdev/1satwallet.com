@@ -12,6 +12,7 @@ import {
 	currentStepLine,
 	formatBsv,
 	formatTokenAmount,
+	inactiveTokensLine,
 	listingsLine,
 	outcomeNotes,
 	reviewLines,
@@ -262,7 +263,11 @@ describe("staysRows", () => {
 			rows.map((r) => [r.kind, r.label, r.count]),
 			[
 				["bsv20", "BSV-20 inscriptions", 3],
-				["inactive", "VIBES: not validated on the overlay, skipped.", 2],
+				[
+					"inactive",
+					"VIBES isn't active on the token overlay, so it stays at your old address.",
+					2,
+				],
 				["locked", "1 time-locked output: sweep them after they unlock.", 1],
 				[
 					"run",
@@ -439,7 +444,70 @@ describe("summarizeOutcome", () => {
 	});
 });
 
+describe("skipped tokens", () => {
+	const inactive = (symbol: string, outputs: number[]) => ({
+		tokenId: symbol,
+		symbol,
+		decimals: 0,
+		totalAmount: 1n,
+		outputs,
+		isActive: false,
+	});
+
+	it("names every skipped token in one line before the sweep", () => {
+		const rows = staysRows(
+			buildSweepSummary({
+				...empty,
+				bsv21Tokens: [inactive("Dagon", [1, 2]), inactive("Pater", [3])],
+			}),
+		);
+		assert.deepEqual(
+			rows.map((r) => [r.kind, r.label, r.count]),
+			[
+				[
+					"inactive",
+					"Dagon and Pater aren't active on the token overlay, so they stay at your old address.",
+					3,
+				],
+			],
+		);
+	});
+
+	it("names them in one line after the sweep, in place of one per token", () => {
+		assert.deepEqual(
+			outcomeNotes([
+				"Token Dagon: not active on the overlay — skipped",
+				"Ordinal sweep: skipped abc_0 (404)",
+				"Token Pater: not active on the overlay — skipped",
+			]),
+			[
+				"Dagon and Pater aren't active on the token overlay, so they stay at your old address.",
+				"Some source transactions couldn't be fetched, so those items stayed put.",
+			],
+		);
+	});
+
+	it("lists a few by name and counts the rest", () => {
+		assert.equal(
+			inactiveTokensLine(["A", "B", "C", "D", "E", "F", "G"]),
+			"A, B, C, D, E and 2 more aren't active on the token overlay, so they stay at your old address.",
+		);
+		assert.equal(inactiveTokensLine([]), null);
+	});
+});
+
 describe("outcomeNotes", () => {
+	it("explains BEEFs without a proof and transactions too large, in plain words", () => {
+		const notes = outcomeNotes([
+			"Ordinal sweep: a_0 stays at your old address: its source transaction has no confirmation proof from the indexer yet; try again after it's confirmed.",
+			"Ordinal sweep: b_0: this inscription's transaction is 9.1 MB, more than the wallet server accepts in one request; it stays at your old address.",
+		]);
+		assert.equal(notes.length, 2);
+		for (const note of notes) {
+			assert.doesNotMatch(note, /413|rpcCall|BEEF|See Details/);
+		}
+	});
+
 	it("turns sweep errors into plain reasons, once each", () => {
 		assert.deepEqual(
 			outcomeNotes([

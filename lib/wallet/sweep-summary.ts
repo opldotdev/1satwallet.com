@@ -251,6 +251,26 @@ export const BSV20_STAYS_LINE =
 export const BSV20_STAYS_DETAIL =
 	"These are BSV-20 mint and transfer inscriptions. The indexer this wallet uses doesn't track BSV-20, so their balances can't be verified. A sweep that claims more than an output really holds destroys the tokens, so they're left untouched. Your old keys stay in this wallet.";
 
+/** "A", "A and B", "A, B and C"; past `max` names, "A, B, C and 4 more". */
+export function joinNames(names: readonly string[], max = 5): string {
+	const shown = names.length > max ? names.slice(0, max) : [...names];
+	const rest = names.length - shown.length;
+	if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
+	if (shown.length <= 1) return shown.join("");
+	return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+/**
+ * One line for every BSV-21 token the sweep skips because the token overlay
+ * doesn't list it as active, naming them; null when there are none.
+ */
+export function inactiveTokensLine(tickers: readonly string[]): string | null {
+	const names = [...new Set(tickers)];
+	if (names.length === 0) return null;
+	const one = names.length === 1;
+	return `${joinNames(names)} ${one ? "isn't" : "aren't"} active on the token overlay, so ${one ? "it stays" : "they stay"} at your old address.`;
+}
+
 /** Items the sweep leaves at the old addresses, never counting listings. */
 export function staysCount(summary: SweepSummary): number {
 	return (
@@ -274,14 +294,19 @@ export function staysRows(summary: SweepSummary): StayRow[] {
 			outpoints: summary.bsv20Unconfirmed,
 		});
 	}
-	for (const token of summary.inactiveTokens) {
+	const inactiveLine = inactiveTokensLine(
+		summary.inactiveTokens.map((t) => t.ticker),
+	);
+	if (inactiveLine) {
+		const one = summary.inactiveTokens.length === 1;
 		rows.push({
-			key: token.key,
+			key: "inactive",
 			kind: "inactive",
-			label: `${token.ticker}: not validated on the overlay, skipped.`,
-			count: token.outputCount,
-			detail:
-				"This token isn't active on the token overlay, so the sweep can't move it. It stays at your old address.",
+			label: inactiveLine,
+			count: summary.inactiveTokens.reduce((n, t) => n + t.outputCount, 0),
+			detail: one
+				? "This token isn't active on the token overlay, so the sweep can't move it. It stays at your old address."
+				: "These tokens aren't active on the token overlay, so the sweep can't move them. They stay at your old address.",
 			outpoints: [],
 		});
 	}
@@ -480,19 +505,39 @@ const OUTCOME_NOTES: [RegExp, string][] = [
 		"An old key couldn't be read, so items at its address stayed put.",
 	],
 	[
-		/not active on the overlay/i,
-		"Tokens not validated on the overlay were skipped.",
+		/has no confirmation proof from the indexer yet/i,
+		"Some items' source transactions aren't confirmed yet, so they stayed at your old address. Try again after they confirm.",
+	],
+	[
+		/more than the wallet server accepts in one request/i,
+		"Some items' transactions are larger than the wallet server accepts in one request, so they stayed at your old address. Details lists each with its size.",
 	],
 ];
+
+/** BSV-21 tokens the sweep skipped: "Token <label>: not active on the overlay". */
+const INACTIVE_TOKEN_ERROR = /^Token (.+): not active on the overlay/;
+/** Holds the inactive-token line's place until every name is collected. */
+const INACTIVE_PLACEHOLDER = "\u0000inactive";
 
 /** The plain reason behind each sweep error, deduplicated. */
 export function outcomeNotes(errors: string[]): string[] {
 	const notes = new Set<string>();
+	const inactive: string[] = [];
 	for (const error of errors) {
+		const skipped = INACTIVE_TOKEN_ERROR.exec(error);
+		if (skipped) {
+			// Collected into one line naming every skipped token, in place.
+			if (inactive.length === 0) notes.add(INACTIVE_PLACEHOLDER);
+			inactive.push(skipped[1]);
+			continue;
+		}
 		const known = OUTCOME_NOTES.find(([pattern]) => pattern.test(error));
 		notes.add(known ? known[1] : "Some transactions failed. See Details.");
 	}
-	return [...notes];
+	const inactiveLine = inactiveTokensLine(inactive);
+	return [...notes].map((note) =>
+		note === INACTIVE_PLACEHOLDER ? (inactiveLine ?? note) : note,
+	);
 }
 
 /**

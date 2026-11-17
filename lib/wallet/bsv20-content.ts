@@ -15,7 +15,45 @@ export interface Bsv20Content {
 
 export const BSV20_CONTENT_MAX_BYTES = 2048;
 const MAX_TICK_LENGTH = 32;
-export const UNKNOWN_TICK = "Unknown";
+/** The group for outputs whose content couldn't be read as BSV-20. */
+export const UNREADABLE_TICK = "Unreadable";
+
+/**
+ * Content types worth reading as BSV-20. The content server serves BSV-20
+ * inscriptions as application/bsv-20 (checked 2026-11-17: api.1sat.app
+ * /content/<txid>_<vout> for a ZOID mint answers content-type
+ * application/bsv-20); some are inscribed as JSON or plain text. A missing
+ * header is read too, since the body decides.
+ */
+export function isBsv20ContentType(contentType: string | null): boolean {
+	if (!contentType) return true;
+	const type = contentType.split(";")[0].trim().toLowerCase();
+	return (
+		type === "application/bsv-20" ||
+		/(^|[/+])json$/.test(type) ||
+		type === "text/plain"
+	);
+}
+
+/** Why an output's content couldn't be read as BSV-20, in plain words. */
+export const BSV20_UNREADABLE = {
+	notBsv20: "its content isn't a BSV-20 inscription",
+	tooLarge: "its content is larger than any BSV-20 inscription",
+	contentType: (type: string) => `its content is ${type}, not BSV-20`,
+	http: (status: number) => `the content server answered HTTP ${status}`,
+	timeout: "the content server didn't answer in time",
+	network: "the content server couldn't be reached",
+} as const;
+
+/** What reading one output's content gave: its BSV-20 fields, or why not. */
+export type Bsv20Read =
+	| { content: Bsv20Content; reason?: undefined; transient?: undefined }
+	| {
+			content: null;
+			reason: string;
+			/** Timeout, network error or 5xx: worth reading again later. */
+			transient?: boolean;
+	  };
 
 /** A `{"p":"bsv-20",...}` inscription, or null for anything else. */
 export function parseBsv20Content(text: string): Bsv20Content | null {
@@ -49,19 +87,23 @@ export interface Bsv20Group {
 	outputs: number;
 	/** Each output with what its inscription claims; Details only. */
 	entries: { outpoint: string; op: string; amt: string | null }[];
+	/** Unreadable group only: why, with how many outputs each. */
+	reasons?: { reason: string; outputs: number }[];
 }
 
 /**
- * Group checked outputs by ticker, most outputs first; anything unreadable
- * or not BSV-20 goes in one "Unknown" bucket, always last.
+ * Group checked outputs by ticker, most outputs first; anything that couldn't
+ * be read as BSV-20 goes in one "Unreadable" group with its reasons, last.
  */
 export function groupUnconfirmedBsv20(
-	entries: { outpoint: string; content: Bsv20Content | null }[],
+	entries: { outpoint: string; read: Bsv20Read }[],
 ): Bsv20Group[] {
 	const groups = new Map<string, Bsv20Group>();
-	for (const { outpoint, content } of entries) {
-		const tick = content?.tick ?? UNKNOWN_TICK;
-		const key = content ? `t:${tick}` : "unknown";
+	const reasons = new Map<string, number>();
+	for (const { outpoint, read } of entries) {
+		const { content } = read;
+		const tick = content?.tick ?? UNREADABLE_TICK;
+		const key = content ? `t:${tick}` : "unreadable";
 		const group = groups.get(key) ?? { tick, outputs: 0, entries: [] };
 		group.outputs++;
 		group.entries.push({
@@ -70,11 +112,16 @@ export function groupUnconfirmedBsv20(
 			amt: content?.amt ?? null,
 		});
 		groups.set(key, group);
+		if (!content) reasons.set(read.reason, (reasons.get(read.reason) ?? 0) + 1);
 	}
-	const unknown = groups.get("unknown");
-	groups.delete("unknown");
+	const unreadable = groups.get("unreadable");
+	groups.delete("unreadable");
 	const sorted = [...groups.values()].sort(
 		(a, b) => b.outputs - a.outputs || a.tick.localeCompare(b.tick),
 	);
-	return unknown ? [...sorted, unknown] : sorted;
+	if (!unreadable) return sorted;
+	unreadable.reasons = [...reasons]
+		.map(([reason, outputs]) => ({ reason, outputs }))
+		.sort((a, b) => b.outputs - a.outputs || a.reason.localeCompare(b.reason));
+	return [...sorted, unreadable];
 }

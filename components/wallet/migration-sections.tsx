@@ -21,6 +21,8 @@ import { SweepStepReview } from "@/components/wallet/sweep/sweep-step-review";
 import { SweepStepStays } from "@/components/wallet/sweep/sweep-step-stays";
 import { SweepStepTokens } from "@/components/wallet/sweep/sweep-step-tokens";
 import { SweepWizard } from "@/components/wallet/sweep/sweep-wizard";
+import { SweepSupportReport } from "@/components/wallet/sweep-audit-view";
+import type { SweepAuditRecord } from "@/lib/sweep-audit/record";
 import type { SweepProgress, SweepResult } from "@/lib/sweep-migration";
 import type { AssetType } from "@/lib/wallet/migration-listings";
 import {
@@ -93,6 +95,10 @@ export interface MigrationSweepFlowProps {
 	bsv20: Bsv20StaysData;
 	/** The choice step on screen, or null on scan, progress and done. */
 	onStepChange?: (step: WizardStepId | null) => void;
+	/** The last run's audit record, for the done and error screens' report link. */
+	auditRecord?: SweepAuditRecord | null;
+	/** Why that record could not be saved in this browser, if it could not. */
+	auditSaveError?: string | null;
 }
 
 const plural = (n: number, one: string, many = `${one}s`) =>
@@ -294,9 +300,24 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 			props.remaining,
 			props.sweepProgress?.steps,
 		);
+		const supportReport = (
+			<SweepSupportReport
+				record={props.auditRecord ?? null}
+				saveError={props.auditSaveError}
+			/>
+		);
+		// The sweep's own notes already name skipped tokens; say it once.
+		const notesNameInactive = outcome.notes.some((note) =>
+			/active on the token overlay/.test(note),
+		);
 		const stayLines = [
 			...rows
-				.filter((r) => r.kind !== "listings" && r.kind !== "bsv20")
+				.filter(
+					(r) =>
+						r.kind !== "listings" &&
+						r.kind !== "bsv20" &&
+						!(r.kind === "inactive" && notesNameInactive),
+				)
 				.map((r) => r.label),
 			...(bsv20Line ? [bsv20Line] : []),
 		];
@@ -341,6 +362,7 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 					{props.sweepResult && outcome.rows.length > 0 && (
 						<SweepOutcome outcome={{ ...outcome, notes: [], remaining: 0 }} />
 					)}
+					{supportReport}
 				</>,
 			);
 		}
@@ -371,7 +393,10 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 					</SweepFooterRow>
 				),
 			},
-			<SweepOutcome outcome={outcome} stayLines={stayLines} />,
+			<>
+				<SweepOutcome outcome={outcome} stayLines={stayLines} />
+				{supportReport}
+			</>,
 		);
 	}
 

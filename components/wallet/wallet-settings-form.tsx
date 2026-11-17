@@ -8,6 +8,7 @@ import {
 	Eye,
 	EyeOff,
 	Globe,
+	History,
 	Inbox,
 	KeyRound,
 	Loader2,
@@ -203,6 +204,19 @@ export function WalletSettingsForm() {
 							action={
 								<Button variant="outline" asChild onClick={() => play("click")}>
 									<Link href="/wallet/sweep">Open</Link>
+								</Button>
+							}
+						/>
+					)}
+				{connectionMode === "built-in" &&
+					isRouteAvailableOn(chain, "/wallet/sweep/history") && (
+						<SettingsRow
+							icon={History}
+							title="Sweep history"
+							description="A record of every sweep and migration run in this browser, to copy or download for wallet support."
+							action={
+								<Button variant="outline" asChild onClick={() => play("click")}>
+									<Link href="/wallet/sweep/history">Open</Link>
 								</Button>
 							}
 						/>

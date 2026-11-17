@@ -128,9 +128,11 @@ describe("BSV-20 content labels stay out of the sweep", () => {
 		}
 	});
 
-	it("fetches with a cap, bounded concurrency and an abort", () => {
+	it("fetches every output, with bounded concurrency and an abort", () => {
 		const hook = read("lib/hooks/use-bsv20-content.ts");
-		assert.match(hook, /max = 200/);
+		// No cap on how many outputs are checked.
+		assert.doesNotMatch(hook, /max = \d+/);
+		assert.doesNotMatch(hook, /\.slice\(0, max\)/);
 		assert.match(hook, /concurrency = 6/);
 		assert.match(hook, /new AbortController\(\)/);
 		assert.match(hook, /controller\.abort\(\)/);
@@ -138,7 +140,7 @@ describe("BSV-20 content labels stay out of the sweep", () => {
 		// The cap holds without a Content-Length, and the cache is bounded.
 		assert.match(hook, /getReader\(\)/);
 		assert.match(hook, /reader\.cancel\(\)/);
-		assert.match(hook, /CACHE_MAX_ENTRIES = 1000/);
+		assert.match(hook, /CACHE_MIN_ENTRIES = 1000/);
 		// Fetches restart only when the outpoints change, not the array.
 		assert.match(hook, /\[enabled, wanted, concurrency\]/);
 		assert.match(hook, /\[wantedKey\]/);
