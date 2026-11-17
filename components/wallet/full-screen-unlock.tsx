@@ -38,6 +38,7 @@ export function FullScreenUnlock() {
 				setError("Invalid passphrase");
 			}
 		} catch (error) {
+			console.error("[wallet.unlock]", error);
 			setError(
 				error instanceof WalletSaveError
 					? error.message
@@ -52,68 +53,65 @@ export function FullScreenUnlock() {
 	if (!hasWallet) return null; // Don't show if no wallet
 	if (!isWalletLocked) return null; // Don't show if unlocked
 
+	// A bottom sheet on phones (above the home indicator), a centered card
+	// from sm.
 	return (
 		<div
 			role="dialog"
 			aria-modal="true"
 			aria-label="Unlock wallet"
-			className="fixed inset-0 z-[120] flex items-center justify-center bg-background/80 pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] backdrop-blur-sm"
+			className="fixed inset-0 z-[120] flex h-dvh items-end justify-center bg-background/80 pt-[env(safe-area-inset-top)] backdrop-blur-sm sm:items-center sm:pr-[env(safe-area-inset-right)] sm:pb-[env(safe-area-inset-bottom)] sm:pl-[env(safe-area-inset-left)]"
 		>
-			<div className="w-full max-w-md p-4 animate-in fade-in zoom-in-95 duration-300">
-				<Card className="w-full border-border/50 shadow-2xl bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
-					<CardHeader className="space-y-1 text-center">
-						<div className="mx-auto bg-primary/10 p-3 rounded-full w-fit mb-2">
-							<Lock className="w-6 h-6 text-primary" />
+			<Card className="w-full animate-in border-border/50 bg-card/95 shadow-2xl backdrop-blur duration-300 supports-[backdrop-filter]:bg-card/75 max-sm:rounded-b-none max-sm:border-b-0 max-sm:pb-[max(var(--card-spacing),env(safe-area-inset-bottom))] max-sm:slide-in-from-bottom sm:max-w-md sm:fade-in sm:zoom-in-95">
+				<CardHeader className="justify-items-center text-center">
+					<div className="flex size-12 items-center justify-center rounded-full bg-primary/10">
+						<Lock aria-hidden="true" className="size-6 text-primary" />
+					</div>
+					<CardTitle className="text-lg">Unlock wallet</CardTitle>
+					<CardDescription>Enter your passphrase to continue.</CardDescription>
+				</CardHeader>
+				<CardContent>
+					<form className="flex flex-col gap-4" onSubmit={handleUnlock}>
+						<div className="flex flex-col gap-2">
+							<Label htmlFor="passphrase">Passphrase</Label>
+							<Input
+								aria-describedby={error ? "passphrase-error" : undefined}
+								aria-invalid={error ? true : undefined}
+								autoComplete="current-password"
+								disabled={isLoading}
+								id="passphrase"
+								onChange={(e) => {
+									setPassphrase(e.target.value);
+									setError("");
+								}}
+								ref={inputRef}
+								type="password"
+								value={passphrase}
+							/>
+							{error && (
+								<p
+									className="text-destructive text-sm"
+									id="passphrase-error"
+									role="alert"
+								>
+									{error}
+								</p>
+							)}
 						</div>
-						<CardTitle className="text-2xl">Unlock Wallet</CardTitle>
-						<CardDescription>
-							Enter your passphrase to access your wallet
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<form onSubmit={handleUnlock} className="space-y-4">
-							<div className="space-y-2">
-								<Label htmlFor="passphrase" className="sr-only">
-									Passphrase
-								</Label>
-								<Input
-									autoComplete="current-password"
-									id="passphrase"
-									type="password"
-									placeholder="Enter passphrase"
-									value={passphrase}
-									onChange={(e) => {
-										setPassphrase(e.target.value);
-										setError("");
-									}}
-									disabled={isLoading}
-									ref={inputRef}
-									className="text-center text-lg h-12"
-								/>
-								{error && (
-									<p className="text-sm text-destructive text-center">
-										{error}
-									</p>
-								)}
-							</div>
-							<Button
-								type="submit"
-								className="w-full h-11 text-lg"
-								disabled={isLoading || !passphrase}
-							>
-								{isLoading ? (
-									<>
-										<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-										Unlocking...
-									</>
-								) : (
-									"Unlock"
-								)}
-							</Button>
-						</form>
-					</CardContent>
-				</Card>
-			</div>
+						<Button
+							className="w-full"
+							disabled={isLoading || !passphrase}
+							size="lg"
+							type="submit"
+						>
+							{isLoading && (
+								<Loader2 className="animate-spin" data-icon="inline-start" />
+							)}
+							{isLoading ? "Unlocking…" : "Unlock"}
+						</Button>
+					</form>
+				</CardContent>
+			</Card>
 		</div>
 	);
 }

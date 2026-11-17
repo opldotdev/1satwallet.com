@@ -18,6 +18,7 @@ export type ProductAction =
 	| "asset-write"
 	| "identity"
 	| "permission-admin"
+	| "one-color-app-consent"
 	| "sync"
 	| "local-wallet-management";
 
@@ -45,6 +46,7 @@ const externalActions: Record<ProductAction, CapabilityState> = {
 	"asset-write": "contract-only",
 	identity: "contract-only",
 	"permission-admin": "provider-managed",
+	"one-color-app-consent": "provider-managed",
 	sync: "provider-managed",
 	"local-wallet-management": "unsupported",
 };
@@ -59,6 +61,7 @@ const hostedActions: Record<ProductAction, CapabilityState> = {
 	"asset-write": "experimental",
 	identity: "experimental",
 	"permission-admin": "provider-managed",
+	"one-color-app-consent": "experimental",
 	sync: "provider-managed",
 	"local-wallet-management": "unsupported",
 };
@@ -78,6 +81,7 @@ export const PROVIDER_CAPABILITIES = {
 			"asset-write": "supported",
 			identity: "supported",
 			"permission-admin": "supported",
+			"one-color-app-consent": "supported",
 			sync: "supported",
 			"local-wallet-management": "supported",
 		},

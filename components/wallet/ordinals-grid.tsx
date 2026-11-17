@@ -6,28 +6,37 @@ import {
 	FileQuestion,
 	FileText,
 	Flame,
+	Images,
+	Plus,
 	RefreshCw,
 	Send,
+	Wallet,
 	X,
 } from "lucide-react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ArtifactModal, {
 	type ArtifactModalItem,
 } from "@/components/modal/artifact-modal";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SectionHeader } from "@/components/ui/section-header";
 import {
 	OrdinalActionDialog,
 	type OrdinalActionKind,
 } from "@/components/wallet/ordinal-action-dialog";
 import { OrdinalsGridSkeleton } from "@/components/wallet/ordinals-grid-skeleton";
 import { useOrdinalMetadata } from "@/hooks/use-ordinal-metadata";
-import { LISTING_CREATE_OFF_MESSAGE } from "@/lib/ordlock";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { isOrdinalListed, ordinalAssetId } from "@/lib/wallet/ordinal-actions";
 import { getOrdinalPresentation } from "@/lib/wallet/ordinal-presentation";
-import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
+import {
+	getDisplayOutpoint,
+	shortOutpoint,
+} from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 export function OrdinalsGrid() {
@@ -50,6 +59,7 @@ export function OrdinalsGrid() {
 	const [selectedArtifact, setSelectedArtifact] =
 		useState<ArtifactModalItem | null>(null);
 	const identityScopeRef = useRef(identityKey);
+	const gridRef = useRef<HTMLElement>(null);
 	const { metadataRequests, metadataQuery } = useOrdinalMetadata(
 		ordinals,
 		identityKey,
@@ -93,6 +103,12 @@ export function OrdinalsGrid() {
 		});
 	}, []);
 
+	// The Clear button leaves with the bar, so focus goes back to the grid.
+	const clearSelection = useCallback(() => {
+		setSelectedOutpoints(new Set());
+		gridRef.current?.focus();
+	}, []);
+
 	const refresh = useCallback(async () => {
 		refreshBalance();
 		await Promise.all([
@@ -117,92 +133,98 @@ export function OrdinalsGrid() {
 
 	if (!isInitialized) {
 		return (
-			<div className="py-12 text-center text-muted-foreground">
-				Please unlock or connect a wallet to manage your ordinals.
-			</div>
+			<EmptyState
+				icon={Wallet}
+				title="Wallet locked"
+				description="Unlock or connect a wallet to see your ordinals."
+			/>
+		);
+	}
+
+	const counted =
+		ordinalsState.kind === "ready" || ordinalsState.kind === "empty";
+	// Only one kind of action applies to a selection; a mixed or stale one
+	// says why instead of offering buttons that would be refused.
+	let selectionNote: React.ReactNode = null;
+	if (selectedOutpoints.size > 0 && !selectionIsCurrent) {
+		selectionNote = (
+			<p className="text-sm text-destructive" role="alert">
+				The wallet changed since you selected these. Refresh and select them
+				again; nothing was sent.
+			</p>
+		);
+	} else if (selectedListed.length > 0 && selectedUnlisted.length > 0) {
+		selectionNote = (
+			<p className="text-sm text-muted-foreground">
+				Listed and unlisted ordinals can't be sent together. Cancel the listing
+				first.
+			</p>
+		);
+	} else if (selectedListed.length > 1) {
+		selectionNote = (
+			<p className="text-sm text-muted-foreground">
+				Cancel listings one at a time.
+			</p>
 		);
 	}
 
 	return (
-		<div className="space-y-4">
-			<div className="flex flex-wrap items-center justify-between gap-3">
-				<div>
-					<h3 className="text-lg font-medium">
-						{ordinalsState.kind === "ready" || ordinalsState.kind === "empty"
-							? `${ordinals.length} Ordinal${ordinals.length === 1 ? "" : "s"}`
-							: "Ordinals"}
-					</h3>
-					<p className="text-sm text-muted-foreground">
-						{selectedOutpoints.size === 0
-							? "Select one or more items to manage them."
-							: `${selectedOutpoints.size} selected`}
-					</p>
-					<p className="mt-1 text-xs text-muted-foreground">
-						{LISTING_CREATE_OFF_MESSAGE}
-					</p>
-				</div>
-				<div className="flex flex-wrap gap-2">
-					<Button variant="outline" size="sm" onClick={() => void refresh()}>
-						<RefreshCw className="size-4" data-icon="inline-start" />
-						Refresh
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={!onlyUnlisted}
-						onClick={() => setDialogKind("send")}
-					>
-						<Send className="size-4" data-icon="inline-start" />
-						Send
-					</Button>
-					<Button
-						variant="outline"
-						size="sm"
-						disabled={!oneListed}
-						onClick={() => setDialogKind("cancel")}
-					>
-						<X className="size-4" data-icon="inline-start" />
-						Cancel listing
-					</Button>
-					<Button
-						variant="destructive"
-						size="sm"
-						disabled={!onlyUnlisted}
-						onClick={() => setDialogKind("burn")}
-					>
-						<Flame className="size-4" data-icon="inline-start" />
-						Burn
-					</Button>
-				</div>
-			</div>
+		<div className="flex flex-col gap-4">
+			<SectionHeader
+				title={
+					counted
+						? `${ordinals.length} ordinal${ordinals.length === 1 ? "" : "s"}`
+						: "Ordinals"
+				}
+				action={
+					<>
+						<Button
+							variant="ghost"
+							size="icon"
+							aria-label="Refresh ordinals"
+							onClick={() => void refresh()}
+						>
+							<RefreshCw />
+						</Button>
+						{isRouteAvailableOn(chain, "/inscribe") && (
+							<Button asChild size="sm">
+								<Link href="/inscribe">
+									<Plus data-icon="inline-start" />
+									Inscribe
+								</Link>
+							</Button>
+						)}
+					</>
+				}
+			/>
 
-			{selectedOutpoints.size > 0 && !selectionIsCurrent && (
-				<div
-					className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive"
-					role="alert"
-				>
-					The wallet changed after this selection was made. Refresh and select
-					the items again; no action has been submitted.
-				</div>
-			)}
-
-			{selectedListed.length > 0 && selectedUnlisted.length > 0 && (
-				<p className="text-sm text-muted-foreground">
-					Listed and unlisted ordinals cannot be submitted together. Cancel a
-					listing before sending or burning it.
-				</p>
-			)}
-
-			{ordinalsState.kind !== "ready" && ordinalsState.kind !== "empty" ? (
-				<div className="py-16 text-center text-muted-foreground">
-					{describeAssetSurface(ordinalsState, "inscription")}
-				</div>
+			{!counted ? (
+				<EmptyState
+					icon={Images}
+					title={describeAssetSurface(ordinalsState, "inscription")}
+					action={
+						ordinalsState.kind === "error" ? (
+							<Button variant="outline" onClick={() => void refresh()}>
+								<RefreshCw data-icon="inline-start" />
+								Try again
+							</Button>
+						) : undefined
+					}
+				/>
 			) : ordinals.length === 0 ? (
-				<div className="py-16 text-center text-muted-foreground">
-					No ordinals found in the active wallet.
-				</div>
+				<EmptyState
+					icon={Images}
+					title="No ordinals yet"
+					description="Inscriptions this wallet owns show up here."
+				/>
 			) : (
-				<div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+				<section
+					ref={gridRef}
+					aria-label="Your ordinals"
+					tabIndex={-1}
+					data-slot="ordinals-grid"
+					className="grid outline-none grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6"
+				>
 					{ordinals.map((ordinal: WalletOutput) => {
 						const outpoint = getDisplayOutpoint(ordinal);
 						const metadata = metadataQuery.data?.[`${outpoint}:-2`];
@@ -216,7 +238,8 @@ export function OrdinalsGrid() {
 						return (
 							<div
 								key={ordinal.outpoint}
-								className={`group relative aspect-square overflow-hidden rounded-lg border bg-muted/50 transition-all ${selected ? "border-primary ring-2 ring-primary/40" : "border-border/50 hover:border-primary/50"}`}
+								data-slot="ordinal-tile"
+								className={`group relative aspect-square overflow-hidden rounded-xl border bg-muted/50 transition-colors ${selected ? "border-primary ring-2 ring-primary/40" : "border-border/50 hover:border-primary/50"}`}
 							>
 								<button
 									type="button"
@@ -260,35 +283,102 @@ export function OrdinalsGrid() {
 										<div className="truncate font-medium">
 											{presentation.name}
 										</div>
-										<div className="truncate font-mono text-white/70">
-											{outpoint}
+										<div
+											className="truncate font-mono text-white/70"
+											title={outpoint}
+										>
+											{shortOutpoint(outpoint)}
 										</div>
 									</div>
 								</button>
-								<label className="absolute left-2 top-2 flex size-8 cursor-pointer items-center justify-center rounded-md bg-background/90 shadow-sm">
-									<input
-										type="checkbox"
-										className="size-4 accent-primary"
-										checked={selected}
-										disabled={!actionable}
-										onChange={() => toggleSelection(ordinal.outpoint)}
-									/>
+								{/* A 44px tap target in the corner around a 20px box. */}
+								<label className="absolute top-0 left-0 flex size-11 cursor-pointer items-center justify-center has-disabled:cursor-not-allowed">
+									<span className="flex size-7 items-center justify-center rounded-md bg-background/90 shadow-sm">
+										<input
+											type="checkbox"
+											className="size-5 accent-primary"
+											checked={selected}
+											disabled={!actionable}
+											onChange={() => toggleSelection(ordinal.outpoint)}
+										/>
+									</span>
 									<span className="sr-only">Select {presentation.name}</span>
 								</label>
-								{isOrdinalListed(ordinal) && (
-									<span className="absolute right-2 top-2 rounded bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-										Listed
-									</span>
-								)}
-								{!actionable && (
-									<span className="absolute right-2 top-2 rounded bg-destructive px-1.5 py-0.5 text-[10px] font-medium text-destructive-foreground">
+								{!actionable ? (
+									<span className="absolute top-2 right-2 rounded-full bg-destructive px-2 py-0.5 text-xs font-medium text-destructive-foreground">
 										Refresh required
 									</span>
+								) : (
+									isOrdinalListed(ordinal) && (
+										<span className="absolute top-2 right-2 rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
+											Listed
+										</span>
+									)
 								)}
 							</div>
 						);
 					})}
-				</div>
+				</section>
+			)}
+
+			{selectedOutpoints.size > 0 && (
+				// Room under the grid so the fixed bar never covers the last row.
+				<div
+					aria-hidden="true"
+					className="h-[calc(--spacing(16)+env(safe-area-inset-bottom))] md:hidden"
+				/>
+			)}
+
+			{selectedOutpoints.size > 0 && (
+				// Shown only while something is selected. On phones it is fixed to
+				// the bottom of the screen, edge to edge and clear of the home
+				// indicator, however short the grid; from md it floats as a card
+				// over the bottom of the grid.
+				<section
+					aria-label="Selected ordinals"
+					data-slot="selection-bar"
+					className="fixed inset-x-0 bottom-0 z-30 flex flex-col gap-2 border-t bg-background/95 pt-3 pr-[max(var(--page-x),env(safe-area-inset-right))] pb-[max(--spacing(3),env(safe-area-inset-bottom))] pl-[max(var(--page-x),env(safe-area-inset-left))] backdrop-blur supports-backdrop-filter:bg-background/80 md:sticky md:inset-x-auto md:bottom-4 md:rounded-xl md:border md:px-(--page-x) md:pb-3 md:shadow-lg"
+				>
+					<div className="flex items-center gap-2">
+						<Button
+							variant="ghost"
+							size="icon"
+							aria-label="Clear selection"
+							className="-ml-2"
+							onClick={clearSelection}
+						>
+							<X />
+						</Button>
+						<span
+							aria-live="polite"
+							className="flex-1 text-sm font-medium tabular-nums"
+						>
+							{selectedOutpoints.size} selected
+						</span>
+						{onlyUnlisted && (
+							<>
+								<Button variant="outline" onClick={() => setDialogKind("send")}>
+									<Send data-icon="inline-start" />
+									Send
+								</Button>
+								<Button
+									variant="destructive"
+									onClick={() => setDialogKind("burn")}
+								>
+									<Flame data-icon="inline-start" />
+									Burn
+								</Button>
+							</>
+						)}
+						{oneListed && (
+							<Button variant="outline" onClick={() => setDialogKind("cancel")}>
+								<X data-icon="inline-start" />
+								Cancel listing
+							</Button>
+						)}
+					</div>
+					{selectionNote}
+				</section>
 			)}
 
 			{dialogKind && (

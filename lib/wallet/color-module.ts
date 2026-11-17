@@ -6,15 +6,15 @@
 
 import { createContext, type OneSatContext } from "@1sat/actions";
 import type { OneSatServices } from "@1sat/client";
+import type { PromptHandler } from "@1sat/permission-module";
+import type { IPermissionStore } from "@1sat/wallet-browser";
 import {
 	type ColorPermissionModule,
-	type ColorTokenAccessHandler,
 	createColorModule,
 } from "@bsv/color-permission-module";
 import type { WalletInterface } from "@bsv/sdk";
 import type {
 	PermissionsModule,
-	PermissionsModuleNext,
 	PermissionsModuleRequest,
 } from "@bsv/wallet-toolbox-client";
 import {
@@ -22,6 +22,10 @@ import {
 	endpointsOf,
 	isOneColorAvailable,
 } from "@/lib/chain-endpoints";
+import {
+	colorPermissionStore,
+	createColorTokenAccessHandler,
+} from "@/lib/cwi/color-consent";
 import { clipForLog, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { type ColorOverlay, createColorOverlayProvider } from "./color-overlay";
 import { withOriginator } from "./with-originator";
@@ -29,85 +33,94 @@ import { withOriginator } from "./with-originator";
 export interface WalletColorModule {
 	/** The module itself, for host-only calls such as `markSettled`. */
 	module: ColorPermissionModule;
-	/** What the permissions manager registers under `color`: admin only. */
-	permissionModule: AdminOnlyColorModule;
+	/**
+	 * What the permissions manager registers under `color`: the module, with
+	 * token handoffs refused to apps (see `appGatedColorModule`).
+	 */
+	permissionModule: AppGatedColorModule;
 	overlay: ColorOverlay;
 }
 
-export type AdminOnlyColorModule = PermissionsModule & { dispose: () => void };
+export type AppGatedColorModule = PermissionsModule & { dispose: () => void };
 
-/**
- * Consent for `p color` requests until app consent ships: the wallet itself
- * is approved, every other originator is declined (fail closed). The module
- * then throws `ColorConsentDeclinedError` to the caller.
- */
-export const adminOnlyTokenAccess =
-	(adminOriginator: string): ColorTokenAccessHandler =>
-	async (app) =>
-		app === adminOriginator;
+/** BRC-177: a noSend action that expires; the color module reads it as a handoff. */
+const NOSEND_EXPIRY_LABEL_PREFIX = "p nosend expiry ";
 
-/** An app reached a `p color` request: refused before anyone is asked. */
-export class ColorUnavailableToAppsError extends Error {
-	readonly name = "ColorUnavailableToAppsError";
-	readonly method: string;
+/** An app asked for a token handoff: refused before the module funds it. */
+export class ColorHandoffUnavailableError extends Error {
+	readonly name = "ColorHandoffUnavailableError";
 
-	constructor(method: string) {
-		super("1Color is not available to apps yet.");
-		this.method = method;
+	constructor() {
+		super("Token handoffs are not available to apps yet.");
 	}
 }
 
+const isHandoffLabel = (label: unknown): boolean =>
+	typeof label === "string" &&
+	label.trim().toLowerCase().startsWith(NOSEND_EXPIRY_LABEL_PREFIX);
+
 /**
- * The color module as the permissions manager sees it, refusing every
- * originator but the wallet itself (exact match) before the module runs. The module's own
- * consent only covers some requests (reads, signatures, relinquish, sign):
- * `getPublicKey` and `verifySignature` under a `p color` protocol pass
- * straight through, `internalizeAction` into a `p color` basket asks nothing,
- * and `createAction` with a `p color plan` label funds before it asks. This
- * gate covers every routed method, so no app reaches 1Color until app consent
- * ships. Nobody is asked, so the refusal is `ColorUnavailableToAppsError`,
- * not the module's "user declined".
- *
- * Toolbox 2.17 prices an app's spend from the args after this module has
- * changed them, so token inputs the module funds from the wallet are
- * subtracted from the app's spend. Once apps can reach 1Color, the spending
- * prompt alone under-reports token moves; the module's `color_send` consent
- * at signing must cover every app path that funds token inputs.
+ * True for an app's `createAction` that the module would fund as a handoff.
+ * A handoff that asks for less than a held output makes the module split that
+ * output first (`fund` → `settleFunding` → `splitExact` → `split`), signed and
+ * broadcast through the raw wallet before anyone is asked and outside the
+ * manager's spending authorization and limits.
  */
-export function adminOnlyColorModule(
+const isAppHandoff = (
+	req: PermissionsModuleRequest,
+	adminOriginator: string,
+): boolean => {
+	if (req.method !== "createAction" || req.originator === adminOriginator)
+		return false;
+	const labels = (req.args as { labels?: unknown } | null)?.labels;
+	return Array.isArray(labels) && labels.some(isHandoffLabel);
+};
+
+/**
+ * The color module as the permissions manager sees it. Everything goes to the
+ * module, except an app's `createAction` carrying a BRC-177 `p nosend expiry`
+ * label (a token handoff), which is refused, logged, and never reaches the
+ * module. The wallet itself (`adminOriginator`, exact match) keeps handoffs.
+ *
+ * Constraint: the manager's spending prompt is not the gate for token inputs
+ * the module funds. From wallet-toolbox-client 2.17.0 the manager computes an
+ * app's spend from the args after this module changed them, so inputs the
+ * module adds from the wallet are subtracted from the app's spend and show as
+ * "No input description provided"; the spending prompt can under-report a
+ * token move. The gate is the module's `color_send` consent, asked in
+ * `signAction` (`signBound`) before it signs any input it funded. The module
+ * signs its funded inputs in exactly two places: `signBound`, behind that
+ * consent, and the handoff `split`, which signs and broadcasts with no consent
+ * at all and is therefore refused to apps here. Any new app path that funds or
+ * signs module inputs must reach a `color_send` (or `color_signature`) prompt
+ * before signing; `tests/color-app-funded-send.test.ts` checks the send path.
+ */
+export function appGatedColorModule(
 	module: ColorPermissionModule,
 	adminOriginator: string,
-): AdminOnlyColorModule {
-	const allow = (req: PermissionsModuleRequest) => {
-		if (req.originator === adminOriginator) return;
-		const event = reportDiagnostic({
-			category: "action",
-			code: "action.failed",
-			operation: `wallet.color.${req.method}`,
-			recoverable: false,
-			context: { provider: "permissions-manager" },
-		});
-		console.error("[wallet] refused a 1Color request from an app", {
-			correlationId: event.correlationId,
-			method: req.method,
-			originator:
-				typeof req.originator === "string"
-					? clipForLog(req.originator)
-					: typeof req.originator,
-		});
-		throw new ColorUnavailableToAppsError(req.method);
-	};
+): AppGatedColorModule {
 	return {
 		capabilities: module.capabilities,
-		handleRequest: async (
-			req: PermissionsModuleRequest,
-			next: PermissionsModuleNext,
-		) => {
-			allow(req);
-			return await module.handleRequest(req, next);
-		},
-		onRequest: async (req: PermissionsModuleRequest) => {
-			allow(req);
+		handleRequest: (req, next) => module.handleRequest(req, next),
+		onRequest: async (req) => {
+			if (isAppHandoff(req, adminOriginator)) {
+				const event = reportDiagnostic({
+					category: "action",
+					code: "action.failed",
+					operation: "wallet.color.createAction.handoff",
+					recoverable: false,
+					context: { provider: "permissions-manager" },
+				});
+				console.error("[wallet] refused a 1Color handoff from an app", {
+					correlationId: event.correlationId,
+					method: req.method,
+					originator:
+						typeof req.originator === "string"
+							? clipForLog(req.originator)
+							: typeof req.originator,
+				});
+				throw new ColorHandoffUnavailableError();
+			}
 			return await module.onRequest(req);
 		},
 		onResponse: (res, context) => module.onResponse(res, context),
@@ -118,12 +131,19 @@ export function adminOnlyColorModule(
 /**
  * The color module and its overlay, or null when the chain has no color
  * overlay (mainnet). `wallet` is the raw wallet the permissions manager wraps,
- * never the manager itself. Only `adminOriginator` may use it.
+ * never the manager itself. The wallet itself (`adminOriginator`, exact
+ * match) is approved without a prompt; apps get the color consent in
+ * `lib/cwi/color-consent.ts`, asked through `promptHandler`, with basket
+ * grants kept in `permissionStore` (this wallet's color grant store on this
+ * chain, keyed by `identityKey`, unless a caller passes another).
  */
 export function createWalletColorModule(options: {
 	wallet: WalletInterface;
 	chain: Chain;
+	identityKey: string;
 	adminOriginator: string;
+	promptHandler: PromptHandler;
+	permissionStore?: IPermissionStore;
 }): WalletColorModule | null {
 	if (!isOneColorAvailable(options.chain)) return null;
 	const overlay = createColorOverlayProvider({
@@ -133,11 +153,17 @@ export function createWalletColorModule(options: {
 	const module = createColorModule({
 		wallet: options.wallet,
 		provider: overlay,
-		requestTokenAccess: adminOnlyTokenAccess(options.adminOriginator),
+		requestTokenAccess: createColorTokenAccessHandler({
+			promptHandler: options.promptHandler,
+			permissionStore:
+				options.permissionStore ??
+				colorPermissionStore(options.chain, options.identityKey),
+			adminOriginator: options.adminOriginator,
+		}),
 	});
 	return {
 		module,
-		permissionModule: adminOnlyColorModule(module, options.adminOriginator),
+		permissionModule: appGatedColorModule(module, options.adminOriginator),
 		overlay,
 	};
 }

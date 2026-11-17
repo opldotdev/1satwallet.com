@@ -13,10 +13,11 @@ import {
 } from "react";
 import type { Chain } from "@/lib/chain-endpoints";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
+import { removeWalletColorGrants } from "@/lib/cwi/color-consent";
 import { deriveIdentityKey, findKeysFromMnemonic } from "@/lib/keys";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
-import { refreshWalletChain } from "@/lib/wallet-chain";
+import { refreshWalletChain, storedAccountNetwork } from "@/lib/wallet-chain";
 import {
 	clearCachedEncryptionKey,
 	loadEncryptedWallet,
@@ -216,6 +217,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 	const deleteWallet = useCallback(() => {
 		lifecycleGenerationRef.current += 1;
 		if (typeof window !== "undefined") {
+			// Read before the stored wallet goes: its chain, and the identity
+			// key the built-in wallet runs as (null while locked).
+			removeWalletColorGrants(storedAccountNetwork(), walletKeys);
 			localStorage.removeItem(WALLET_STORAGE_KEY);
 			// Tells other listeners in this tab. A browser that refuses a
 			// constructed StorageEvent must not skip the refresh and reset below.
@@ -241,7 +245,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 		setWalletKeys(null);
 		setHasWallet(false);
 		setIsWalletLocked(false);
-	}, []);
+	}, [walletKeys]);
 
 	const value = useMemo(
 		() => ({

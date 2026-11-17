@@ -21,6 +21,8 @@ const SUITES = {
 			"./e2e/locks.e2e.ts",
 			"./e2e/profile.e2e.ts",
 			"./e2e/mobile-layout-wallet.e2e.ts",
+			"./e2e/mobile-layout-overview.e2e.ts",
+			"./e2e/mobile-lists.e2e.ts",
 		],
 	],
 	mainnet: [

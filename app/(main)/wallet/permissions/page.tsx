@@ -13,6 +13,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { ColorAppGrants } from "@/components/wallet/color-app-grants";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -299,6 +300,7 @@ export default function PermissionsPage() {
 					</div>
 				)}
 			</div>
+			<ColorAppGrants />
 		</section>
 	);
 }

@@ -64,6 +64,25 @@ describe("provider action matrix", () => {
 		);
 	});
 
+	it("lists 1Color app consent in the code and the doc alike", () => {
+		assert.equal(
+			providerCapability("built-in-direct", "one-color-app-consent"),
+			"supported",
+		);
+		assert.equal(
+			providerCapability("hosted-embed", "one-color-app-consent"),
+			"experimental",
+		);
+		assert.equal(
+			providerCapability("injected", "one-color-app-consent"),
+			"provider-managed",
+		);
+		assert.match(
+			read("docs/provider-action-matrix.md"),
+			/\| 1Color app consent \(testnet\)\s*\| supported\s*\| provider-managed \| provider-managed \| provider-managed \| experimental\s*\| experimental\s*\|/,
+		);
+	});
+
 	it("maps connection mode onto the capability surface", () => {
 		assert.equal(surfaceForConnection("built-in"), "built-in-direct");
 		assert.equal(surfaceForConnection("external", "injected"), "injected");
