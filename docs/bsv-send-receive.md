@@ -33,7 +33,10 @@ The built-in wallet's Receive addresses are BRC-29 self-derived
 address the address manager holds, on the account's chain: plain BSV,
 ordinals and BSV-21 sent to the shown Receive address are internalized under
 that BRC-29 derivation, and plain BSV is then swept into funding. The task
-keeps its own processed-tx store and cursor.
+keeps its own processed-tx store and cursor; an address the manager gains
+later is scanned once from the start before it joins that cursor. Only the
+indices this browser holds (0 to its stored `maxDerivedIndex`, 0-4 by
+default) are scanned.
 
 ## Deliberate blockers
 

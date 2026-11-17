@@ -62,10 +62,10 @@ type SyncJobs = Record<Exclude<SyncTaskName, "receiveAddresses">, SyncJob> & {
 
 const TASK_NAMES: readonly SyncTaskName[] = [
 	"addresses",
-	"receiveAddresses",
 	"payments",
 	"cosignDeliveries",
 	"handleInbox",
+	"receiveAddresses",
 ];
 
 /** What the handle inbox timer runs between full syncs. */

@@ -10,8 +10,8 @@ import {
 	signP2PKHInput,
 	syncAddresses,
 } from "@1sat/actions";
-import { Inscription } from "@1sat/templates";
-import { DEPOSIT_BASKET, ORDINALS_BASKET } from "@1sat/types";
+import { BSV21, Inscription } from "@1sat/templates";
+import { BSV21_BASKET, DEPOSIT_BASKET, ORDINALS_BASKET } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import {
 	Beef,
@@ -27,6 +27,7 @@ import {
 } from "@bsv/sdk";
 import {
 	buildReceiveAddressManager,
+	deriveReceiveAddress,
 	RECEIVE_ADDRESS_PREFIX,
 } from "@/lib/receive-address-manager";
 import { createDefaultReceiveAddressState } from "@/lib/receive-address-state";
@@ -71,10 +72,31 @@ class MemoryStore implements ProcessedTxStore {
 	}
 }
 
+interface Deposit {
+	outpoint: string;
+	satoshis: number;
+	customInstructions: string;
+	tags: string[];
+	beef: number[];
+}
+
+/**
+ * A wallet over the root key that keeps what is internalized into the
+ * deposit basket, lists it back as the toolbox does, and plays the two-phase
+ * createAction / signAction the deposit sweep uses.
+ */
 function fakeWallet() {
 	const proto = new ProtoWallet(rootKey);
 	const internalized: InternalizeActionArgs[] = [];
 	const listed: string[] = [];
+	const deposits: Deposit[] = [];
+	const created: { inputs: { outpoint: string }[] }[] = [];
+	const signed: {
+		spends: Record<number, { unlockingScript: string }>;
+		tx: Transaction;
+	}[] = [];
+	const aborted: string[] = [];
+	let pending: Transaction | null = null;
 	const wallet = {
 		getPublicKey: (args: Parameters<ProtoWallet["getPublicKey"]>[0]) =>
 			proto.getPublicKey(args),
@@ -83,26 +105,104 @@ function fakeWallet() {
 		getHeight: async () => ({ height: 1000 }),
 		internalizeAction: async (args: InternalizeActionArgs) => {
 			internalized.push(args);
+			const tx = Transaction.fromAtomicBEEF(args.tx);
+			for (const output of args.outputs) {
+				const remittance = output.insertionRemittance;
+				if (remittance?.basket !== DEPOSIT_BASKET) continue;
+				deposits.push({
+					outpoint: `${tx.id("hex")}.${output.outputIndex}`,
+					satoshis: tx.outputs[output.outputIndex].satoshis ?? 0,
+					customInstructions: remittance.customInstructions ?? "",
+					tags: remittance.tags ?? [],
+					beef: Array.from(args.tx),
+				});
+			}
 			return { accepted: true };
 		},
-		// The deposit sweep finds an empty basket in these tests.
 		listOutputs: async (args: { basket: string }) => {
 			listed.push(args.basket);
-			return { totalOutputs: 0, outputs: [] };
+			if (args.basket !== DEPOSIT_BASKET || deposits.length === 0) {
+				return { totalOutputs: 0, outputs: [] };
+			}
+			const beef = new Beef();
+			for (const deposit of deposits) beef.mergeBeef(deposit.beef);
+			return {
+				totalOutputs: deposits.length,
+				outputs: deposits.map(({ beef: _beef, ...output }) => ({
+					...output,
+					spendable: true,
+				})),
+				BEEF: beef.toBinary(),
+			};
+		},
+		createAction: async (args: {
+			inputBEEF: number[];
+			inputs: { outpoint: string }[];
+		}) => {
+			created.push(args);
+			// The wallet's change output takes the inputs, less a fee.
+			const beef = Beef.fromBinary(args.inputBEEF);
+			const tx = new Transaction();
+			let total = 0;
+			for (const input of args.inputs) {
+				const [txid, vout] = input.outpoint.split(".");
+				const source = beef.findTransactionForSigning(txid);
+				assert.ok(source, "the sweep hands over the deposit's BEEF");
+				tx.addInput({
+					sourceTransaction: source,
+					sourceOutputIndex: Number(vout),
+					unlockingScript: new UnlockingScript(),
+				});
+				total += source.outputs[Number(vout)].satoshis ?? 0;
+			}
+			tx.addOutput({
+				satoshis: total - 100,
+				lockingScript: new P2PKH().lock(rootKey.toAddress()),
+			});
+			pending = tx;
+			return {
+				signableTransaction: { tx: tx.toAtomicBEEF(), reference: "sweep" },
+			};
+		},
+		signAction: async (args: {
+			spends: Record<number, { unlockingScript: string }>;
+		}) => {
+			assert.ok(pending);
+			signed.push({ spends: args.spends, tx: pending });
+			deposits.length = 0;
+			return { txid: pending.id("hex") };
+		},
+		abortAction: async (args: { reference: string }) => {
+			aborted.push(args.reference);
+			return { aborted: true };
 		},
 	} as unknown as WalletInterface;
-	return { wallet, internalized, listed };
+	return { wallet, internalized, listed, created, signed, aborted };
 }
 
-/** A payment of `satoshis` locked by `lockingScript`, with its funding parent. */
-function payment(lockingScript: LockingScript, satoshis: number) {
+const otherAddress = PrivateKey.fromHex("3".repeat(64)).toAddress();
+
+/**
+ * A payment of `satoshis` locked by `lockingScript`, spending its parent's
+ * output 0 (10,000 sats to someone else unless `from` says otherwise), seen
+ * by the indexer at `score`.
+ */
+function payment(
+	lockingScript: LockingScript,
+	satoshis: number,
+	{
+		score = 900,
+		from = {
+			lockingScript: new P2PKH().lock(otherAddress),
+			satoshis: 10_000,
+		},
+	}: {
+		score?: number;
+		from?: { lockingScript: LockingScript; satoshis: number };
+	} = {},
+) {
 	const source = new Transaction();
-	source.addOutput({
-		satoshis: 10_000,
-		lockingScript: new P2PKH().lock(
-			PrivateKey.fromHex("3".repeat(64)).toAddress(),
-		),
-	});
+	source.addOutput(from);
 	const tx = new Transaction();
 	tx.addInput({
 		sourceTransaction: source,
@@ -112,7 +212,7 @@ function payment(lockingScript: LockingScript, satoshis: number) {
 	tx.addOutput({ satoshis, lockingScript });
 	const beef = new Beef();
 	beef.mergeTransaction(tx);
-	return { tx, source, txid: tx.id("hex"), beef: beef.toBinary() };
+	return { tx, source, score, txid: tx.id("hex"), beef: beef.toBinary() };
 }
 
 /**
@@ -122,6 +222,7 @@ function payment(lockingScript: LockingScript, satoshis: number) {
 function fakeServices(
 	paid: Map<string, ReturnType<typeof payment>>,
 	queried: string[][],
+	from: (number | undefined)[] = [],
 ) {
 	const txs = new Map<string, Transaction>();
 	for (const { tx, source } of paid.values()) {
@@ -133,13 +234,20 @@ function fakeServices(
 	);
 	return {
 		owner: {
-			async *sync(addresses: string[]) {
+			async *sync(addresses: string[], since?: number) {
 				queried.push(addresses);
+				from.push(since);
 				for (const address of addresses) {
 					const hit = paid.get(address);
-					if (hit) yield { outpoint: `${hit.txid}_0`, score: 900 };
+					if (hit && (since === undefined || hit.score > since)) {
+						yield { outpoint: `${hit.txid}_0`, score: hit.score };
+					}
 				}
 			},
+		},
+		bsv21: {
+			getTokenDetails: async () => ({ token: { sym: "TST", dec: 0 } }),
+			getTokenByTxid: async () => ({}),
 		},
 		beef: {
 			getBeef: async (txid: string) => {
@@ -156,14 +264,14 @@ function fakeServices(
 }
 
 async function setup(chain: "main" | "test") {
-	const { wallet, internalized, listed } = fakeWallet();
+	const fake = fakeWallet();
 	const { addressManager } = await buildReceiveAddressManager({
-		wallet,
+		wallet: fake.wallet,
 		chain,
 		identityKey,
 		state: createDefaultReceiveAddressState(),
 	});
-	return { wallet, internalized, listed, addressManager };
+	return { ...fake, addressManager };
 }
 
 /** Every address job the owned sync runs, as `use-sync-engine` wires them. */
@@ -180,6 +288,7 @@ async function runOwnedAddressSync(
 
 type Remittance = {
 	basket: string;
+	tags?: string[];
 	customInstructions?: string;
 };
 
@@ -194,7 +303,7 @@ function onlyOutput(internalized: InternalizeActionArgs[]) {
 		keyID: string;
 		counterparty?: string;
 	};
-	return { output, basket: remittance.basket, ci };
+	return { output, basket: remittance.basket, tags: remittance.tags, ci };
 }
 
 /**
@@ -271,8 +380,15 @@ describe("the web wallet's own Receive addresses", () => {
 	});
 
 	it("records plain BSV under BRC-29 and the Receive keyID, then sweeps it", async () => {
-		const { wallet, internalized, listed, addressManager } =
-			await setup("main");
+		const {
+			wallet,
+			internalized,
+			listed,
+			created,
+			signed,
+			aborted,
+			addressManager,
+		} = await setup("main");
 		const receive0 = addressManager.getAddressAtIndex(0);
 		assert.ok(receive0);
 		const paid = payment(new P2PKH().lock(receive0.address), 5000);
@@ -291,13 +407,45 @@ describe("the web wallet's own Receive addresses", () => {
 		assert.deepEqual(ci.protocolID, BRC29);
 		assert.equal(ci.keyID, receiveKeyID(0));
 		assert.equal(ci.counterparty, "self");
-		// The deposit sweep ran over the deposit basket.
-		assert.deepEqual(listed, [DEPOSIT_BASKET]);
 		assert.equal(await spendWith(ctx, paid.tx, ci), true);
 
-		// Already processed: a second run does not internalize it again.
-		await syncReceiveAddresses(ctx, addressManager, store);
+		// sweepDeposit itself read the deposit back and signed it from those
+		// custom instructions; the signature it produced unlocks the output.
+		assert.deepEqual(listed, [DEPOSIT_BASKET]);
+		assert.deepEqual(
+			created.map(({ inputs }) => inputs.map(({ outpoint }) => outpoint)),
+			[[`${paid.txid}.0`]],
+		);
+		assert.deepEqual(aborted, []);
+		assert.equal(signed.length, 1);
+		const [{ spends, tx: sweep }] = signed;
+		const source = paid.tx.outputs[0];
+		assert.equal(
+			new Spend({
+				sourceTXID: paid.txid,
+				sourceOutputIndex: 0,
+				sourceSatoshis: source.satoshis ?? 0,
+				lockingScript: source.lockingScript,
+				transactionVersion: sweep.version,
+				otherInputs: [],
+				outputs: sweep.outputs,
+				unlockingScript: UnlockingScript.fromHex(spends[0].unlockingScript),
+				inputSequence: 0xffffffff,
+				inputIndex: 0,
+				lockTime: sweep.lockTime,
+			}).validate(),
+			true,
+		);
+
+		// Already processed: a second run does not internalize it again, and
+		// its sweep (every run) finds the basket empty.
+		assert.deepEqual(await syncReceiveAddresses(ctx, addressManager, store), {
+			processed: 0,
+			failed: 0,
+		});
 		assert.equal(internalized.length, 1);
+		assert.equal(signed.length, 1);
+		assert.deepEqual(listed, [DEPOSIT_BASKET, DEPOSIT_BASKET]);
 	});
 
 	it("records a 1-sat ordinal at Receive index 1 in the ordinals basket", async () => {
@@ -325,6 +473,98 @@ describe("the web wallet's own Receive addresses", () => {
 		assert.deepEqual(ci.protocolID, BRC29);
 		assert.equal(ci.keyID, receiveKeyID(1));
 		assert.equal(await spendWith(ctx, paid.tx, ci), true);
+	});
+
+	it("records a BSV-21 transfer at Receive index 2 in the bsv21 basket", async () => {
+		const { wallet, internalized, addressManager } = await setup("main");
+		const receive2 = addressManager.getAddressAtIndex(2);
+		assert.ok(receive2);
+		const tokenId = `${"ab".repeat(32)}_0`;
+		const paid = payment(
+			BSV21.transfer(tokenId, 100n).lock(new P2PKH().lock(receive2.address)),
+			1,
+			{
+				from: {
+					lockingScript: BSV21.transfer(tokenId, 100n).lock(
+						new P2PKH().lock(otherAddress),
+					),
+					satoshis: 1,
+				},
+			},
+		);
+		const ctx = createContext(wallet, {
+			chain: "main",
+			services: fakeServices(new Map([[receive2.address, paid]]), []),
+		});
+
+		const result = await syncReceiveAddresses(
+			ctx,
+			addressManager,
+			new MemoryStore(),
+		);
+
+		assert.deepEqual(result, { processed: 1, failed: 0 });
+		const { basket, tags, ci } = onlyOutput(internalized);
+		assert.equal(basket, BSV21_BASKET);
+		assert.ok(tags?.includes(`bsv21:${tokenId}`));
+		assert.deepEqual(ci.protocolID, BRC29);
+		assert.equal(ci.keyID, receiveKeyID(2));
+		assert.equal(ci.counterparty, "self");
+		assert.equal(await spendWith(ctx, paid.tx, ci), true);
+	});
+
+	it("scans a Receive address added after the cursor moved from the start", async () => {
+		const { wallet, internalized, addressManager } = await setup("main");
+		const receive0 = addressManager.getAddressAtIndex(0);
+		assert.ok(receive0);
+		const receive5 = await deriveReceiveAddress({
+			wallet,
+			chain: "main",
+			identityKey,
+			index: 5,
+		});
+		// Paid long ago, below the cursor the first run leaves behind.
+		const paid = new Map([
+			[receive0.address, payment(new P2PKH().lock(receive0.address), 5000)],
+			[
+				receive5.address,
+				payment(new P2PKH().lock(receive5.address), 7000, { score: 100 }),
+			],
+		]);
+		const queried: string[][] = [];
+		const from: (number | undefined)[] = [];
+		const ctx = createContext(wallet, {
+			chain: "main",
+			services: fakeServices(paid, queried, from),
+		});
+		const store = new MemoryStore();
+
+		// Indices 0-4: cursor to 900.
+		await syncReceiveAddresses(ctx, addressManager, store);
+		assert.equal(store.lastScore, 900);
+		assert.equal(internalized.length, 1);
+
+		// The manager gains index 5: it is scanned from the start, the rest
+		// from the cursor.
+		const window = addressManager.getAddresses();
+		addressManager.addAddress(receive5);
+		queried.length = 0;
+		from.length = 0;
+		await syncReceiveAddresses(ctx, addressManager, store);
+
+		assert.deepEqual(queried, [window, [receive5.address]]);
+		assert.deepEqual(from, [900, undefined]);
+		assert.equal(internalized.length, 2);
+		const { ci } = onlyOutput(internalized.slice(1));
+		assert.equal(ci.keyID, receiveKeyID(5));
+
+		// Now covered: the next run reads index 5 from the cursor too.
+		queried.length = 0;
+		from.length = 0;
+		await syncReceiveAddresses(ctx, addressManager, store);
+		assert.deepEqual(queried, [[...window, receive5.address]]);
+		assert.deepEqual(from, [900]);
+		assert.equal(internalized.length, 2);
 	});
 
 	it("syncs the testnet Receive addresses on testnet", async () => {
@@ -365,6 +605,7 @@ describe("the web wallet's own Receive addresses", () => {
 			// Height 1000, score 900: past the reorg window, so the cursor moves.
 			assert.equal(store.lastScore, 900);
 			assert.equal(store.txids.has(paid.txid), true);
+			assert.equal(store.txids.has(`covered:${receive0.address}`), true);
 			assert.equal(store.closed, 1);
 			// syncAddresses keeps its store at `sync-<key>.db` here (IndexedDB
 			// `sync-processed-<key>` in the browser): never created.
@@ -416,7 +657,7 @@ describe("the web wallet's own Receive addresses", () => {
 		assert.equal(store.txids.size, 0);
 	});
 
-	it("is wired into the owned sync beside the address task", () => {
+	it("is wired into the owned sync after the existing tasks", () => {
 		const engine = readFileSync(
 			join(process.cwd(), "providers/hooks/use-sync-engine.ts"),
 			"utf8",
@@ -425,6 +666,9 @@ describe("the web wallet's own Receive addresses", () => {
 			engine,
 			/receiveAddresses: \(\) =>\s*syncReceiveAddresses\(\s*ctx,\s*addressManager,\s*openReceiveAddressStore\(chain, identityKey\),/,
 		);
-		assert.match(engine, /"addresses",\s*"receiveAddresses",/);
+		assert.match(
+			engine,
+			/"addresses",\s*"payments",\s*"cosignDeliveries",\s*"handleInbox",\s*"receiveAddresses",\s*\]/,
+		);
 	});
 });

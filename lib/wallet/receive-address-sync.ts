@@ -23,6 +23,14 @@ import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
 /** Same reorg window as `syncAddresses`. */
 const REORG_SAFE_DEPTH = 6;
 
+/**
+ * The score cursor only holds for addresses that were scanned up to it. The
+ * store records each such address as `covered:<address>` beside the txids
+ * (never a 64-hex txid, so the two cannot collide). An address the manager
+ * gains later is scanned from the start once, then joins the cursor.
+ */
+const coveredKey = (address: string) => `covered:${address}`;
+
 export interface ReceiveAddressSyncResult {
 	processed: number;
 	failed: number;
@@ -81,6 +89,8 @@ export function receiveAddressDerivations(
 }
 
 function reportFailure(operation: string, error: unknown) {
+	// Full detail for debugging; the diagnostic carries only the error name.
+	console.error(`[sync] ${operation} failed`, error);
 	reportDiagnostic({
 		category: "provider",
 		code: "provider.failed",
@@ -114,27 +124,37 @@ export async function syncReceiveAddresses(
 
 		const { height } = await ctx.wallet.getHeight({});
 		const lastScore = await store.getLastScore();
+		const covered: string[] = [];
+		const uncovered: string[] = [];
+		for (const address of addressDerivations.keys()) {
+			if (await store.has(coveredKey(address))) covered.push(address);
+			else uncovered.push(address);
+		}
 		const outputsByTxid = new Map<string, { spendTxid?: string }[]>();
 		let maxSafeScore = lastScore;
-		for await (const output of services.owner.sync(
-			[...addressDerivations.keys()],
-			lastScore || undefined,
-		)) {
-			const txid = output.outpoint.substring(0, 64);
-			const outputs = outputsByTxid.get(txid) ?? [];
-			outputs.push(output);
-			outputsByTxid.set(txid, outputs);
-			if (
-				height - Math.floor(output.score) >= REORG_SAFE_DEPTH &&
-				output.score > maxSafeScore
-			) {
-				maxSafeScore = output.score;
+		// Covered addresses from the cursor; new ones from the start.
+		const scans: [string[], number | undefined][] = [
+			[covered, lastScore || undefined],
+			[uncovered, undefined],
+		];
+		for (const [addresses, from] of scans) {
+			if (addresses.length === 0) continue;
+			for await (const output of services.owner.sync(addresses, from)) {
+				const txid = output.outpoint.substring(0, 64);
+				const outputs = outputsByTxid.get(txid) ?? [];
+				outputs.push(output);
+				outputsByTxid.set(txid, outputs);
+				if (
+					height - Math.floor(output.score) >= REORG_SAFE_DEPTH &&
+					output.score > maxSafeScore
+				) {
+					maxSafeScore = output.score;
+				}
 			}
 		}
 
 		let processed = 0;
 		let failed = 0;
-		let internalized = 0;
 		for (const [txid, outputs] of outputsByTxid) {
 			if (await store.has(txid)) continue;
 			try {
@@ -142,14 +162,13 @@ export async function syncReceiveAddresses(
 				if (!outputs.every((output) => !!output.spendTxid)) {
 					const beef = await services.beef.getBeef(txid);
 					if (!beef) throw new Error("BEEF not found");
-					const result = await internalizeBeef({
+					await internalizeBeef({
 						beef,
 						addressDerivations,
 						wallet: ctx.wallet,
 						services,
 						chain: ctx.chain,
 					});
-					internalized += result.internalized;
 				}
 				await store.add(txid);
 				processed++;
@@ -161,20 +180,21 @@ export async function syncReceiveAddresses(
 
 		// The cursor is the only record of what is left: advance it only when
 		// nothing failed, as `syncAddresses` does.
-		if (failed === 0 && maxSafeScore > lastScore) {
-			await store.setLastScore(maxSafeScore);
+		// New addresses join the cursor only on a clean run, like the cursor.
+		if (failed === 0) {
+			if (maxSafeScore > lastScore) await store.setLastScore(maxSafeScore);
+			for (const address of uncovered) await store.add(coveredKey(address));
 		}
 
-		// Plain BSV waits in the deposit basket; move it into funding the way
-		// `syncAddresses` does. A failure loses nothing (the deposit stays in
-		// the basket and the next sweep retries) but shows as a failed item.
-		if (internalized > 0) {
-			try {
-				await sweepDeposit.execute(ctx, {});
-			} catch (error) {
-				reportFailure("wallet.sync.receiveAddresses.sweep", error);
-				failed++;
-			}
+		// Plain BSV waits in the deposit basket; move it into funding, every
+		// run, as `syncAddresses` does. A failure loses nothing (the deposit
+		// stays in the basket and the next sweep retries) but shows as a
+		// failed item.
+		try {
+			await sweepDeposit.execute(ctx, {});
+		} catch (error) {
+			reportFailure("wallet.sync.receiveAddresses.sweep", error);
+			failed++;
 		}
 
 		return { processed, failed };
