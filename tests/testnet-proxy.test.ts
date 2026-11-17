@@ -25,6 +25,7 @@ const MAINNET_ONLY = [
 	"/activity",
 	"/wallet/opns",
 	"/wallet/migrate",
+	"/wallet/sweep",
 ];
 
 describe("testnet proxy", () => {

@@ -82,6 +82,12 @@ const SUB_PAGES: readonly SubPage[] = [
 		parentTitle: "Wallet settings",
 	},
 	{
+		path: "/wallet/sweep",
+		title: "Sweep a private key",
+		parentHref: "/wallet/settings",
+		parentTitle: "Wallet settings",
+	},
+	{
 		path: "/wallet/migrate",
 		title: "Wallet migration",
 		parentHref: "/wallet",

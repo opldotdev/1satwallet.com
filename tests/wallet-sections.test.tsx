@@ -121,6 +121,12 @@ describe("walletSectionFor", () => {
 				"Wallet settings",
 			],
 			["/wallet/migrate", "Wallet migration", "/wallet", "Wallet"],
+			[
+				"/wallet/sweep",
+				"Sweep a private key",
+				"/wallet/settings",
+				"Wallet settings",
+			],
 			["/wallet/bsv21/abc_0", "BSV-21 token", "/wallet/tokens", "Tokens"],
 		];
 		for (const [path, title, parentHref, parentTitle] of cases) {
