@@ -36,7 +36,7 @@ import {
 } from "@bsv/sdk";
 import { type PermissionsModuleAction, sdk } from "@bsv/wallet-toolbox-client";
 import { clearDiagnostics } from "@/lib/runtime-diagnostics";
-import { adminOnlyColorModule } from "@/lib/wallet/color-module";
+import { appGatedColorModule } from "@/lib/wallet/color-module";
 import {
 	describeOneColorMintFailure,
 	ONE_COLOR_DECIMALS_UNREADABLE,
@@ -803,12 +803,12 @@ async function deployAuthority(wallet: FakeWallet, provider: FakeProvider) {
 
 /**
  * `colorContext` over the module as the permissions manager runs it: the
- * createAction and signAction hooks around the fake wallet, with the wallet's
- * own admin-only gate in front.
+ * createAction and signAction hooks around the fake wallet, behind the gate
+ * the permissions manager registers (the wallet itself passes through it).
  */
 function moduleContext(wallet: FakeWallet, provider: FakeProvider) {
 	const prompts: Array<Record<string, unknown>> = [];
-	const module = adminOnlyColorModule(
+	const module = appGatedColorModule(
 		createColorModule({
 			wallet: wallet as unknown as WalletInterface,
 			provider,

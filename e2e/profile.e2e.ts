@@ -1,6 +1,11 @@
 import type { Browser } from "./support/agent-browser";
 import { containing, type Locator, pattern } from "./support/page-query";
-import { CHAIN_TIMEOUT, unlockWallet, walletTest } from "./support/wallet";
+import {
+	CHAIN_TIMEOUT,
+	sectionLink,
+	unlockWallet,
+	walletTest,
+} from "./support/wallet";
 
 /** A per-run value, so every run publishes a real change. */
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
@@ -18,7 +23,7 @@ const reviewButton: Locator = {
 
 /** Client-side navigation keeps the unlocked session (a reload locks it). */
 async function openProfile(browser: Browser) {
-	await browser.click({ role: "tab", name: "Identity" });
+	await browser.click(sectionLink("Identity"));
 	await browser.waitFor(
 		"the Identity tab URL",
 		() => location.pathname.endsWith("/wallet/identity"),

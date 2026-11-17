@@ -17,7 +17,12 @@ import {
 	waitForSettledPage,
 } from "./support/layout";
 import type { Locator } from "./support/page-query";
-import { CHAIN_TIMEOUT, unlockWallet, walletTest } from "./support/wallet";
+import {
+	CHAIN_TIMEOUT,
+	sectionLink,
+	unlockWallet,
+	walletTest,
+} from "./support/wallet";
 
 // The phone layout of the wallet's own pages, as testnet wallet A. Read-only:
 // dialogs are opened and closed, nothing is signed or broadcast.
@@ -158,7 +163,7 @@ walletTest(
 		// The banner picker has a DialogFooter (Cancel), so the full-width
 		// footer button check measures a real button. Client-side navigation
 		// keeps the wallet unlocked.
-		await browser.click({ role: "tab", name: "Identity" });
+		await browser.click(sectionLink("Identity"));
 		await waitForSettledPage(browser, "/wallet/identity", null, CHAIN_TIMEOUT);
 		await browser.waitUntil(
 			"the profile form",

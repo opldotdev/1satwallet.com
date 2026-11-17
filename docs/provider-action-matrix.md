@@ -24,8 +24,14 @@ states mean:
 | Asset write                   | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
 | Identity                      | supported       | contract-only    | contract-only    | contract-only    | experimental     | experimental     |
 | Permission administration     | supported       | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
+| 1Color app consent (testnet)  | supported       | provider-managed | provider-managed | provider-managed | experimental     | experimental     |
 | Sync                          | supported       | provider-managed | provider-managed | provider-managed | provider-managed | provider-managed |
 | Local keys, backup, migration | supported       | unsupported      | unsupported      | unsupported      | unsupported      | unsupported      |
+
+"1Color app consent" is the built-in wallet's answer to apps that call the
+`p color` namespace on testnet (see `docs/cwi-consent.md`). Built-in direct is
+the wallet's own UI, approved as the admin; hosted apps are asked through the
+relay; external wallets own their own consent. Mainnet has no color module.
 
 The installed `@1sat/connect@0.0.91` returns `provider: string` and identifies
 every successful auto-detected `WalletClient("auto")` substrate as `brc100`.

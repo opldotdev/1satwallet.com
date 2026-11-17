@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { assetBasket, colorProtocolID } from "@bsv/color-permission-module";
-import type { WalletInterface } from "@bsv/sdk";
+import type { PromptRequest } from "@1sat/permission-module";
+import { InMemoryPermissionStore } from "@1sat/wallet-browser";
+import {
+	assetBasket,
+	ColorConsentDeclinedError,
+	type ColorPermissionModule,
+	ColorPlan,
+	colorProtocolID,
+} from "@bsv/color-permission-module";
+import { PrivateKey, Utils, type WalletInterface } from "@bsv/sdk";
 import {
 	type PermissionsManagerConfig,
 	WalletPermissionsManager,
@@ -11,7 +19,8 @@ import {
 	getDiagnosticEvents,
 } from "@/lib/runtime-diagnostics";
 import {
-	ColorUnavailableToAppsError,
+	appGatedColorModule,
+	ColorHandoffUnavailableError,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
 import {
@@ -22,6 +31,7 @@ import {
 	LIST_SCAN_MAX,
 	LIST_SCAN_PAGE,
 	listActionsForApp,
+	listOutputsForApp,
 	MisroutedModuleIdentifierError,
 } from "@/lib/wallet/module-identifier-guard";
 
@@ -66,7 +76,10 @@ type RawCall = { method: string; originator: unknown; args: unknown };
  * A raw wallet that records every call and answers the few the manager needs;
  * a prompt of any kind is recorded and granted, so a test sees both.
  */
-type Listed = { actions: Record<string, unknown>[] };
+type Listed = {
+	actions: Record<string, unknown>[];
+	outputs?: Record<string, unknown>[];
+};
 
 /** The wallet's listActions over `listed`: paged, labels only when asked. */
 const listFrom = (listed: Listed, args: unknown) => {
@@ -90,7 +103,7 @@ const listFrom = (listed: Listed, args: unknown) => {
 	};
 };
 
-const setup = (listed: Listed = { actions: [] }) => {
+const setup = (listed: Listed = { actions: [] }, approve = false) => {
 	const calls: RawCall[] = [];
 	const wallet = new Proxy(
 		{},
@@ -99,7 +112,11 @@ const setup = (listed: Listed = { actions: [] }) => {
 				(_target, prop: string) =>
 				async (args: unknown, originator: unknown) => {
 					calls.push({ method: prop, originator, args });
-					if (prop === "listOutputs") return { totalOutputs: 0, outputs: [] };
+					if (prop === "listOutputs")
+						return {
+							totalOutputs: listed.outputs?.length ?? 0,
+							outputs: structuredClone(listed.outputs ?? []),
+						};
 					if (prop === "listActions") return listFrom(listed, args);
 					if (prop === "revealSpecificKeyLinkage")
 						return { encryptedLinkage: [1], encryptedLinkageProof: [1] };
@@ -112,10 +129,18 @@ const setup = (listed: Listed = { actions: [] }) => {
 				},
 		},
 	) as WalletInterface;
+	// The color consent's prompts, answered with `approve`.
+	const colorPrompts: PromptRequest[] = [];
 	const color = createWalletColorModule({
 		wallet,
 		chain: "test",
+		identityKey: PUBKEY,
 		adminOriginator: ADMIN,
+		promptHandler: async (request) => {
+			colorPrompts.push(request);
+			return approve;
+		},
+		permissionStore: new InMemoryPermissionStore(),
 	});
 	assert.ok(color);
 	const manager = guardModuleIdentifiers(
@@ -143,7 +168,7 @@ const setup = (listed: Listed = { actions: [] }) => {
 		prompts.push("onGroupedPermissionRequested");
 		await manager.denyGroupedPermission(request.requestID);
 	});
-	return { calls, color, manager, prompts };
+	return { calls, color, colorPrompts, manager, prompts };
 };
 
 const methods = (calls: RawCall[]) => calls.map((call) => call.method);
@@ -500,11 +525,15 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 		});
 	});
 
-	it("still routes the canonical name to the module, which refuses the app", async () => {
-		const { manager, calls } = setup();
+	it("still routes the canonical name to the module, which asks the user", async () => {
+		const { manager, calls, colorPrompts } = setup();
 		await assert.rejects(
 			manager.listOutputs({ basket: BASKET }, APP),
-			ColorUnavailableToAppsError,
+			ColorConsentDeclinedError,
+		);
+		assert.deepEqual(
+			colorPrompts.map((prompt) => [prompt.kind, prompt.originator]),
+			[["basketAccess", APP]],
 		);
 		assert.deepEqual(calls, []);
 	});
@@ -520,74 +549,78 @@ describe("misrouted p names never reach the wallet (case and padding)", () => {
 	});
 });
 
-describe("1Color refuses every app on every routed method", () => {
-	it("refuses getPublicKey and verifySignature under a p color protocol", async () => {
-		const { manager, calls } = setup();
+describe("apps reach 1Color only through its consent", () => {
+	it("asks before an app reads a p color basket, and saves the grant", async () => {
+		const declined = setup();
 		await assert.rejects(
-			manager.getPublicKey(
-				{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
-				APP,
-			),
-			ColorUnavailableToAppsError,
+			declined.manager.listOutputs({ basket: BASKET }, APP),
+			ColorConsentDeclinedError,
 		);
-		await assert.rejects(
-			manager.verifySignature(
-				{
-					protocolID: PROTOCOL,
-					keyID: "color",
-					counterparty: PUBKEY,
-					data: [1],
-					signature: [1],
-				},
-				APP,
-			),
-			ColorUnavailableToAppsError,
-		);
-		assert.deepEqual(calls, []);
-	});
+		assert.deepEqual(declined.calls, []);
 
-	it("refuses internalizeAction into a p color basket", async () => {
-		const { manager, calls } = setup();
-		await assert.rejects(
-			manager.internalizeAction(
-				{
-					tx: [1],
-					description: "take it in",
-					outputs: [
-						{
-							outputIndex: 0,
-							protocol: "basket insertion",
-							insertionRemittance: { basket: BASKET },
-						},
-					],
-				},
+		const approved = setup(undefined, true);
+		for (let i = 0; i < 2; i++) {
+			const listed = await approved.manager.listOutputs(
+				{ basket: BASKET },
 				APP,
-			),
-			ColorUnavailableToAppsError,
-		);
-		assert.deepEqual(calls, []);
-	});
-
-	it("refuses createAction with a color plan before anything is funded", async () => {
-		const { manager, calls } = setup();
-		for (const options of [{}, { signAndProcess: false }]) {
-			await assert.rejects(
-				manager.createAction(
-					{
-						description: "send tokens",
-						labels: ["p color plan 0 1 ab"],
-						options,
-					},
-					APP,
-				),
-				ColorUnavailableToAppsError,
 			);
+			assert.equal(listed.totalOutputs, 0);
 		}
-		assert.ok(!methods(calls).includes("createAction"));
+		// The second read is answered by the grant the first one saved.
+		assert.equal(approved.colorPrompts.length, 1);
+		assert.deepEqual(
+			approved.calls.map((call) => [call.method, call.originator]),
+			[
+				["listOutputs", APP],
+				["listOutputs", APP],
+			],
+		);
 	});
 
-	it("still serves the wallet itself", async () => {
-		const { manager, calls } = setup();
+	it("asks every time an app relinquishes a token output", async () => {
+		const { manager, calls, colorPrompts } = setup();
+		const relinquish = () =>
+			manager.relinquishOutput(
+				{ basket: BASKET, output: `${"d".repeat(64)}.0` },
+				APP,
+			);
+		await assert.rejects(relinquish(), ColorConsentDeclinedError);
+		await assert.rejects(relinquish(), ColorConsentDeclinedError);
+		assert.deepEqual(
+			colorPrompts.map((prompt) => [prompt.kind, prompt.summary]),
+			[
+				[
+					"transaction",
+					`Remove token output ${"d".repeat(64)}.0 from the wallet`,
+				],
+				[
+					"transaction",
+					`Remove token output ${"d".repeat(64)}.0 from the wallet`,
+				],
+			],
+		);
+		assert.deepEqual(calls, []);
+	});
+
+	it("passes p color getPublicKey and verifySignature to the module, as Yours does", async () => {
+		// The module checks the key arguments and asks nothing: this wallet
+		// reveals public keys without a prompt (seekPermissionsForPublicKeyRevelation
+		// is off), and verifying a signature reveals nothing.
+		const { manager, calls, colorPrompts } = setup();
+		const key = await manager.getPublicKey(
+			{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
+			APP,
+		);
+		assert.equal(key.publicKey, PUBKEY);
+		assert.deepEqual(colorPrompts, []);
+		assert.deepEqual(
+			calls.map((call) => [call.method, call.originator]),
+			[["getPublicKey", APP]],
+		);
+	});
+
+	it("still serves the wallet itself without a prompt", async () => {
+		const { manager, calls, colorPrompts } = setup();
 		const key = await manager.getPublicKey(
 			{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
 			ADMIN,
@@ -595,6 +628,7 @@ describe("1Color refuses every app on every routed method", () => {
 		assert.equal(key.publicKey, PUBKEY);
 		const listed = await manager.listOutputs({ basket: BASKET }, ADMIN);
 		assert.equal(listed.totalOutputs, 0);
+		assert.deepEqual(colorPrompts, []);
 		assert.deepEqual(
 			calls.map((call) => [call.method, call.originator]),
 			[
@@ -604,26 +638,84 @@ describe("1Color refuses every app on every routed method", () => {
 		);
 	});
 
-	it("refuses a spelling of the admin that is not exact", async () => {
-		const { manager } = setup();
+	it("asks an originator that only normalizes to the wallet's host", async () => {
+		const { manager, colorPrompts } = setup();
 		await assert.rejects(
-			manager.getPublicKey(
-				{ protocolID: PROTOCOL, keyID: "color", counterparty: PUBKEY },
-				"HTTPS://1SATWALLET.COM",
-			),
-			ColorUnavailableToAppsError,
+			manager.listOutputs({ basket: BASKET }, "HTTPS://1SATWALLET.COM"),
+			ColorConsentDeclinedError,
 		);
+		assert.equal(colorPrompts.length, 1);
 	});
 
-	it("disposes the module through the registered wrapper", () => {
+	it("registers a gate whose dispose reaches the module", () => {
 		const { color } = setup();
 		const module = color.module as unknown as { selected: Set<string> };
 		module.selected.add(`${"b".repeat(64)}.0`);
 		color.permissionModule.dispose();
 		assert.equal(module.selected.size, 0);
-		assert.equal(
-			color.permissionModule.capabilities,
-			color.module.capabilities,
+	});
+
+	it("refuses and logs an app's token handoff before the module sees it", async () => {
+		const { manager, calls, color, colorPrompts } = setup(undefined, true);
+		const reached: string[] = [];
+		const onRequest = color.module.onRequest.bind(color.module);
+		color.module.onRequest = async (req) => {
+			reached.push(req.originator);
+			return await onRequest(req);
+		};
+		await assert.rejects(
+			manager.createAction(
+				{
+					description: "hand off tokens",
+					labels: ["p color plan 0 1 ab", "p nosend expiry 1900000000"],
+					options: { noSend: true, randomizeOutputs: false },
+				},
+				APP,
+			),
+			ColorHandoffUnavailableError,
+		);
+		assert.deepEqual(reached, []);
+		assert.deepEqual(colorPrompts, []);
+		assert.ok(!methods(calls).includes("createAction"));
+		assert.ok(
+			getDiagnosticEvents().some(
+				(event) => event.operation === "wallet.color.createAction.handoff",
+			),
+		);
+	});
+
+	it("passes an app's non-handoff createAction and the wallet's handoff to the module", async () => {
+		const gate = appGatedColorModule(
+			{
+				onRequest: async (req: { args: object }) => ({ args: req.args }),
+			} as unknown as ColorPermissionModule,
+			ADMIN,
+		);
+		const handoff = { labels: ["p color plan x", "p nosend expiry never"] };
+		assert.deepEqual(
+			await gate.onRequest({
+				method: "createAction",
+				args: handoff,
+				originator: ADMIN,
+			}),
+			{ args: handoff },
+		);
+		const send = { labels: ["p color plan x"] };
+		assert.deepEqual(
+			await gate.onRequest({
+				method: "createAction",
+				args: send,
+				originator: APP,
+			}),
+			{ args: send },
+		);
+		await assert.rejects(
+			gate.onRequest({
+				method: "createAction",
+				args: { labels: ["p color plan x", " P Nosend Expiry never"] },
+				originator: APP,
+			}),
+			ColorHandoffUnavailableError,
 		);
 	});
 });
@@ -728,7 +820,7 @@ describe("apps may only send canonical names", () => {
 	});
 });
 
-describe("apps never see admin-only module actions or outputs in listActions", () => {
+describe("apps see p color actions in listActions only through the color consent", () => {
 	const listed: Listed = {
 		actions: [
 			{
@@ -806,6 +898,46 @@ describe("apps never see admin-only module actions or outputs in listActions", (
 		assert.deepEqual(await page(1, 1), [2, ["d"]]);
 		assert.deepEqual(await page(2, 1), [2, []]);
 		assert.deepEqual(await page(0, 10), [2, ["b", "d"]]);
+	});
+
+	it("shows the actions of a p color label the app named, once the user approves", async () => {
+		const label = "p color plan 0 1 ab";
+		const { manager, calls, colorPrompts } = setup(listed, true);
+		const result = await manager.listActions(
+			{ labels: [label], includeOutputs: true, includeLabels: true },
+			APP,
+		);
+		// One read, so the module asks once; p color outputs stay hidden
+		// (basket reads have their own consent).
+		assert.deepEqual(
+			colorPrompts.map((prompt) => [prompt.kind, prompt.summary]),
+			[["basketAccess", `Grant view to ${label}`]],
+		);
+		assert.deepEqual(methods(calls), ["listActions"]);
+		assert.deepEqual(
+			result.actions.map((action) => [
+				action.txid,
+				action.labels,
+				(action.outputs as { basket: string }[]).map((o) => o.basket),
+			]),
+			[
+				// The plan label it named is not handed back (see the plan
+				// label tests below); its other labels are.
+				["a", ["payments"], []],
+				["b", ["payments"], ["default", "p 1sat ordinals"]],
+				["d", ["p nosend expiry never"], ["tokens"]],
+			],
+		);
+	});
+
+	it("declines a p color label read the user refuses, before the wallet is read", async () => {
+		const { manager, calls, colorPrompts } = setup(listed);
+		await assert.rejects(
+			manager.listActions({ labels: ["p color plan 0 1 ab"] }, APP),
+			ColorConsentDeclinedError,
+		);
+		assert.equal(colorPrompts.length, 1);
+		assert.deepEqual(calls, []);
 	});
 
 	it("leaves the wallet's own listing untouched", async () => {
@@ -1026,5 +1158,252 @@ describe("apps may not reveal key linkage for reserved protocols", () => {
 				.map((call) => call.originator),
 			[APP, ADMIN],
 		);
+	});
+});
+
+describe("apps never read 1Color custody records", () => {
+	// A p color output's custody names the wallet's identity key.
+	const custody = JSON.stringify({
+		version: 1,
+		assetId: ASSET,
+		derivationPrefix: "cHJlZml4",
+		derivationSuffix: "c3VmZml4",
+		senderIdentityKey: PUBKEY,
+	});
+	const listed: Listed = {
+		outputs: [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				customInstructions: custody,
+				tags: ["p color tag"],
+			},
+		],
+		actions: [
+			{
+				txid: "a",
+				labels: ["p color plan 0 1 ab"],
+				outputs: [
+					{ outputIndex: 0, customInstructions: custody },
+					{ outputIndex: 1, basket: BASKET, customInstructions: custody },
+				],
+			},
+			{
+				txid: "b",
+				labels: ["payments"],
+				outputs: [
+					{ outputIndex: 0, basket: "tokens", customInstructions: "mine" },
+				],
+			},
+		],
+	};
+	const basketRead = { basket: BASKET, includeCustomInstructions: true };
+
+	it("strips custom instructions from an app's p color basket read, granted or not", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		for (let read = 0; read < 2; read++) {
+			const result = await manager.listOutputs(basketRead, APP);
+			assert.equal(result.outputs.length, 1);
+			assert.ok(!("customInstructions" in result.outputs[0]));
+			assert.deepEqual(result.outputs[0].tags, ["p color tag"]);
+		}
+		// The second read was answered by the saved grant, without a prompt.
+		assert.equal(colorPrompts.length, 1);
+	});
+
+	it("strips them from the outputs of p color actions an app lists, and keeps other actions'", async () => {
+		const { manager } = setup(listed, true);
+		const result = await manager.listActions(
+			{
+				labels: ["p color plan 0 1 ab", "payments"],
+				includeOutputs: true,
+				includeLabels: true,
+			},
+			APP,
+		);
+		assert.deepEqual(
+			result.actions.map((action) => [action.txid, action.outputs]),
+			[
+				["a", [{ outputIndex: 0 }]],
+				[
+					"b",
+					[{ outputIndex: 0, basket: "tokens", customInstructions: "mine" }],
+				],
+			],
+		);
+	});
+
+	it("leaves the wallet's own reads untouched", async () => {
+		const { manager } = setup(listed, true);
+		const outputs = await manager.listOutputs(basketRead, ADMIN);
+		assert.equal(outputs.outputs[0].customInstructions, custody);
+		const actions = await manager.listActions(
+			{ labels: ["p color plan 0 1 ab"], includeOutputs: true },
+			ADMIN,
+		);
+		assert.equal(actions.actions[0].outputs?.[0].customInstructions, custody);
+	});
+});
+
+describe("apps never read 1Color plan labels", () => {
+	// A mint's plan: its owned output names the wallet's identity key (a real
+	// point, as the plan checks), filed on the action as hex `p color plan`
+	// labels.
+	const identity = new PrivateKey(7).toPublicKey().toString();
+	const plan = ColorPlan.toLabels({
+		version: 1,
+		assets: [ASSET],
+		ownedOutputs: [
+			{
+				outputIndex: 0,
+				assetId: ASSET,
+				derivationPrefix: "cHJlZml4",
+				derivationSuffix: "c3VmZml4",
+				senderIdentityKey: identity,
+			},
+		],
+		operations: [{ assetId: ASSET, operation: "mint" }],
+		inputPositions: [],
+		changePositions: [],
+		sighashTypes: [],
+	});
+	const keyHex = Utils.toHex(Utils.toArray(identity, "utf8"));
+	const labels = [...plan, "payments"];
+	const listed: Listed = {
+		outputs: [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				labels,
+				tags: ["p color tag"],
+			},
+		],
+		actions: [
+			{
+				txid: "a",
+				labels,
+				outputs: [{ outputIndex: 0, basket: BASKET }],
+			},
+			{ txid: "b", labels: ["payments"], outputs: [] },
+		],
+	};
+
+	/** Fails when `value` carries a plan label or the identity key, raw or hex. */
+	const assertNoLeak = (value: unknown) => {
+		const text = JSON.stringify(value);
+		assert.ok(!text.includes("p color plan"), text);
+		assert.ok(!text.includes(identity), text);
+		assert.ok(!text.includes(keyHex), text);
+	};
+
+	it("is a real leak without the guard: the plan labels hold the identity key", () => {
+		assert.ok(plan.length > 1);
+		const hex = plan.map((label) => label.split(" ")[5]).join("");
+		assert.ok(hex.includes(keyHex));
+	});
+
+	it("drops labels from an app's p color basket read, even on a saved grant", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		for (let read = 0; read < 2; read++) {
+			const result = await manager.listOutputs(
+				{ basket: BASKET, includeLabels: true, includeTags: true },
+				APP,
+			);
+			assert.equal(result.outputs.length, 1);
+			assert.ok(!("labels" in result.outputs[0]));
+			assert.deepEqual(result.outputs[0].tags, ["p color tag"]);
+			assertNoLeak(result);
+		}
+		// The second read was answered by the saved grant, without a prompt.
+		assert.equal(colorPrompts.length, 1);
+	});
+
+	it("drops labels from the p color assets inventory an app reads", () => {
+		const result = listOutputsForApp(
+			{ basket: "p color assets", includeLabels: true },
+			{ totalOutputs: 1, outputs: structuredClone(listed.outputs) },
+		) as { outputs: Record<string, unknown>[] };
+		assert.deepEqual(result.outputs, [
+			{
+				outpoint: `${"c".repeat(64)}.0`,
+				satoshis: 1,
+				spendable: true,
+				tags: ["p color tag"],
+			},
+		]);
+		assertNoLeak(result);
+	});
+
+	it("keeps an app's other labels on outputs of its own baskets", async () => {
+		const { manager } = setup(listed, true);
+		const result = await manager.listOutputs(
+			{ basket: "tokens", includeLabels: true },
+			APP,
+		);
+		assert.deepEqual(result.outputs[0].labels, ["payments"]);
+		assertNoLeak(result);
+	});
+
+	it("drops every plan label from the actions of a plan label the app named", async () => {
+		const { manager, colorPrompts } = setup(listed, true);
+		const result = await manager.listActions(
+			{ labels: [plan[0]], includeOutputs: true, includeLabels: true },
+			APP,
+		);
+		assert.equal(colorPrompts.length, 1);
+		assert.deepEqual(
+			result.actions.map((action) => [action.txid, action.labels]),
+			[
+				["a", ["payments"]],
+				["b", ["payments"]],
+			],
+		);
+		assertNoLeak(result);
+	});
+
+	it("treats a call with no originator as an app", async () => {
+		const raw = {
+			listOutputs: async () => ({
+				totalOutputs: 1,
+				outputs: structuredClone(listed.outputs),
+			}),
+			listActions: async (args: unknown) => listFrom(listed, args),
+		};
+		const guarded = guardModuleIdentifiers(raw, ADMIN) as unknown as {
+			listOutputs: (args: unknown) => Promise<unknown>;
+			listActions: (args: unknown) => Promise<{
+				actions: Record<string, unknown>[];
+			}>;
+		};
+		const outputs = await guarded.listOutputs({
+			basket: BASKET,
+			includeLabels: true,
+		});
+		assertNoLeak(outputs);
+		const actions = await guarded.listActions({
+			labels: [plan[0]],
+			includeLabels: true,
+		});
+		assert.deepEqual(
+			actions.actions.map((action) => action.labels),
+			[["payments"], ["payments"]],
+		);
+		assertNoLeak(actions);
+	});
+
+	it("leaves the wallet's own reads with every label", async () => {
+		const { manager } = setup(listed, true);
+		const outputs = await manager.listOutputs(
+			{ basket: BASKET, includeLabels: true },
+			ADMIN,
+		);
+		assert.deepEqual(outputs.outputs[0].labels, labels);
+		const actions = await manager.listActions(
+			{ labels: [plan[0]], includeLabels: true },
+			ADMIN,
+		);
+		assert.deepEqual(actions.actions[0].labels, labels);
 	});
 });

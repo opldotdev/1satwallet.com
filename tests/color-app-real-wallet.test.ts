@@ -3,7 +3,12 @@
 import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { assetBasket, colorProtocolID } from "@bsv/color-permission-module";
+import { InMemoryPermissionStore } from "@1sat/wallet-browser";
+import {
+	assetBasket,
+	ColorConsentDeclinedError,
+	colorProtocolID,
+} from "@bsv/color-permission-module";
 import { KeyDeriver, PrivateKey } from "@bsv/sdk";
 import {
 	type PermissionsManagerConfig,
@@ -16,7 +21,7 @@ import {
 import { parseBrowserOrigin, redirectOriginator } from "@/lib/cwi/types";
 import { clearDiagnostics } from "@/lib/runtime-diagnostics";
 import {
-	ColorUnavailableToAppsError,
+	ColorHandoffUnavailableError,
 	createColorContext,
 	createWalletColorModule,
 } from "@/lib/wallet/color-module";
@@ -24,6 +29,8 @@ import {
 	guardModuleIdentifiers,
 	MisroutedModuleIdentifierError,
 } from "@/lib/wallet/module-identifier-guard";
+import { oneColorSendPlanLabels } from "@/lib/wallet/one-color-actions";
+import { PERMISSIONS_CONFIG } from "@/lib/wallet/permissions-config";
 
 // The wallet's host in development, as window.location.host gives it.
 const ADMIN = "localhost:3000";
@@ -163,32 +170,46 @@ const seedActions = async (
 };
 
 /** The provider's wiring: color module, manager, guard, all on `admin`. */
-const setup = async (admin = ADMIN) => {
+const setup = async (
+	admin = ADMIN,
+	config: PermissionsManagerConfig = CONFIG,
+) => {
 	const { wallet, local, identityKey } = await realWalletWithStorage();
+	const prompts: string[] = [];
 	const color = createWalletColorModule({
 		wallet,
 		chain: "test",
+		identityKey,
 		adminOriginator: admin,
+		promptHandler: async (request) => {
+			prompts.push(`color ${request.kind}`);
+			return false;
+		},
+		permissionStore: new InMemoryPermissionStore(),
 	});
 	assert.ok(color);
 	const manager = guardModuleIdentifiers(
 		new WalletPermissionsManager(wallet, admin, {
-			...CONFIG,
+			...config,
 			permissionModules: { color: color.permissionModule },
 		}),
 		admin,
 	);
-	const prompts: string[] = [];
 	for (const event of [
 		"onProtocolPermissionRequested",
 		"onBasketAccessRequested",
+		"onSpendingAuthorizationRequested",
 	] as const) {
 		manager.bindCallback(event, async (request) => {
 			prompts.push(event);
 			await manager.denyPermission(request.requestID);
 		});
 	}
-	return { wallet, manager, prompts, local, identityKey };
+	manager.bindCallback("onGroupedPermissionRequested", async (request) => {
+		prompts.push("onGroupedPermissionRequested");
+		await manager.denyGroupedPermission(request.requestID);
+	});
+	return { wallet, manager, prompts, local, identityKey, color };
 };
 
 describe("the admin originator against a real wallet", () => {
@@ -221,18 +242,16 @@ describe("the admin originator against a real wallet", () => {
 	it("an app on another localhost port is not the admin to 1Color", async () => {
 		const relayed = parseBrowserOrigin("http://localhost:3001");
 		assert.equal(relayed?.originator, "localhost");
-		const { manager } = await setup();
+		const { manager, prompts } = await setup();
+		// Asked like any app (and declined here), never approved as the wallet.
 		await assert.rejects(
 			manager.listOutputs({ basket: BASKET }, "localhost"),
-			ColorUnavailableToAppsError,
+			ColorConsentDeclinedError,
 		);
-		await assert.rejects(
-			manager.getPublicKey(
-				{ protocolID: PROTOCOL, keyID: "color", counterparty: "self" },
-				"localhost",
-			),
-			ColorUnavailableToAppsError,
-		);
+		assert.deepEqual(prompts, ["color basketAccess"]);
+		const own = await manager.listOutputs({ basket: BASKET }, ADMIN);
+		assert.equal(own.totalOutputs, 0);
+		assert.deepEqual(prompts, ["color basketAccess"]);
 	});
 });
 
@@ -477,5 +496,120 @@ describe("an app's listActions cost against a real wallet", () => {
 		// The cached scan already covers it: one read of the window.
 		assert.equal(calls.length, 3);
 		assert.ok(calls.every(({ limit = 0 }) => limit <= 32));
+	});
+});
+
+describe("token handoffs against a real wallet", () => {
+	const handoff = {
+		description: "hand off tokens",
+		labels: [...oneColorSendPlanLabels(ASSET), "p nosend expiry never"],
+		outputs: [],
+		options: { noSend: true, randomizeOutputs: false },
+	};
+
+	it("refuses an app's handoff before the module funds or splits it", async () => {
+		const { manager, prompts, color, wallet } = await setup(
+			ADMIN,
+			PERMISSIONS_CONFIG,
+		);
+		const reached: string[] = [];
+		const onRequest = color.module.onRequest.bind(color.module);
+		color.module.onRequest = async (req) => {
+			reached.push(req.originator);
+			return await onRequest(req);
+		};
+		await assert.rejects(manager.createAction(handoff, APP), {
+			name: "ColorHandoffUnavailableError",
+			message: "Token handoffs are not available to apps yet.",
+		});
+		assert.deepEqual(reached, []);
+		assert.deepEqual(prompts, []);
+		const actions = await wallet.listActions({ labels: [] }, ADMIN);
+		assert.equal(actions.totalActions, 0);
+	});
+
+	it("still hands the wallet's own handoff to the module", async () => {
+		const { manager, color } = await setup(ADMIN, PERMISSIONS_CONFIG);
+		const reached: string[] = [];
+		const onRequest = color.module.onRequest.bind(color.module);
+		color.module.onRequest = async (req) => {
+			reached.push(`${req.method} ${req.originator}`);
+			return await onRequest(req);
+		};
+		// The module takes it; this empty wallet holds no tokens to fund it.
+		await assert.rejects(manager.createAction(handoff, ADMIN), (error) => {
+			assert.ok(!(error instanceof ColorHandoffUnavailableError));
+			return true;
+		});
+		assert.deepEqual(reached, [`createAction ${ADMIN}`]);
+	});
+});
+
+describe("identity key with a protocol against a real wallet", () => {
+	const ONE_SAT_PROTOCOL: [2, string] = [2, "p 1sat ordinals"];
+
+	it("the manager alone returns the identity key unasked under p color", async () => {
+		const { wallet, color, identityKey } = await setup(
+			ADMIN,
+			PERMISSIONS_CONFIG,
+		);
+		const manager = new WalletPermissionsManager(wallet, ADMIN, {
+			...PERMISSIONS_CONFIG,
+			permissionModules: { color: color.permissionModule },
+		});
+		const asked: string[] = [];
+		manager.bindCallback("onProtocolPermissionRequested", async (request) => {
+			asked.push("onProtocolPermissionRequested");
+			await manager.denyPermission(request.requestID);
+		});
+		const key = await manager.getPublicKey(
+			{ identityKey: true, protocolID: PROTOCOL, keyID: "color" },
+			APP,
+		);
+		assert.equal(key.publicKey, identityKey);
+		assert.deepEqual(asked, []);
+	});
+
+	it("refuses an app's identityKey with any protocolID, without a prompt", async () => {
+		const { manager, prompts } = await setup(ADMIN, PERMISSIONS_CONFIG);
+		for (const protocolID of [PROTOCOL, ONE_SAT_PROTOCOL, [2, "my app"]]) {
+			await assert.rejects(
+				manager.getPublicKey(
+					{
+						identityKey: true,
+						protocolID: protocolID as [2, string],
+						keyID: "1",
+					},
+					APP,
+				),
+				(error) => {
+					assert.ok(error instanceof MisroutedModuleIdentifierError);
+					assert.equal(error.reason, "identity-key-with-protocol");
+					return true;
+				},
+			);
+		}
+		assert.deepEqual(prompts, []);
+	});
+
+	it("sends an app's plain identity key request to the normal prompt", async () => {
+		const { manager, prompts } = await setup(ADMIN, PERMISSIONS_CONFIG);
+		await assert.rejects(
+			manager.getPublicKey({ identityKey: true }, APP),
+			(error) => {
+				assert.ok(!(error instanceof MisroutedModuleIdentifierError));
+				return true;
+			},
+		);
+		assert.deepEqual(prompts, ["onProtocolPermissionRequested"]);
+	});
+
+	it("still gives the wallet itself the identity key with a protocolID", async () => {
+		const { manager, identityKey } = await setup(ADMIN, PERMISSIONS_CONFIG);
+		const key = await manager.getPublicKey(
+			{ identityKey: true, protocolID: PROTOCOL, keyID: "color" },
+			ADMIN,
+		);
+		assert.equal(key.publicKey, identityKey);
 	});
 });

@@ -27,10 +27,7 @@ import {
 	type WebWalletResult,
 } from "@1sat/wallet-browser";
 import { Beef, PrivateKey, type WalletInterface } from "@bsv/sdk";
-import {
-	type PermissionsManagerConfig,
-	WalletPermissionsManager,
-} from "@bsv/wallet-toolbox-client";
+import { WalletPermissionsManager } from "@bsv/wallet-toolbox-client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
 	createContext,
@@ -84,6 +81,7 @@ import {
 } from "@/lib/wallet/external-network";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import { guardModuleIdentifiers } from "@/lib/wallet/module-identifier-guard";
+import { PERMISSIONS_CONFIG } from "@/lib/wallet/permissions-config";
 import {
 	providerCapability,
 	surfaceForConnection,
@@ -169,29 +167,6 @@ let carriedInitError: string | null = null;
 // relay and the redirect flow pass an app's hostname without a port.
 const ADMIN_ORIGINATOR =
 	typeof window !== "undefined" ? window.location.host : "1satwallet.com";
-
-const PERMISSIONS_CONFIG: PermissionsManagerConfig = {
-	seekProtocolPermissionsForSigning: true,
-	seekProtocolPermissionsForEncrypting: true,
-	seekProtocolPermissionsForHMAC: true,
-	seekPermissionsForKeyLinkageRevelation: true,
-	seekPermissionsForPublicKeyRevelation: false,
-	seekPermissionsForIdentityKeyRevelation: true,
-	seekPermissionsForIdentityResolution: true,
-	seekBasketInsertionPermissions: true,
-	seekBasketRemovalPermissions: true,
-	seekBasketListingPermissions: false,
-	seekPermissionWhenApplyingActionLabels: false,
-	seekPermissionWhenListingActionsByLabel: false,
-	seekCertificateDisclosurePermissions: true,
-	seekCertificateAcquisitionPermissions: true,
-	seekCertificateRelinquishmentPermissions: true,
-	seekCertificateListingPermissions: false,
-	encryptWalletMetadata: true,
-	seekSpendingPermissions: true,
-	seekGroupedPermission: true,
-	differentiatePrivilegedOperations: true,
-};
 
 interface WalletBalance {
 	confirmed: number;
@@ -1055,10 +1030,14 @@ export function WalletToolboxProvider({
 					adminOriginator: ADMIN_ORIGINATOR,
 					services: result.services,
 				});
+				// Testnet only: apps reach 1Color through the color consent,
+				// prompted in the CWI relay like the 1Sat asset modules.
 				const color = createWalletColorModule({
 					wallet: result.wallet,
 					chain,
+					identityKey: newIdentityKey,
 					adminOriginator: ADMIN_ORIGINATOR,
+					promptHandler: requestAssetPermission,
 				});
 				const permissionModules = color
 					? { ...assetPermissionModules, color: color.permissionModule }

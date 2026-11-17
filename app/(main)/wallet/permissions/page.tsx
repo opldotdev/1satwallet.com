@@ -1,8 +1,7 @@
 "use client";
 
 import type { PermissionToken } from "@bsv/wallet-toolbox-client";
-import { ArrowLeft, Key, Loader2, Shield, Trash2, Wallet } from "lucide-react";
-import Link from "next/link";
+import { Key, Loader2, Shield, Trash2, Wallet } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +13,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { ColorAppGrants } from "@/components/wallet/color-app-grants";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -181,15 +181,6 @@ export default function PermissionsPage() {
 
 	return (
 		<section className="space-y-6">
-			<div className="flex items-center gap-2 justify-start">
-				<Button variant="ghost" size="icon" asChild className="-ml-2">
-					<Link href="/wallet/settings">
-						<span className="sr-only">Back to wallet settings</span>
-						<ArrowLeft className="h-4 w-4" />
-					</Link>
-				</Button>
-				<h2 className="font-mono text-xl font-medium">Connected Apps</h2>
-			</div>
 			<div>
 				{!isInitialized ? (
 					<div className="flex items-center justify-center py-12">
@@ -309,6 +300,7 @@ export default function PermissionsPage() {
 					</div>
 				)}
 			</div>
+			<ColorAppGrants />
 		</section>
 	);
 }
