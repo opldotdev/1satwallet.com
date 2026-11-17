@@ -531,3 +531,38 @@ describe("key-list sweep", () => {
 		);
 	});
 });
+
+describe("sweep log prefix", () => {
+	const badWif = `${payKey.toWif().slice(0, -4)}0OIl`;
+	async function logged(prefix?: string) {
+		const lines: string[] = [];
+		const originalError = console.error;
+		console.error = (first: unknown) => lines.push(String(first));
+		try {
+			const { actions } = fakeActions();
+			await executeKeySweep({
+				wallet: {} as WalletInterface,
+				services: {} as OneSatServices,
+				keys: [{ label: "Legacy pay", wif: badWif }],
+				onProgress: () => undefined,
+				funding: [],
+				ordinals: [],
+				bsv21Tokens: [],
+				actions,
+				...(prefix ? { logPrefix: prefix } : {}),
+			});
+		} finally {
+			console.error = originalError;
+		}
+		return lines;
+	}
+
+	it("keeps the migration's log text and uses the caller's prefix", async () => {
+		assert.deepEqual(await logged(), [
+			"[migration] legacy pay key could not be read",
+		]);
+		assert.deepEqual(await logged("[sweep]"), [
+			"[sweep] legacy pay key could not be read",
+		]);
+	});
+});

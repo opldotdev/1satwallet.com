@@ -109,6 +109,8 @@ interface SweepRunOptions {
 	/** BSV-20 balances grouped by ticker (groupBsv20Tokens) */
 	bsv20Tokens?: Bsv20Balance[];
 	actions?: Partial<SweepActions>;
+	/** Prefix for this run's console logs; the migration's is "[migration]" */
+	logPrefix?: string;
 }
 
 export interface MigrationSweepParams extends SweepRunOptions {
@@ -329,6 +331,7 @@ export async function executeKeySweep(
 		ordinals,
 		bsv21Tokens,
 		bsv20Tokens = [],
+		logPrefix = "[migration]",
 	} = params;
 	const actions: SweepActions = { ...defaultSweepActions, ...params.actions };
 
@@ -344,7 +347,7 @@ export async function executeKeySweep(
 		} catch (error) {
 			// Never the WIF itself: only which key and why it did not parse.
 			console.error(
-				`[migration] ${label.toLowerCase()} key could not be read`,
+				`${logPrefix} ${label.toLowerCase()} key could not be read`,
 				error,
 			);
 			result.errors.push(
@@ -508,7 +511,7 @@ export async function executeKeySweep(
 					if (txResult.error) {
 						chunkFailed = true;
 						console.error(
-							`[migration] ${errorLabel}${batchLabel} failed`,
+							`${logPrefix} ${errorLabel}${batchLabel} failed`,
 							txResult.error,
 						);
 						result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
@@ -548,7 +551,7 @@ export async function executeKeySweep(
 				}
 			} catch (error) {
 				chunkFailed = true;
-				console.error(`[migration] ${errorLabel}${batchLabel} failed`, error);
+				console.error(`${logPrefix} ${errorLabel}${batchLabel} failed`, error);
 				result.errors.push(
 					`${errorLabel}${batchLabel}: ${error instanceof Error ? error.message : String(error)}`,
 				);

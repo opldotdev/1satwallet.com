@@ -77,7 +77,8 @@ function formatAmount(raw: bigint, decimals: number): string {
 	return fraction ? `${whole}.${fraction}` : whole;
 }
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const plural = (n: number, one: string, many = `${one}s`) =>
+	`${n} ${n === 1 ? one : many}`;
 
 function StatusIcon({ status }: { status: SweepStepState["status"] }) {
 	if (status === "done") {
@@ -318,6 +319,9 @@ export function KeySweepTool() {
 	const plainOrdinals = sweepOrdinals.length - unlistedOpns.length;
 	const listedCount = sweepOrdinals.filter(isListedOutput).length;
 	const notSwept = assets.locked.length + assets.run.length;
+	// Only a finished, error-free scan of the current keys may be swept: after
+	// a failed scan or a key change the hook still holds the previous result.
+	const scanReady = assets.scanned && !assets.loading && !assets.error;
 	const remaining =
 		assets.scanned && !assets.loading ? countSweepableLegacyAssets(assets) : 0;
 
@@ -381,7 +385,7 @@ export function KeySweepTool() {
 	};
 
 	const runSweep = async () => {
-		if (!keys || sweepCount === 0) return;
+		if (!keys || !scanReady || sweepCount === 0) return;
 		setPhase("sweeping");
 		setSweepError(null);
 		setProgress(null);
@@ -402,6 +406,7 @@ export function KeySweepTool() {
 				ordinals: sweepOrdinals,
 				bsv21Tokens: plan.sweepBsv21,
 				bsv20Tokens: plan.sweepBsv20,
+				logPrefix: "[sweep]",
 			});
 			const steps = seen.last?.steps ?? [];
 			setRuns((prev) => [...prev, { result, steps, opnsNames }]);
@@ -443,7 +448,7 @@ export function KeySweepTool() {
 			<div className="min-w-0 flex-1">
 				<div className="text-xs text-muted-foreground">From</div>
 				<div className="truncate font-medium">
-					{source} · {plural(keys?.length ?? 0, "address")}
+					{source} · {plural(keys?.length ?? 0, "address", "addresses")}
 				</div>
 			</div>
 			<ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -578,7 +583,7 @@ export function KeySweepTool() {
 										assets.addressStatus.filter((s) => s.state === "done")
 											.length
 									}{" "}
-									of {plural(keys.length, "address")} checked
+									of {plural(keys.length, "address", "addresses")} checked
 								</p>
 							</div>
 						) : assets.error ? (
@@ -758,7 +763,7 @@ export function KeySweepTool() {
 					{phase === "review" && (
 						<Button
 							className="flex-1"
-							disabled={assets.loading || sweepCount === 0}
+							disabled={!scanReady || sweepCount === 0}
 							onClick={() => void runSweep()}
 						>
 							{sweepCount > 0
