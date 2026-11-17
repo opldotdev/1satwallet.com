@@ -9,6 +9,7 @@ import {
 	EyeOff,
 	Globe,
 	Inbox,
+	KeyRound,
 	Loader2,
 	LogOut,
 	RefreshCw,
@@ -29,6 +30,7 @@ import { Switch } from "@/components/ui/switch";
 import { MessageboxReceiving } from "@/components/wallet/messagebox-receiving";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { useSound } from "@/hooks/use-sound";
+import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { CURRENCY_KEY, PRIVACY_MODE_KEY } from "@/lib/constants";
 import { walletStorageHost } from "@/lib/wallet/storage-endpoint";
 import { useSettingsStorage } from "@/lib/wallet-storage";
@@ -192,6 +194,19 @@ export function WalletSettingsForm() {
 						}
 					/>
 				)}
+				{connectionMode === "built-in" &&
+					isRouteAvailableOn(chain, "/wallet/sweep") && (
+						<SettingsRow
+							icon={KeyRound}
+							title="Sweep a private key"
+							description="Move the funds, ordinals and tokens held by a WIF, key backup or recovery phrase into this wallet."
+							action={
+								<Button variant="outline" asChild onClick={() => play("click")}>
+									<Link href="/wallet/sweep">Open</Link>
+								</Button>
+							}
+						/>
+					)}
 			</SettingsGroup>
 
 			<SettingsGroup title="Developer">

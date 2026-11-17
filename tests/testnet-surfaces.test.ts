@@ -17,6 +17,7 @@ const HIDDEN_ON_TESTNET = [
 	"/inscribe",
 	"/wallet/opns",
 	"/wallet/migrate",
+	"/wallet/sweep",
 ];
 
 describe("testnet surfaces", () => {
@@ -86,6 +87,7 @@ describe("testnet surfaces", () => {
 			"inscribe",
 			"wallet/opns",
 			"wallet/migrate",
+			"wallet/sweep",
 		]) {
 			const layout = join("app/(main)", dir, "layout.tsx");
 			assert.ok(existsSync(join(process.cwd(), layout)), layout);
