@@ -306,9 +306,18 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 				saveError={props.auditSaveError}
 			/>
 		);
+		// The sweep's own notes already name skipped tokens; say it once.
+		const notesNameInactive = outcome.notes.some((note) =>
+			/active on the token overlay/.test(note),
+		);
 		const stayLines = [
 			...rows
-				.filter((r) => r.kind !== "listings" && r.kind !== "bsv20")
+				.filter(
+					(r) =>
+						r.kind !== "listings" &&
+						r.kind !== "bsv20" &&
+						!(r.kind === "inactive" && notesNameInactive),
+				)
 				.map((r) => r.label),
 			...(bsv20Line ? [bsv20Line] : []),
 		];

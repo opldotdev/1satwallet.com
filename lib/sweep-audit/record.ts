@@ -57,6 +57,13 @@ export interface SweepAuditLeftBehind {
 	reason: string;
 	/** "plan": never sent to the sweep; "sweep": the sweep left it */
 	stage: "plan" | "sweep";
+	/** Its source transaction, when the reason is about that transaction */
+	txid?: string;
+	/** Byte sizes behind the reason: the source tx and its BEEF */
+	txBytes?: number;
+	beefBytes?: number;
+	/** The exact underlying error or check, when `reason` is plain words */
+	detail?: string;
 }
 
 export interface SweepAuditTxids {
@@ -213,6 +220,10 @@ const sweepLeftBehind = (
 		...(item.stepId ? { kind: item.stepId } : {}),
 		reason: item.reason,
 		stage: "sweep" as const,
+		...(item.txid ? { txid: item.txid } : {}),
+		...(item.txBytes !== undefined ? { txBytes: item.txBytes } : {}),
+		...(item.beefBytes !== undefined ? { beefBytes: item.beefBytes } : {}),
+		...(item.detail ? { detail: item.detail } : {}),
 	}));
 
 const withSweepLeftBehind = (
@@ -431,6 +442,13 @@ export function sweepAuditReportText(
 		lines.push(
 			`- ${item.outpoint}${item.kind ? ` [${item.kind}]` : ""}: ${item.reason}`,
 		);
+		const facts = [
+			item.txid ? `source tx ${item.txid}` : null,
+			item.txBytes !== undefined ? `tx ${item.txBytes} bytes` : null,
+			item.beefBytes !== undefined ? `BEEF ${item.beefBytes} bytes` : null,
+			item.detail ? `error: ${item.detail}` : null,
+		].filter((fact): fact is string => fact !== null);
+		if (facts.length > 0) lines.push(`  (${facts.join("; ")})`);
 	}
 
 	section(`Errors (${record.errors.length})`);

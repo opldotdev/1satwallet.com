@@ -332,6 +332,22 @@ export function SweepAuditView({
 									{item.kind ? `${item.kind}: ` : ""}
 									{item.reason}
 								</span>
+								{(item.txid || item.detail) && (
+									<span className="wrap-anywhere font-mono text-[11px] text-muted-foreground">
+										{[
+											item.txid ? `tx ${item.txid}` : null,
+											item.txBytes !== undefined
+												? `${item.txBytes} tx bytes`
+												: null,
+											item.beefBytes !== undefined
+												? `${item.beefBytes} BEEF bytes`
+												: null,
+											item.detail ?? null,
+										]
+											.filter(Boolean)
+											.join(" · ")}
+									</span>
+								)}
 							</li>
 						))}
 					</ul>

@@ -4,21 +4,26 @@ import { useEffect, useMemo, useState } from "react";
 import { stackContentUrl } from "@/lib/stack";
 import {
 	BSV20_CONTENT_MAX_BYTES,
-	type Bsv20Content,
+	BSV20_UNREADABLE,
 	type Bsv20Group,
+	type Bsv20Read,
 	groupUnconfirmedBsv20,
+	isBsv20ContentType,
 	parseBsv20Content,
 } from "@/lib/wallet/bsv20-content";
 
-/** outpoint -> parsed content (null: unreadable, not BSV-20 or failed). */
-const cache = new Map<string, Bsv20Content | null>();
-/** The cache keeps at most this many outpoints, dropping the oldest first. */
-const CACHE_MAX_ENTRIES = 1000;
+/** outpoint -> what reading its content gave. */
+const cache = new Map<string, Bsv20Read>();
+/**
+ * The cache keeps at least this many outpoints (more while a longer list is
+ * on screen), dropping the oldest first.
+ */
+const CACHE_MIN_ENTRIES = 1000;
 
-function remember(outpoint: string, content: Bsv20Content | null) {
+function remember(outpoint: string, read: Bsv20Read, keep: number) {
 	cache.delete(outpoint);
-	cache.set(outpoint, content);
-	while (cache.size > CACHE_MAX_ENTRIES) {
+	cache.set(outpoint, read);
+	while (cache.size > Math.max(CACHE_MIN_ENTRIES, keep)) {
 		const oldest = cache.keys().next().value;
 		if (oldest === undefined) break;
 		cache.delete(oldest);
@@ -26,10 +31,6 @@ function remember(outpoint: string, content: Bsv20Content | null) {
 }
 
 const REQUEST_TIMEOUT_MS = 8000;
-
-/** BSV-20 inscriptions are JSON; anything else is not worth reading. */
-const isTextual = (contentType: string | null) =>
-	!contentType || /json|text\/plain/i.test(contentType);
 
 /**
  * Reads at most `max` bytes of the body, cancelling the stream past that, so
@@ -67,29 +68,102 @@ async function readCapped(
 	return new TextDecoder().decode(bytes);
 }
 
-async function fetchContent(
+/** Read one output's content as BSV-20, or say why it can't be. */
+export async function readBsv20Content(
 	outpoint: string,
 	parent: AbortSignal,
-): Promise<Bsv20Content | null> {
+	fetchFn: typeof fetch = fetch,
+): Promise<Bsv20Read> {
 	const controller = new AbortController();
 	const abort = () => controller.abort();
 	parent.addEventListener("abort", abort);
-	const timer = setTimeout(abort, REQUEST_TIMEOUT_MS);
+	let timedOut = false;
+	const timer = setTimeout(() => {
+		timedOut = true;
+		abort();
+	}, REQUEST_TIMEOUT_MS);
 	try {
-		const response = await fetch(stackContentUrl(outpoint), {
-			signal: controller.signal,
-		});
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		if (!isTextual(response.headers.get("content-type"))) {
+		let response: Response;
+		try {
+			response = await fetchFn(stackContentUrl(outpoint), {
+				signal: controller.signal,
+			});
+		} catch (error) {
+			if (parent.aborted) throw error;
+			return {
+				content: null,
+				reason: timedOut ? BSV20_UNREADABLE.timeout : BSV20_UNREADABLE.network,
+			};
+		}
+		if (!response.ok) {
 			await response.body?.cancel();
-			return null;
+			return { content: null, reason: BSV20_UNREADABLE.http(response.status) };
+		}
+		const contentType = response.headers.get("content-type");
+		if (!isBsv20ContentType(contentType)) {
+			await response.body?.cancel();
+			return {
+				content: null,
+				reason: BSV20_UNREADABLE.contentType(
+					(contentType ?? "").split(";")[0].trim(),
+				),
+			};
 		}
 		const text = await readCapped(response, BSV20_CONTENT_MAX_BYTES);
-		return text === null ? null : parseBsv20Content(text);
+		if (text === null) {
+			return { content: null, reason: BSV20_UNREADABLE.tooLarge };
+		}
+		const content = parseBsv20Content(text);
+		return content
+			? { content }
+			: { content: null, reason: BSV20_UNREADABLE.notBsv20 };
 	} finally {
 		clearTimeout(timer);
 		parent.removeEventListener("abort", abort);
 	}
+}
+
+/**
+ * Read every outpoint's content, `concurrency` at a time, calling `onRead`
+ * as each finishes. Stops taking new ones once `signal` aborts. Every
+ * outpoint given is read: the limit is on requests in flight, not coverage.
+ */
+export async function readBsv20Contents(
+	outpoints: readonly string[],
+	{
+		concurrency,
+		signal,
+		onRead,
+		read = (outpoint) => readBsv20Content(outpoint, signal),
+	}: {
+		concurrency: number;
+		signal: AbortSignal;
+		onRead: (outpoint: string, result: Bsv20Read) => void;
+		read?: (outpoint: string) => Promise<Bsv20Read>;
+	},
+): Promise<void> {
+	let next = 0;
+	const worker = async () => {
+		while (next < outpoints.length && !signal.aborted) {
+			const outpoint = outpoints[next++];
+			let result: Bsv20Read;
+			try {
+				result = await read(outpoint);
+			} catch (error) {
+				if (signal.aborted) return;
+				console.debug("[sweep] BSV-20 content not read", outpoint, error);
+				result = { content: null, reason: BSV20_UNREADABLE.network };
+			}
+			if (signal.aborted) return;
+			onRead(outpoint, result);
+		}
+	};
+	await Promise.all(
+		Array.from(
+			{ length: Math.min(Math.max(1, concurrency), outpoints.length) },
+			worker,
+		),
+	);
 }
 
 export interface Bsv20ContentLabels {
@@ -104,22 +178,19 @@ export interface Bsv20ContentLabels {
 /**
  * Reads what each unconfirmed BSV-20 inscription claims (ticker, amount) so
  * the screen can name it. Display only: nothing here reaches the sweep.
- * Fetches only while `enabled`, at most `max` outputs, `concurrency` at a
- * time, each with a timeout; unmount aborts. Failures read as "Unknown".
+ * Fetches every output while `enabled`, `concurrency` at a time, each with a
+ * timeout; unmount aborts. Outputs that can't be read are grouped as
+ * "Unreadable", with the reason.
  */
 export function useBsv20ContentLabels(
 	outpoints: string[],
-	{
-		enabled,
-		max = 200,
-		concurrency = 6,
-	}: { enabled: boolean; max?: number; concurrency?: number },
+	{ enabled, concurrency = 6 }: { enabled: boolean; concurrency?: number },
 ): Bsv20ContentLabels {
 	const [version, setVersion] = useState(0);
 	const [loading, setLoading] = useState(false);
 	// Keyed on the outpoints themselves, so a list rebuilt on each render
 	// neither restarts nor aborts the fetches.
-	const wantedKey = outpoints.slice(0, max).join("|");
+	const wantedKey = outpoints.join("|");
 	const wanted = useMemo(
 		() => (wantedKey ? wantedKey.split("|") : []),
 		[wantedKey],
@@ -130,24 +201,15 @@ export function useBsv20ContentLabels(
 		const todo = wanted.filter((outpoint) => !cache.has(outpoint));
 		if (todo.length === 0) return;
 		const controller = new AbortController();
-		let next = 0;
 		setLoading(true);
-		const worker = async () => {
-			while (next < todo.length && !controller.signal.aborted) {
-				const outpoint = todo[next++];
-				try {
-					remember(outpoint, await fetchContent(outpoint, controller.signal));
-				} catch (error) {
-					if (controller.signal.aborted) return;
-					console.debug("[sweep] BSV-20 content not read", outpoint, error);
-					remember(outpoint, null);
-				}
+		void readBsv20Contents(todo, {
+			concurrency,
+			signal: controller.signal,
+			onRead: (outpoint, read) => {
+				remember(outpoint, read, wanted.length);
 				setVersion((v) => v + 1);
-			}
-		};
-		void Promise.all(
-			Array.from({ length: Math.min(concurrency, todo.length) }, worker),
-		).finally(() => {
+			},
+		}).finally(() => {
 			if (!controller.signal.aborted) setLoading(false);
 		});
 		return () => {
@@ -163,7 +225,7 @@ export function useBsv20ContentLabels(
 			groups: groupUnconfirmedBsv20(
 				read.map((outpoint) => ({
 					outpoint,
-					content: cache.get(outpoint) ?? null,
+					read: cache.get(outpoint) as Bsv20Read,
 				})),
 			),
 			total: outpoints.length,

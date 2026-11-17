@@ -20,6 +20,7 @@ import {
 	formatTokenAmount,
 	type StayRow,
 } from "@/lib/wallet/sweep-summary";
+import { unreadableReasonsLine } from "./sweep-bsv20-stays";
 import { SWEEP_SHEET_LAYER } from "./sweep-layers";
 
 /** A claimed amount as written, digits grouped; never verified or summed. */
@@ -217,6 +218,11 @@ export function SweepDetails({
 														{group.tick} · {group.outputs}{" "}
 														{group.outputs === 1 ? "output" : "outputs"}
 													</p>
+													{group.reasons && group.reasons.length > 0 && (
+														<p className="text-muted-foreground text-xs">
+															{unreadableReasonsLine(group.reasons)}
+														</p>
+													)}
 													{group.entries.map((entry) => (
 														<p
 															key={entry.outpoint}

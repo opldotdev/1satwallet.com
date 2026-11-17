@@ -12,7 +12,7 @@ import {
 } from "@1sat/actions";
 import { type IndexedOutput, normalizeOutpoint } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
-import { PrivateKey, type WalletInterface } from "@bsv/sdk";
+import { Beef, PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
 	BSV20_UNCONFIRMED_REASON,
 	excludeUnsweepableTokens,
@@ -21,12 +21,42 @@ import {
 	isolateListedBatches,
 } from "@/lib/wallet/migration-listings";
 
-// Chunk sizes: each chunk is its own transaction, so one bad output or a
-// single oversized tx can't sink an entire large sweep, and each completed
-// chunk is real on-chain progress the user can see.
-const FUNDING_CHUNK_SIZE = 200;
-const ORDINAL_CHUNK_SIZE = 50;
-const TOKEN_CHUNK_SIZE = 50;
+/**
+ * wallet.1sat.app's request body limit: 8 MiB. Measured 2026-11-17 against
+ * the live server: a request of 8,323,134 bytes reached auth (401); 8 MiB
+ * (8,388,608 bytes) and above got 413 ERR_BODY_TOO_LARGE. Matches the
+ * 8 << 20 BEEF bound in opldotdev/swift-wallet-toolbox StorageLimits.swift.
+ */
+export const WALLET_SERVER_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Bytes a binary field such as inputBEEF takes in the createAction request
+ * body. @1sat/wallet's factory creates its StorageClient with
+ * binaryRequests: true, and wallet.1sat.app answers with
+ * X-BSV-Binary-Encoding: base64 (checked 2026-11-17: makeAvailable leaves
+ * serverSupportsBinary true), so @bsv/wallet-toolbox-client's
+ * binaryJsonReplacer writes it as {"$bsvBinary":"base64","data":"<base64>"}.
+ */
+const BINARY_FIELD_WRAPPER_BYTES = JSON.stringify({
+	$bsvBinary: "base64",
+	data: "",
+}).length;
+export const encodedBinaryBytes = (bytes: number): number =>
+	BINARY_FIELD_WRAPPER_BYTES + 4 * Math.ceil(bytes / 3);
+
+/**
+ * Bytes one input descriptor takes in the request body, measured from the
+ * shape @1sat/actions' sweep actions build (the longest of their
+ * descriptions), with its separating comma.
+ */
+const inputDescriptorBytes = (outpoint: string): number =>
+	JSON.stringify({
+		outpoint,
+		inputDescription: `Token input ${outpoint}`,
+		unlockingScriptLength: 108,
+		sequenceNumber: 0xffffffff,
+	}).length + 1;
+
 /** Concurrent BEEF fetches during input preparation */
 const PREPARE_CONCURRENCY = 6;
 
@@ -53,6 +83,13 @@ export interface SweepLeftBehind {
 	/** The step it belonged to, when it reached one */
 	stepId?: string;
 	reason: string;
+	/** Its source transaction, when the reason is about that transaction */
+	txid?: string;
+	/** Byte sizes behind the reason: the source tx and its BEEF */
+	txBytes?: number;
+	beefBytes?: number;
+	/** The exact underlying error or check result, when `reason` is plain words */
+	detail?: string;
 }
 
 export interface SweepProgress {
@@ -153,14 +190,6 @@ export interface KeySweepParams extends SweepRunOptions {
 	keys: readonly SweepKey[];
 }
 
-const chunk = <T>(items: T[], size: number): T[][] => {
-	const out: T[][] = [];
-	for (let i = 0; i < items.length; i += size) {
-		out.push(items.slice(i, i + size));
-	}
-	return out;
-};
-
 /**
  * Resolve the signing key for each output from its own: events, as
  * @1sat/sweep-ui's buildKeys does: every own: event is considered and
@@ -225,84 +254,155 @@ const tokenAmountLookup = (amounts: Map<string, string>, label: string) => {
 	};
 };
 
-interface PreparedInputs {
-	/** Outputs whose locking scripts were resolved, with their sweep inputs */
-	prepared: {
-		output: IndexedOutput;
-		input: Awaited<ReturnType<typeof prepareSweepInputs>>[number];
-	}[];
-	/** Outputs skipped because their source tx could not be fetched */
-	failures: { outpoint: string; error: string }[];
+type SweepInput = Awaited<ReturnType<typeof prepareSweepInputs>>[number];
+
+/** An output with the sweep input built from its source tx. */
+interface PreparedInput {
+	output: IndexedOutput;
+	input: SweepInput;
+}
+
+/** A source transaction a batch spends from, with its BEEF's sizes. */
+interface SweepSource {
+	txid: string;
+	outputs: IndexedOutput[];
+	/** Serialized BEEF of the source tx, as the indexer served it */
+	beefBytes: number;
+	/** The source tx alone */
+	txBytes: number;
+	txCount: number;
+	bumpCount: number;
+}
+
+const txidOf = (outpoint: string): string => outpoint.split(/[._]/)[0];
+
+const errorMessage = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
+
+/** "8.4 MB" / "640 KB": sizes for messages people read. */
+export const formatBytes = (bytes: number): string =>
+	bytes >= 1_000_000
+		? `${(bytes / 1_000_000).toFixed(1)} MB`
+		: `${Math.max(1, Math.round(bytes / 1_000))} KB`;
+
+/**
+ * True for the wallet server refusing a request body as too large:
+ * @bsv/wallet-toolbox-client's StorageClient throws
+ * "WalletStorageClient rpcCall: network error 413" for it.
+ */
+export const isRequestTooLarge = (error: unknown): boolean =>
+	/\bnetwork error 413(?:\s|$)|ERR_BODY_TOO_LARGE/.test(errorMessage(error));
+
+/** What the sweep actions did with the wallet during one attempt. */
+interface WalletCallTrace {
+	/** The error createAction threw, if it threw */
+	createActionError?: unknown;
+	/** signAction is the call that signs and broadcasts */
+	signActionCalls: number;
 }
 
 /**
- * Prepare sweep inputs with bounded concurrency and per-txid failure
- * isolation. prepareSweepInputs fetches BEEFs serially and throws on the
- * first failure — for old addresses with hundreds of source txs that is
- * both slow and all-or-nothing. Here each source txid is fetched
- * independently (up to PREPARE_CONCURRENCY at once); a txid that can't be
- * resolved skips only its own outputs.
+ * The wallet as the sweep actions see it, recording createAction failures
+ * and signAction calls into the current attempt's trace. Every sweep action
+ * (sweepBsv, sweepOrdinals, sweepBsv20, sweepBsv21) runs executeTrackedAction:
+ * wallet.createAction with signAndProcess: false, then completeSignedAction,
+ * which signs locally and calls wallet.signAction to broadcast. A createAction
+ * that threw means nothing was signed or broadcast, which is the only case
+ * the sweep retries.
  */
-async function prepareInputsConcurrent(
-	prepare: SweepActions["prepareSweepInputs"],
-	ctx: Parameters<typeof prepareSweepInputs>[0],
+function traceWallet(
+	wallet: WalletInterface,
+	current: () => WalletCallTrace,
+): WalletInterface {
+	// The proxy's own target is a blank object, so a frozen wallet's
+	// properties never bind the trap to returning them unwrapped.
+	const target = wallet;
+	return new Proxy({} as WalletInterface, {
+		has: (_, prop) => Reflect.has(target, prop),
+		get(_, prop) {
+			const value = Reflect.get(target, prop, target);
+			if (typeof value !== "function") return value;
+			if (prop === "createAction") {
+				return async (...args: unknown[]) => {
+					try {
+						return await value.apply(target, args);
+					} catch (error) {
+						current().createActionError = error;
+						throw error;
+					}
+				};
+			}
+			if (prop === "signAction") {
+				return (...args: unknown[]) => {
+					current().signActionCalls++;
+					return value.apply(target, args);
+				};
+			}
+			return value.bind(target);
+		},
+	});
+}
+
+/**
+ * The services as the sweep sees them: getBeefForTxid answers from the BEEFs
+ * this run already fetched and checked, so a batch's source txs are fetched
+ * once (not again by prepareSweepInputs and again by the action), and the
+ * action is sent exactly the BEEF that was checked. Each call gets its own
+ * copy, since the actions merge into the first BEEF they get.
+ */
+function cachedBeefServices(
+	services: OneSatServices,
+	cache: Map<string, number[]>,
+): OneSatServices {
+	const target = services;
+	return new Proxy({} as OneSatServices, {
+		has: (_, prop) => Reflect.has(target, prop),
+		get(_, prop) {
+			if (prop === "getBeefForTxid") {
+				return async (txid: string) => {
+					const cached = cache.get(txid);
+					if (cached) return Beef.fromBinary(cached);
+					return target.getBeefForTxid(txid);
+				};
+			}
+			const value = Reflect.get(target, prop, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+}
+
+/** Runs `work` over `items`, at most `limit` at once, results in order. */
+async function mapConcurrent<T, R>(
+	items: readonly T[],
+	limit: number,
+	work: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let cursor = 0;
+	const worker = async () => {
+		while (cursor < items.length) {
+			const index = cursor++;
+			results[index] = await work(items[index]);
+		}
+	};
+	await Promise.all(
+		Array.from({ length: Math.min(limit, items.length) }, worker),
+	);
+	return results;
+}
+
+/** Outputs grouped by source txid, in first-seen order. */
+function groupBySourceTx(
 	outputs: IndexedOutput[],
-	onDetail?: (done: number, total: number) => void,
-): Promise<PreparedInputs> {
+): [string, IndexedOutput[]][] {
 	const byTxid = new Map<string, IndexedOutput[]>();
 	for (const output of outputs) {
-		const txid = output.outpoint.split(/[._]/)[0];
+		const txid = txidOf(output.outpoint);
 		const group = byTxid.get(txid) ?? [];
 		group.push(output);
 		byTxid.set(txid, group);
 	}
-
-	const groups = [...byTxid.entries()];
-	const prepared: PreparedInputs["prepared"] = [];
-	const failures: PreparedInputs["failures"] = [];
-	let done = 0;
-	let cursor = 0;
-
-	const worker = async () => {
-		while (cursor < groups.length) {
-			const index = cursor++;
-			const [txid, groupOutputs] = groups[index];
-			try {
-				const inputs = await prepare(ctx, groupOutputs);
-				const byOutpoint = new Map(inputs.map((i) => [i.outpoint, i]));
-				for (const output of groupOutputs) {
-					const input = byOutpoint.get(output.outpoint);
-					if (input?.lockingScript) {
-						prepared.push({ output, input });
-					} else {
-						failures.push({
-							outpoint: output.outpoint,
-							error: "missing locking script",
-						});
-					}
-				}
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				for (const output of groupOutputs) {
-					failures.push({
-						outpoint: output.outpoint,
-						error: `source tx ${txid.slice(0, 12)}...: ${message}`,
-					});
-				}
-			}
-			done++;
-			onDetail?.(done, groups.length);
-		}
-	};
-
-	await Promise.all(
-		Array.from(
-			{ length: Math.min(PREPARE_CONCURRENCY, groups.length) },
-			worker,
-		),
-	);
-
-	return { prepared, failures };
+	return [...byTxid.entries()];
 }
 
 /** The migration's three named legacy keys as a key list; unset ones are left out. */
@@ -357,7 +457,14 @@ export async function executeKeySweep(
 	} = params;
 	const actions: SweepActions = { ...defaultSweepActions, ...params.actions };
 
-	const ctx = createContext(wallet, { services, chain });
+	// The current batch attempt's record of wallet calls (see traceWallet)
+	let trace: WalletCallTrace = { signActionCalls: 0 };
+	// BEEFs fetched and checked for the batch being built, by txid
+	const beefCache = new Map<string, number[]>();
+	const ctx = createContext(
+		traceWallet(wallet, () => trace),
+		{ services: cachedBeefServices(services, beefCache), chain },
+	);
 
 	const result = emptySweepResult();
 	const leftBehind: SweepLeftBehind[] = [];
@@ -380,8 +487,6 @@ export async function executeKeySweep(
 		}
 	}
 
-	const fundingChunks = chunk(funding, FUNDING_CHUNK_SIZE);
-	const ordinalChunks = isolateListedBatches(ordinals, ORDINAL_CHUNK_SIZE);
 	const activeTokens = excludeUnsweepableTokens(bsv21Tokens).filter(
 		(t) => t.outputs.length > 0,
 	);
@@ -410,18 +515,6 @@ export async function executeKeySweep(
 				: { ...t, outputs: t.outputs.filter(hasIndexedBsv20Amount) };
 		})
 		.filter((t) => t.outputs.length > 0);
-	const bsv20Batches = new Map(
-		activeBsv20.map((t) => [
-			t.tick,
-			isolateListedBatches(t.outputs, TOKEN_CHUNK_SIZE),
-		]),
-	);
-	const bsv21Batches = new Map(
-		activeTokens.map((t) => [
-			t.tokenId,
-			isolateListedBatches(t.outputs, TOKEN_CHUNK_SIZE),
-		]),
-	);
 
 	// Build the step list up front so the UI can render the full plan
 	const steps: SweepStepState[] = [];
@@ -462,13 +555,13 @@ export async function executeKeySweep(
 		});
 	}
 
+	// Progress counts outputs settled (swept or left with a reason): batches
+	// are packed by size as the sweep goes, so their number isn't known ahead.
 	const totalUnits =
-		fundingChunks.length +
-		ordinalChunks.length +
-		[...bsv20Batches.values(), ...bsv21Batches.values()].reduce(
-			(sum, batches) => sum + batches.length,
-			0,
-		);
+		funding.length +
+		ordinals.length +
+		activeBsv20.reduce((sum, t) => sum + t.outputs.length, 0) +
+		activeTokens.reduce((sum, t) => sum + t.outputs.length, 0);
 	let completedUnits = 0;
 
 	const emit = (message: string) => {
@@ -497,15 +590,18 @@ export async function executeKeySweep(
 
 	emit("Starting sweep...");
 
-	// Sweep one category in chunked transactions. Every chunk prepares its
-	// own inputs, so partial failures surface as per-chunk errors while the
-	// rest of the sweep keeps going.
+	// Sweep one category. Listed outputs go one per transaction; the rest are
+	// packed into transactions by the size of their source BEEFs so each
+	// createAction request fits the wallet server, and a request the server
+	// still refuses as too large is split in half and retried. Every source
+	// BEEF is checked before it is sent. Partial failures surface as errors on
+	// the step while the rest of the sweep keeps going.
 	const sweepChunked = async (
 		stepId: string,
 		errorLabel: string,
-		chunks: IndexedOutput[][],
+		outputs: IndexedOutput[],
 		execute: (
-			prepared: PreparedInputs["prepared"],
+			prepared: PreparedInput[],
 			keys: PrivateKey[],
 		) => Promise<{ txid?: string; error?: string; spentOutpoints?: string[] }>,
 		collect: (txid: string) => void,
@@ -513,136 +609,332 @@ export async function executeKeySweep(
 		const step = stepById(stepId);
 		if (!step) return;
 		step.status = "active";
-		let failedChunks = 0;
+		let batchCount = 0;
+		let failedBatches = 0;
 		// Every error is recorded on the run, on its step, and against the
 		// outputs it kept at the legacy address.
-		const fail = (message: string, outpoints: readonly string[]) => {
+		const fail = (
+			message: string,
+			outpoints: readonly string[],
+			extra: Omit<SweepLeftBehind, "outpoint" | "stepId" | "reason"> = {},
+		) => {
 			result.errors.push(message);
 			step.errors?.push(message);
 			for (const outpoint of outpoints) {
-				leftBehind.push({ outpoint, stepId, reason: message });
+				leftBehind.push({ outpoint, stepId, reason: message, ...extra });
 			}
 		};
+		const settle = (count: number) => {
+			completedUnits += count;
+		};
+		const isOrdinals = stepId === "ordinals";
 
-		for (let i = 0; i < chunks.length; i++) {
-			const batchLabel =
-				chunks.length > 1 ? ` (batch ${i + 1}/${chunks.length})` : "";
-			let chunkFailed = false;
-			// Outputs of this chunk already swept or already left with a reason
-			const settled = new Set<string>();
+		// Fetch and check one source tx's BEEF; a bad one never reaches a batch.
+		const loadSource = async (
+			txid: string,
+			sourceOutputs: IndexedOutput[],
+		): Promise<SweepSource | null> => {
+			let beef: Beef;
 			try {
-				step.detail = `preparing inputs${batchLabel}`;
-				emit(`${errorLabel}: preparing inputs${batchLabel}...`);
-
-				const { prepared, failures } = await prepareInputsConcurrent(
-					actions.prepareSweepInputs,
-					ctx,
-					chunks[i],
-					(done, total) => {
-						step.detail = `fetching source txs ${done}/${total}${batchLabel}`;
-						emit(`${errorLabel}: fetching source txs ${done}/${total}...`);
-					},
+				beef = await services.getBeefForTxid(txid);
+			} catch (error) {
+				console.error(
+					`${logPrefix} ${errorLabel}: source tx ${txid} could not be fetched`,
+					error,
 				);
-
-				for (const failure of failures) {
-					settled.add(failure.outpoint);
+				for (const output of sourceOutputs) {
 					fail(
-						`${errorLabel}: skipped ${failure.outpoint} (${failure.error})`,
-						[failure.outpoint],
+						`${errorLabel}: skipped ${output.outpoint} (source tx ${txid.slice(0, 12)}...: ${errorMessage(error)})`,
+						[output.outpoint],
+						{ txid },
 					);
 				}
-				// A skipped output stays at the legacy address: the step is
-				// not done even when the rest of the chunk goes through.
-				if (failures.length > 0) chunkFailed = true;
-
-				if (prepared.length > 0) {
-					step.detail = `broadcasting${batchLabel}`;
-					emit(`${errorLabel}: broadcasting${batchLabel}...`);
-
-					const keys = buildKeys(
-						prepared.map((p) => p.output),
-						keyMap,
+				settle(sourceOutputs.length);
+				return null;
+			}
+			const binary = beef.toBinary();
+			const tx = beef.findTxid(txid)?.tx;
+			const source: SweepSource = {
+				txid,
+				outputs: sourceOutputs,
+				beefBytes: binary.length,
+				txBytes: tx ? tx.toBinary().length : binary.length,
+				txCount: beef.txs.length,
+				bumpCount: beef.bumps.length,
+			};
+			if (!beef.isValid(false)) {
+				const detail = `BEEF for source tx ${txid} is not valid (no merkle proof and no proven ancestors): ${source.beefBytes} bytes, ${source.txCount} txs, ${source.bumpCount} bumps`;
+				console.error(`${logPrefix} ${errorLabel}: ${detail}; not sent`);
+				for (const output of sourceOutputs) {
+					fail(
+						`${errorLabel}: ${output.outpoint} stays at your old address: its source transaction has no confirmation proof from the indexer yet; try again after it's confirmed.`,
+						[output.outpoint],
+						{
+							txid,
+							txBytes: source.txBytes,
+							beefBytes: source.beefBytes,
+							detail,
+						},
 					);
-					const txResult = await execute(prepared, keys);
-					const preparedOutpoints = prepared.map((p) => p.output.outpoint);
-					for (const outpoint of preparedOutpoints) settled.add(outpoint);
+				}
+				settle(sourceOutputs.length);
+				return null;
+			}
+			beefCache.set(txid, binary);
+			return source;
+		};
 
-					if (txResult.error) {
-						chunkFailed = true;
-						console.error(
-							`${logPrefix} ${errorLabel}${batchLabel} failed`,
-							txResult.error,
-						);
-						fail(
-							`${errorLabel}${batchLabel}: ${txResult.error}`,
-							preparedOutpoints,
-						);
-					} else if (txResult.txid) {
-						collect(txResult.txid);
-						step.txids.push(txResult.txid);
-						// The BSV-21 sweep spends only the inputs the overlay accepted
-						// and reports them; any other input is still at the legacy
-						// address and must not read as swept.
-						const spent = txResult.spentOutpoints
-							? new Set(txResult.spentOutpoints.map(canonicalOutpoint))
-							: null;
-						const outputs = prepared.map((p) => p.output);
-						const swept = spent
-							? outputs.filter((o) => spent.has(canonicalOutpoint(o.outpoint)))
-							: outputs;
-						const left = spent
-							? outputs.filter((o) => !spent.has(canonicalOutpoint(o.outpoint)))
-							: [];
-						if (left.length > 0) {
-							chunkFailed = true;
+		// Build sweep inputs (locking scripts) from the checked BEEFs.
+		const prepareSources = async (
+			sources: SweepSource[],
+		): Promise<PreparedInput[]> => {
+			const prepared: PreparedInput[] = [];
+			for (const source of sources) {
+				try {
+					const inputs = await actions.prepareSweepInputs(ctx, source.outputs);
+					const byOutpoint = new Map(inputs.map((i) => [i.outpoint, i]));
+					for (const output of source.outputs) {
+						const input = byOutpoint.get(output.outpoint);
+						if (input?.lockingScript) {
+							prepared.push({ output, input });
+						} else {
 							fail(
-								`${errorLabel}${batchLabel}: ${left.length} output${left.length !== 1 ? "s were" : " was"} not accepted by the token overlay and stayed at the legacy address (${left.map((o) => o.outpoint).join(", ")})`,
-								left.map((o) => o.outpoint),
+								`${errorLabel}: skipped ${output.outpoint} (missing locking script)`,
+								[output.outpoint],
+								{ txid: source.txid },
 							);
+							settle(1);
 						}
-						for (const output of swept) {
-							if (isListedOutput(output)) {
-								result.cancelledListings.push(output.outpoint);
-							}
-						}
-					} else {
-						chunkFailed = true;
+					}
+				} catch (error) {
+					for (const output of source.outputs) {
 						fail(
-							`${errorLabel}${batchLabel}: the sweep returned no transaction id`,
-							preparedOutpoints,
+							`${errorLabel}: skipped ${output.outpoint} (source tx ${source.txid.slice(0, 12)}...: ${errorMessage(error)})`,
+							[output.outpoint],
+							{ txid: source.txid },
 						);
 					}
+					settle(source.outputs.length);
 				}
-			} catch (error) {
-				chunkFailed = true;
-				console.error(`${logPrefix} ${errorLabel}${batchLabel} failed`, error);
-				fail(
-					`${errorLabel}${batchLabel}: ${error instanceof Error ? error.message : String(error)}`,
-					chunks[i]
-						.map((o) => o.outpoint)
-						.filter((outpoint) => !settled.has(outpoint)),
-				);
 			}
-			if (chunkFailed) failedChunks++;
-			completedUnits++;
-			emit(`${errorLabel}: batch ${i + 1}/${chunks.length} complete`);
+			return prepared;
+		};
+
+		// Send one set of inputs. Returns false when any of them stayed behind.
+		const send = async (
+			prepared: PreparedInput[],
+			sources: Map<string, SweepSource>,
+			batchLabel: string,
+		): Promise<boolean> => {
+			const outpoints = prepared.map((p) => p.output.outpoint);
+			let keysForInputs: PrivateKey[];
+			try {
+				keysForInputs = buildKeys(
+					prepared.map((p) => p.output),
+					keyMap,
+				);
+			} catch (error) {
+				console.error(`${logPrefix} ${errorLabel}${batchLabel} failed`, error);
+				fail(`${errorLabel}${batchLabel}: ${errorMessage(error)}`, outpoints);
+				settle(outpoints.length);
+				return false;
+			}
+
+			trace = { signActionCalls: 0 };
+			let txResult: Awaited<ReturnType<typeof execute>>;
+			try {
+				txResult = await execute(prepared, keysForInputs);
+			} catch (error) {
+				txResult = { error: errorMessage(error) };
+			}
+			const attempt = trace;
+
+			if (txResult.txid) {
+				collect(txResult.txid);
+				step.txids.push(txResult.txid);
+				// The BSV-21 sweep spends only the inputs the overlay accepted
+				// and reports them; any other input is still at the legacy
+				// address and must not read as swept.
+				const spent = txResult.spentOutpoints
+					? new Set(txResult.spentOutpoints.map(canonicalOutpoint))
+					: null;
+				const batchOutputs = prepared.map((p) => p.output);
+				const swept = spent
+					? batchOutputs.filter((o) => spent.has(canonicalOutpoint(o.outpoint)))
+					: batchOutputs;
+				const left = spent
+					? batchOutputs.filter(
+							(o) => !spent.has(canonicalOutpoint(o.outpoint)),
+						)
+					: [];
+				if (left.length > 0) {
+					fail(
+						`${errorLabel}${batchLabel}: ${left.length} output${left.length !== 1 ? "s were" : " was"} not accepted by the token overlay and stayed at the legacy address (${left.map((o) => o.outpoint).join(", ")})`,
+						left.map((o) => o.outpoint),
+					);
+				}
+				for (const output of swept) {
+					if (isListedOutput(output)) {
+						result.cancelledListings.push(output.outpoint);
+					}
+				}
+				settle(outpoints.length);
+				return left.length === 0;
+			}
+
+			// Too large for the wallet server. Retried only when createAction
+			// itself was refused and signAction was never called: nothing was
+			// signed or broadcast, so the same inputs can go again in halves.
+			const refusedBeforeSigning =
+				attempt.createActionError !== undefined &&
+				isRequestTooLarge(attempt.createActionError) &&
+				attempt.signActionCalls === 0;
+			const txidsOf = (items: PreparedInput[]) => [
+				...new Set(items.map((p) => txidOf(p.output.outpoint))),
+			];
+			const beefBytesOf = (items: PreparedInput[]) =>
+				txidsOf(items).reduce(
+					(sum, txid) => sum + (sources.get(txid)?.beefBytes ?? 0),
+					0,
+				);
+			if (refusedBeforeSigning && prepared.length > 1) {
+				const half = Math.ceil(prepared.length / 2);
+				const halves = [prepared.slice(0, half), prepared.slice(half)];
+				console.error(
+					`${logPrefix} ${errorLabel}${batchLabel}: the wallet server refused the request as too large (${prepared.length} inputs, ${txidsOf(prepared).length} source txs, ${beefBytesOf(prepared)} BEEF bytes); splitting into ${halves[0].length} + ${halves[1].length} inputs (${beefBytesOf(halves[0])} + ${beefBytesOf(halves[1])} BEEF bytes)`,
+					attempt.createActionError,
+				);
+				step.detail = `splitting a batch the wallet server refused as too large${batchLabel}`;
+				emit(`${errorLabel}: splitting a batch that was too large...`);
+				const first = await send(halves[0], sources, batchLabel);
+				const second = await send(halves[1], sources, batchLabel);
+				return first && second;
+			}
+			if (refusedBeforeSigning) {
+				const [only] = prepared;
+				const txid = txidOf(only.output.outpoint);
+				const source = sources.get(txid);
+				const txBytes = source?.txBytes ?? 0;
+				const what = isOrdinals
+					? "this inscription's transaction"
+					: "this output's source transaction";
+				const detail = errorMessage(attempt.createActionError);
+				console.error(
+					`${logPrefix} ${errorLabel}${batchLabel}: ${only.output.outpoint} alone is too large for the wallet server (source tx ${txid}: ${txBytes} tx bytes, ${source?.beefBytes ?? 0} BEEF bytes)`,
+					attempt.createActionError,
+				);
+				fail(
+					`${errorLabel}: ${only.output.outpoint}: ${what} is ${formatBytes(txBytes)}, more than the wallet server accepts in one request; it stays at your old address.`,
+					[only.output.outpoint],
+					{ txid, txBytes, beefBytes: source?.beefBytes, detail },
+				);
+				settle(1);
+				return false;
+			}
+
+			console.error(
+				`${logPrefix} ${errorLabel}${batchLabel} failed`,
+				txResult.error ?? "the sweep returned no transaction id",
+			);
+			fail(
+				`${errorLabel}${batchLabel}: ${txResult.error ?? "the sweep returned no transaction id"}`,
+				outpoints,
+			);
+			settle(outpoints.length);
+			return false;
+		};
+
+		// Send one packed batch, then let go of its BEEFs.
+		const flush = async (sources: SweepSource[]) => {
+			if (sources.length === 0) return;
+			batchCount++;
+			const batchLabel = ` (batch ${batchCount})`;
+			step.detail = `preparing inputs${batchLabel}`;
+			emit(`${errorLabel}: preparing inputs${batchLabel}...`);
+			const before = leftBehind.length;
+			const prepared = await prepareSources(sources);
+			let ok = leftBehind.length === before;
+			if (prepared.length > 0) {
+				step.detail = `broadcasting${batchLabel}`;
+				emit(`${errorLabel}: broadcasting${batchLabel}...`);
+				const byTxid = new Map(sources.map((s) => [s.txid, s]));
+				ok = (await send(prepared, byTxid, batchLabel)) && ok;
+			}
+			for (const source of sources) beefCache.delete(source.txid);
+			if (!ok) failedBatches++;
+			emit(`${errorLabel}: batch ${batchCount} complete`);
+		};
+
+		const budget = WALLET_SERVER_MAX_REQUEST_BYTES;
+		// Listed outputs alone, one per transaction; the rest packed by size.
+		for (const group of isolateListedBatches(
+			outputs,
+			Number.POSITIVE_INFINITY,
+		)) {
+			const sourceGroups = groupBySourceTx(group);
+			let batch: SweepSource[] = [];
+			let batchBeefBytes = 0;
+			let batchInputBytes = 0;
+			let fetchFailed = false;
+			for (let i = 0; i < sourceGroups.length; i += PREPARE_CONCURRENCY) {
+				const window = sourceGroups.slice(i, i + PREPARE_CONCURRENCY);
+				step.detail = `fetching source txs ${Math.min(i + window.length, sourceGroups.length)}/${sourceGroups.length}`;
+				emit(
+					`${errorLabel}: fetching source txs ${Math.min(i + window.length, sourceGroups.length)}/${sourceGroups.length}...`,
+				);
+				const loaded = await mapConcurrent(
+					window,
+					PREPARE_CONCURRENCY,
+					([txid, sourceOutputs]) => loadSource(txid, sourceOutputs),
+				);
+				for (const source of loaded) {
+					if (!source) {
+						fetchFailed = true;
+						continue;
+					}
+					// The merged BEEF is at most the sum of its parts (shared
+					// proofs and ancestors are stored once), so this bound keeps
+					// the batch's encoded BEEF under the budget.
+					const inputBytes = source.outputs.reduce(
+						(sum, o) => sum + inputDescriptorBytes(o.outpoint),
+						0,
+					);
+					const nextBeefBytes = batchBeefBytes + source.beefBytes;
+					const nextSize =
+						encodedBinaryBytes(nextBeefBytes) + batchInputBytes + inputBytes;
+					if (batch.length > 0 && nextSize > budget) {
+						await flush(batch);
+						batch = [];
+						batchBeefBytes = 0;
+						batchInputBytes = 0;
+					}
+					// A source over the budget on its own goes alone; if the
+					// server refuses it, it is reported with its size.
+					batch.push(source);
+					batchBeefBytes += source.beefBytes;
+					batchInputBytes += inputBytes;
+				}
+			}
+			await flush(batch);
+			if (fetchFailed) failedBatches++;
 		}
 
 		step.detail = undefined;
 		step.status =
-			failedChunks > 0 || step.txids.length === 0 ? "error" : "done";
-		if (failedChunks > 0) {
-			step.error = `${failedChunks} of ${chunks.length} batch${chunks.length !== 1 ? "es" : ""} failed`;
+			failedBatches > 0 || step.txids.length === 0 ? "error" : "done";
+		if (failedBatches > 0) {
+			const total = Math.max(batchCount, failedBatches);
+			step.error = `${failedBatches} of ${total} batch${total !== 1 ? "es" : ""} failed`;
 		}
 		emit(`${errorLabel} complete`);
 	};
 
 	// 1. BSV funding
-	if (fundingChunks.length > 0) {
+	if (funding.length > 0) {
 		await sweepChunked(
 			"bsv",
 			"BSV sweep",
-			fundingChunks,
+			funding,
 			(prepared, keys) =>
 				actions.sweepBsv(ctx, {
 					inputs: prepared.map((p) => p.input),
@@ -655,11 +947,11 @@ export async function executeKeySweep(
 	// 2. Ordinals (listed ordinals are swept via OrdLock cancel inside the
 	// action, one per tx so a v1 or bad listing fails alone; BSV-20 content is
 	// refused by the action's guard)
-	if (ordinalChunks.length > 0) {
+	if (ordinals.length > 0) {
 		await sweepChunked(
 			"ordinals",
 			"Ordinal sweep",
-			ordinalChunks,
+			ordinals,
 			(prepared, keys) =>
 				actions.sweepOrdinals(ctx, {
 					inputs: prepared.map((p) => p.input),
@@ -676,7 +968,7 @@ export async function executeKeySweep(
 		await sweepChunked(
 			`bsv20:${token.tick}`,
 			`BSV-20 ${token.tick}`,
-			bsv20Batches.get(token.tick) ?? [],
+			token.outputs,
 			(prepared, keys) =>
 				actions.sweepBsv20(ctx, {
 					inputs: prepared.map((p) => ({
@@ -690,13 +982,12 @@ export async function executeKeySweep(
 		);
 	}
 
-	// 4. BSV-21 tokens — chunked per token with listed outputs one per tx,
-	// amounts from the overlay-validated map (never the origin mint amount),
-	// inactive tokens skipped
+	// 4. BSV-21 tokens — per token with listed outputs one per tx, amounts
+	// from the overlay-validated map (never the origin mint amount), inactive
+	// tokens skipped
 	for (const token of activeTokens) {
 		const label = token.symbol ?? token.tokenId.slice(0, 8);
 		const step = stepById(`token:${token.tokenId}`);
-		const batches = bsv21Batches.get(token.tokenId) ?? [];
 		if (!token.isActive) {
 			const message = `Token ${label}: not active on the overlay — skipped`;
 			if (step) {
@@ -712,7 +1003,7 @@ export async function executeKeySweep(
 					reason: message,
 				});
 			}
-			completedUnits += batches.length;
+			completedUnits += token.outputs.length;
 			emit(`Token ${label} skipped`);
 			continue;
 		}
@@ -721,7 +1012,7 @@ export async function executeKeySweep(
 		await sweepChunked(
 			`token:${token.tokenId}`,
 			`Token ${label}`,
-			batches,
+			token.outputs,
 			(prepared, keys) =>
 				actions.sweepBsv21(ctx, {
 					inputs: prepared.map((p) => ({

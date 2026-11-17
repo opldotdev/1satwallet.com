@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { TokenBalance } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
-import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import { IDBFactory } from "fake-indexeddb";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -38,6 +37,7 @@ import {
 	type SweepProgress,
 } from "../lib/sweep-migration";
 import { BSV20_UNREADABLE_REASON } from "../lib/wallet/migration-listings";
+import { beefServices } from "./fixtures/sweep-beef";
 
 const txid = (n: number) => n.toString(16).padStart(64, "0");
 const outpoint = (n: number) => `${txid(n)}.0`;
@@ -85,6 +85,46 @@ const progress = (over: Partial<SweepProgress> = {}): SweepProgress => ({
 });
 
 describe("sweep audit record", () => {
+	it("keeps the source tx, its sizes and the exact error for a plain-words reason", () => {
+		let record = createSweepAuditRecord(init(), "run-1", at(0));
+		const reason =
+			"Ordinal sweep: aa.0: this inscription's transaction is 9.1 MB, more than the wallet server accepts in one request; it stays at your old address.";
+		record = withSweepProgress(
+			record,
+			progress({
+				errors: [reason],
+				leftBehind: [
+					{
+						outpoint: outpoint(3),
+						stepId: "ordinals",
+						reason,
+						txid: txid(3),
+						txBytes: 9_100_000,
+						beefBytes: 9_100_200,
+						detail: "WalletStorageClient rpcCall: network error 413",
+					},
+				],
+			}),
+		);
+		const left = record.leftBehind.find((l) => l.stage === "sweep");
+		assert.deepEqual(left, {
+			outpoint: outpoint(3),
+			kind: "ordinals",
+			reason,
+			stage: "sweep",
+			txid: txid(3),
+			txBytes: 9_100_000,
+			beefBytes: 9_100_200,
+			detail: "WalletStorageClient rpcCall: network error 413",
+		});
+		const text = sweepAuditReportText(record);
+		assert.ok(text.includes(`source tx ${txid(3)}`));
+		assert.ok(text.includes("tx 9100000 bytes; BEEF 9100200 bytes"));
+		assert.ok(
+			text.includes("error: WalletStorageClient rpcCall: network error 413"),
+		);
+	});
+
 	it("starts running with sources, scan counts and the plan's leftovers", () => {
 		const record = createSweepAuditRecord(init(), "run-1", at(0));
 		assert.equal(record.status, "running");
@@ -444,7 +484,7 @@ describe("sweep audit never holds a secret", () => {
 		try {
 			const result = await executeKeySweep({
 				wallet: {} as WalletInterface,
-				services: {} as OneSatServices,
+				services: beefServices(),
 				keys: [
 					{ label: "Payment key", wif: wifs[0] },
 					{ label: "Ordinals key", wif: wifs[1] },

@@ -2,16 +2,17 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Bsv20Balance, TokenBalance } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
-import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
 	buildKeys,
 	cancelledListingCount,
+	encodedBinaryBytes,
 	executeKeySweep,
 	executeMigrationSweep,
 	migrationSweepKeys,
 	type SweepActions,
 	type SweepProgress,
+	WALLET_SERVER_MAX_REQUEST_BYTES,
 } from "@/lib/sweep-migration";
 import {
 	BSV20_UNCONFIRMED_REASON,
@@ -19,6 +20,7 @@ import {
 	hasIndexedBsv20Amount,
 	splitBsv20Outputs,
 } from "@/lib/wallet/migration-listings";
+import { beefServices, prooflessBeef, provenBeef } from "./fixtures/sweep-beef";
 
 const payKey = PrivateKey.fromHex("01".repeat(32));
 const ordKey = PrivateKey.fromHex("02".repeat(32));
@@ -80,7 +82,7 @@ function sweep(
 	console.error = () => undefined;
 	return executeMigrationSweep({
 		wallet: {} as WalletInterface,
-		services: {} as OneSatServices,
+		services: beefServices(),
 		legacyPayWif: payKey.toWif(),
 		legacyOrdWif: ordKey.toWif(),
 		onProgress: (p) => progress.push(p),
@@ -443,7 +445,7 @@ describe("key-list sweep", () => {
 		console.error = () => undefined;
 		return executeKeySweep({
 			wallet: {} as WalletInterface,
-			services: {} as OneSatServices,
+			services: beefServices(),
 			keys,
 			onProgress: () => undefined,
 			funding: [],
@@ -542,7 +544,7 @@ describe("sweep log prefix", () => {
 			const { actions } = fakeActions();
 			await executeKeySweep({
 				wallet: {} as WalletInterface,
-				services: {} as OneSatServices,
+				services: beefServices(),
 				keys: [{ label: "Legacy pay", wif: badWif }],
 				onProgress: () => undefined,
 				funding: [],
@@ -564,5 +566,243 @@ describe("sweep log prefix", () => {
 		assert.deepEqual(await logged("[sweep]"), [
 			"[sweep] legacy pay key could not be read",
 		]);
+	});
+});
+
+const TOO_LARGE = "WalletStorageClient rpcCall: network error 413";
+
+/**
+ * A wallet like the real one around the sweep actions: createAction is the
+ * request the wallet server can refuse as too large (before anything is
+ * signed), signAction signs and broadcasts.
+ */
+function sizeLimitedWallet(
+	tooLarge: (inputs: { outpoint: string }[]) => boolean,
+) {
+	const log = {
+		signed: [] as string[][],
+		refused: [] as string[][],
+		/** Every createAction, in order, and whether it was then signed */
+		attempts: [] as { outpoints: string[]; signed: boolean }[],
+	};
+	const wallet = {
+		createAction: async (args: { inputs: { outpoint: string }[] }) => {
+			const outpoints = args.inputs.map((i) => i.outpoint);
+			if (tooLarge(args.inputs)) {
+				log.refused.push(outpoints);
+				log.attempts.push({ outpoints, signed: false });
+				throw new Error(TOO_LARGE);
+			}
+			log.attempts.push({ outpoints, signed: true });
+			return { signableTransaction: { reference: "ref", tx: [] } };
+		},
+		signAction: async () => ({ txid: `tx-${log.signed.length + 1}` }),
+	};
+	return { wallet: wallet as unknown as WalletInterface, log };
+}
+
+/** An ordinal sweep action shaped like @1sat/actions': createAction, then signAction. */
+const twoPhaseOrdinals =
+	(log: { signed: string[][] }): SweepActions["sweepOrdinals"] =>
+	async (ctx, request) => {
+		const inputs = request.inputs.map((i) => ({
+			outpoint: i.outpoint,
+			inputDescription: `Ordinal ${i.outpoint}`,
+		}));
+		try {
+			await ctx.wallet.createAction({ description: "sweep", inputs });
+			const signed = await ctx.wallet.signAction({
+				reference: "ref",
+				spends: {},
+			});
+			log.signed.push(inputs.map((i) => i.outpoint));
+			return { txid: signed.txid };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	};
+
+describe("legacy sweep: requests too large for the wallet server", () => {
+	it("splits a refused batch in half until each part fits, and reports a lone input that never fits", async () => {
+		const ordinals = [1, 2, 3, 4, 5, 6, 7].map((n) => out(n));
+		const huge = ordinals[3].outpoint;
+		const { wallet, log } = sizeLimitedWallet(
+			(inputs) => inputs.length > 2 || inputs.some((i) => i.outpoint === huge),
+		);
+		const { actions } = fakeActions({ sweepOrdinals: twoPhaseOrdinals(log) });
+		const { result, progress } = await sweep({ wallet, ordinals }, actions);
+
+		// Every part that went through holds at most 2 inputs, none twice.
+		const swept = log.signed.flat();
+		assert.ok(log.signed.every((batch) => batch.length <= 2));
+		assert.equal(new Set(swept).size, swept.length);
+		assert.deepEqual(
+			[...swept].sort(),
+			ordinals
+				.map((o) => o.outpoint)
+				.filter((o) => o !== huge)
+				.sort(),
+		);
+		assert.equal(result.ordinalTxids.length, log.signed.length);
+		// Halving: 7 -> 4 + 3; 4 -> 2 + 2 (the pair with the huge input
+		// split again down to the huge one alone); 3 -> 2 + 1.
+		assert.deepEqual(
+			log.refused.map((batch) => batch.length),
+			[7, 4, 2, 1, 3],
+		);
+		assert.deepEqual(
+			log.signed.map((batch) => batch.length),
+			[2, 1, 2, 1],
+		);
+		// Nothing that went through was sent again.
+		log.attempts.forEach((attempt, i) => {
+			if (!attempt.signed) return;
+			for (const later of log.attempts.slice(i + 1)) {
+				for (const outpoint of attempt.outpoints) {
+					assert.ok(!later.outpoints.includes(outpoint), outpoint);
+				}
+			}
+		});
+		assert.equal(log.refused.flat().filter((o) => o === huge).length, 4);
+
+		const left = result.leftBehind ?? [];
+		assert.equal(left.length, 1);
+		assert.equal(left[0].outpoint, huge);
+		assert.match(
+			left[0].reason,
+			/this inscription's transaction is \d+ KB, more than the wallet server accepts in one request; it stays at your old address\./,
+		);
+		assert.equal(left[0].txid, txid(4));
+		assert.ok((left[0].beefBytes ?? 0) > 0);
+		assert.equal(left[0].detail, TOO_LARGE);
+		// The user-facing errors are plain words.
+		assert.equal(result.errors.length, 1);
+		assert.doesNotMatch(result.errors.join("\n"), /413|rpcCall/);
+		const step = progress.at(-1)?.steps.find((s) => s.id === "ordinals");
+		assert.equal(step?.status, "error");
+		assert.equal(progress.at(-1)?.percent, 100);
+	});
+
+	it("never retries once signAction ran, even if the error reads 413", async () => {
+		const ordinals = [out(1), out(2)];
+		const attempts: string[][] = [];
+		const wallet = {
+			createAction: async () => ({
+				signableTransaction: { reference: "ref", tx: [] },
+			}),
+			signAction: async () => {
+				throw new Error(TOO_LARGE);
+			},
+		} as unknown as WalletInterface;
+		const { actions } = fakeActions({
+			sweepOrdinals: async (ctx, request) => {
+				attempts.push(request.inputs.map((i) => i.outpoint));
+				try {
+					await ctx.wallet.createAction({ description: "sweep" });
+					await ctx.wallet.signAction({ reference: "ref", spends: {} });
+					return { txid: "never" };
+				} catch (error) {
+					return { error: (error as Error).message };
+				}
+			},
+		});
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		assert.equal(attempts.length, 1);
+		assert.equal(result.ordinalTxids.length, 0);
+		assert.equal(result.leftBehind?.length, 2);
+	});
+
+	it("never retries a 413 that didn't come from the wallet's createAction", async () => {
+		const attempts: number[] = [];
+		const { actions } = fakeActions({
+			sweepOrdinals: async (_ctx, request) => {
+				attempts.push(request.inputs.length);
+				return { error: TOO_LARGE };
+			},
+		});
+		await sweep({ ordinals: [out(1), out(2)] }, actions);
+		assert.deepEqual(attempts, [2]);
+	});
+
+	it("packs batches by the size of their source BEEFs", async () => {
+		// 2.5 MB each: two fit one request (base64 ~6.7 MB), three don't.
+		const big = provenBeef(2_500_000);
+		const services = beefServices(() => big);
+		const { actions, calls } = fakeActions();
+		const ordinals = [1, 2, 3, 4].map((n) => out(n));
+		await sweep({ services, ordinals }, actions);
+		assert.deepEqual(
+			calls.map((c) => c.inputs.length),
+			[2, 2],
+		);
+	});
+
+	it("sends a source BEEF larger than a request on its own", async () => {
+		const huge = provenBeef(7_000_000);
+		const small = provenBeef(10);
+		const services = beefServices((id) => (id === txid(2) ? huge : small));
+		const { actions, calls } = fakeActions();
+		const ordinals = [out(1), out(2), out(3)];
+		await sweep({ services, ordinals }, actions);
+		assert.deepEqual(
+			calls.map((c) => c.inputs.map((i) => i.outpoint)),
+			[[out(1).outpoint], [out(2).outpoint], [out(3).outpoint]],
+		);
+	});
+
+	it("budgets the 8 MiB request limit for base64-encoded BEEF", () => {
+		assert.equal(WALLET_SERVER_MAX_REQUEST_BYTES, 8_388_608);
+		assert.equal(
+			encodedBinaryBytes(3_000_000),
+			JSON.stringify({ $bsvBinary: "base64", data: "A".repeat(4_000_000) })
+				.length,
+		);
+	});
+});
+
+describe("legacy sweep: source transactions without a proof", () => {
+	it("never sends an input whose source BEEF is not valid, and fetches each source once", async () => {
+		const fetched: string[] = [];
+		const services = beefServices(
+			(id) => (id === txid(2) ? prooflessBeef() : provenBeef()),
+			fetched,
+		);
+		const { actions, calls } = fakeActions({
+			sweepOrdinals: async (ctx, request) => {
+				calls.push({
+					action: "ordinals",
+					inputs: request.inputs as unknown as Record<string, unknown>[],
+				});
+				// The action fetches its BEEFs again, as @1sat/actions does.
+				for (const input of request.inputs) {
+					const beef = await ctx.services?.getBeefForTxid(
+						input.outpoint.split(".")[0],
+					);
+					assert.equal(beef?.isValid(), true);
+				}
+				return { txid: "ord-1" };
+			},
+		});
+		const { result } = await sweep(
+			{ services, ordinals: [out(1), out(2), out(3)] },
+			actions,
+		);
+
+		assert.deepEqual(
+			calls.map((c) => c.inputs.map((i) => i.outpoint)),
+			[[out(1).outpoint, out(3).outpoint]],
+		);
+		assert.deepEqual([...fetched].sort(), [txid(1), txid(2), txid(3)].sort());
+		const left = result.leftBehind ?? [];
+		assert.equal(left.length, 1);
+		assert.equal(left[0].outpoint, out(2).outpoint);
+		assert.match(
+			left[0].reason,
+			/its source transaction has no confirmation proof from the indexer yet; try again after it's confirmed/,
+		);
+		assert.equal(left[0].txid, txid(2));
+		assert.ok((left[0].beefBytes ?? 0) > 0);
+		assert.match(left[0].detail ?? "", /not valid.*1 txs, 0 bumps/);
+		assert.deepEqual(result.ordinalTxids, ["ord-1"]);
 	});
 });

@@ -3,11 +3,20 @@
 import { ChevronDown, FileText, Loader2 } from "lucide-react";
 import { useId, useState } from "react";
 import { cn } from "@/lib/utils";
-import type { Bsv20Group } from "@/lib/wallet/bsv20-content";
+import { type Bsv20Group, UNREADABLE_TICK } from "@/lib/wallet/bsv20-content";
 import { BSV20_STAYS_LINE } from "@/lib/wallet/sweep-summary";
 import { SweepLetterAvatar } from "./sweep-token-row";
 
 const TOP_TICKERS = 5;
+
+/** "Couldn't read: its content isn't a BSV-20 inscription (3); ..." */
+export function unreadableReasonsLine(
+	reasons: NonNullable<Bsv20Group["reasons"]>,
+): string {
+	return `Couldn't read: ${reasons
+		.map((r) => (reasons.length > 1 ? `${r.reason} (${r.outputs})` : r.reason))
+		.join("; ")}.`;
+}
 
 export interface Bsv20StaysData {
 	groups: Bsv20Group[];
@@ -26,8 +35,14 @@ export interface Bsv20StaysData {
 export function SweepBsv20Stays({ data }: { data: Bsv20StaysData }) {
 	const [open, setOpen] = useState(false);
 	const listId = useId();
-	const top = data.groups.slice(0, TOP_TICKERS);
-	const moreTickers = data.groups.length - top.length;
+	// Named tickers first (the top few); the unreadable group always shows.
+	const named = data.groups.filter((g) => g.tick !== UNREADABLE_TICK);
+	const unreadable = data.groups.find((g) => g.tick === UNREADABLE_TICK);
+	const top = [
+		...named.slice(0, TOP_TICKERS),
+		...(unreadable ? [unreadable] : []),
+	];
+	const moreTickers = named.length - Math.min(named.length, TOP_TICKERS);
 	const unchecked = data.total - data.checked;
 
 	return (
@@ -64,18 +79,25 @@ export function SweepBsv20Stays({ data }: { data: Bsv20StaysData }) {
 					className="flex flex-col gap-1 border-t bg-muted/30 px-4 py-3 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-200"
 				>
 					{top.map((group) => (
-						<div key={group.tick} className="flex min-h-10 items-center gap-3">
-							<SweepLetterAvatar
-								ticker={group.tick}
-								className="size-8 text-xs"
-							/>
-							<span className="min-w-0 flex-1 truncate font-medium text-sm">
-								{group.tick}
-							</span>
-							<span className="shrink-0 text-muted-foreground text-xs tabular-nums">
-								{group.outputs.toLocaleString("en-US")}{" "}
-								{group.outputs === 1 ? "output" : "outputs"}
-							</span>
+						<div key={group.tick} className="flex flex-col">
+							<div className="flex min-h-10 items-center gap-3">
+								<SweepLetterAvatar
+									ticker={group.tick}
+									className="size-8 text-xs"
+								/>
+								<span className="min-w-0 flex-1 truncate font-medium text-sm">
+									{group.tick}
+								</span>
+								<span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+									{group.outputs.toLocaleString("en-US")}{" "}
+									{group.outputs === 1 ? "output" : "outputs"}
+								</span>
+							</div>
+							{group.reasons && group.reasons.length > 0 && (
+								<p className="pb-1 pl-11 text-muted-foreground text-xs">
+									{unreadableReasonsLine(group.reasons)}
+								</p>
+							)}
 						</div>
 					))}
 					{data.loading && (
