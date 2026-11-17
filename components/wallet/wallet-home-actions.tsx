@@ -2,16 +2,25 @@
 
 import { sendBsv } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDownToLine, Copy, Loader2, Send, X } from "lucide-react";
+import {
+	ArrowDownToLine,
+	ChevronDown,
+	Copy,
+	Loader2,
+	Send,
+} from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
 import {
 	DialogClose,
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -22,7 +31,6 @@ import { useSound } from "@/hooks/use-sound";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { PaySuccessMark } from "./pay-success-mark";
-import styles from "./wallet-home.module.css";
 import {
 	formatSatoshisAsBsv,
 	isP2pkhAddressForChain,
@@ -116,6 +124,8 @@ export function WalletHomeActions() {
 				requests: [{ address: destination, satoshis }],
 			});
 			if (result.error || !result.txid) {
+				// reportDiagnostic keeps only a sanitised code; log the full error.
+				console.error("[wallet.bsv.send]", result.error ?? "missing txid");
 				reportDiagnostic({
 					category: "action",
 					code: "action.failed",
@@ -138,6 +148,7 @@ export function WalletHomeActions() {
 			refreshBalance();
 			void queryClient.invalidateQueries({ queryKey: ["wallet-actions"] });
 		} catch (error) {
+			console.error("[wallet.bsv.send]", error);
 			reportDiagnostic({
 				category: "action",
 				code: "action.failed",
@@ -160,10 +171,10 @@ export function WalletHomeActions() {
 			<SoundDialog>
 				<DialogTrigger asChild>
 					<Button
-						className={styles.action}
+						className="sm:min-w-32"
 						disabled={!receiveAvailable}
 						size="lg"
-						variant="ghost"
+						variant="tile"
 					>
 						<ArrowDownToLine data-icon="inline-start" /> Receive
 					</Button>
@@ -173,37 +184,35 @@ export function WalletHomeActions() {
 						<DialogTitle>Receive BSV</DialogTitle>
 						<DialogDescription>
 							{connectionMode === "built-in"
-								? "This address rotates after an incoming payment is detected."
-								: "This address is derived through the connected wallet; that provider controls discovery and rotation."}
+								? "This address changes after each payment you receive."
+								: "Your connected wallet manages this address."}
 						</DialogDescription>
 					</DialogHeader>
-					<div className="flex flex-col items-center gap-4 py-2">
-						<div
-							aria-label="QR code for the wallet deposit address"
-							className="rounded-lg bg-white p-4"
-							role="img"
+					<div
+						aria-label="QR code for the wallet deposit address"
+						className="size-56 self-center overflow-hidden rounded-lg bg-white"
+						role="img"
+					>
+						{depositAddress && (
+							<QRCodeSVG marginSize={4} size={224} value={depositAddress} />
+						)}
+					</div>
+					<div className="flex gap-2">
+						<Input
+							aria-label="Deposit address"
+							className="font-mono text-xs md:text-xs"
+							readOnly
+							value={depositAddress ?? "Unavailable"}
+						/>
+						<Button
+							aria-label="Copy deposit address"
+							disabled={!depositAddress}
+							onClick={() => depositAddress && void copy(depositAddress)}
+							size="icon"
+							variant="outline"
 						>
-							{depositAddress && (
-								<QRCodeSVG size={192} value={depositAddress} />
-							)}
-						</div>
-						<div className="flex w-full gap-2">
-							<Input
-								aria-label="Deposit address"
-								className="font-mono text-xs"
-								readOnly
-								value={depositAddress ?? "Unavailable"}
-							/>
-							<Button
-								aria-label="Copy deposit address"
-								disabled={!depositAddress}
-								onClick={() => depositAddress && void copy(depositAddress)}
-								size="icon"
-								variant="outline"
-							>
-								<Copy />
-							</Button>
-						</div>
+							<Copy />
+						</Button>
 					</div>
 				</DialogContent>
 			</SoundDialog>
@@ -222,10 +231,10 @@ export function WalletHomeActions() {
 			>
 				<DialogTrigger asChild>
 					<Button
-						className={styles.action}
+						className="sm:min-w-32"
 						disabled={!oneSatContext}
 						size="lg"
-						variant="ghost"
+						variant="tile"
 					>
 						<Send data-icon="inline-start" /> Send
 					</Button>
@@ -234,77 +243,74 @@ export function WalletHomeActions() {
 					showCloseButton={sendState.status !== "success"}
 					className={
 						sendState.status === "success"
-							? "pay-success-card rounded-3xl bg-popover text-center [--dialog-spacing:--spacing(6)] sm:[--dialog-spacing:--spacing(8)]"
+							? "pay-success-card text-center"
 							: undefined
 					}
 				>
-					{sendState.status !== "success" && (
-						<DialogHeader>
-							<DialogTitle>Send BSV</DialogTitle>
-							<DialogDescription>
-								Enter a BSV address and the amount to send.
-							</DialogDescription>
-						</DialogHeader>
-					)}
 					{sendState.status === "success" ? (
-						<div className="space-y-5 text-center" role="status">
-							<PaySuccessMark />
-							<div className="pay-success-copy space-y-2">
-								<DialogTitle className="font-bold text-2xl text-foreground leading-tight">
-									Payment sent
-								</DialogTitle>
-								<DialogDescription className="text-muted-foreground text-sm">
-									It will confirm shortly.
-								</DialogDescription>
-								<p className="pt-2 font-bold text-3xl text-foreground break-all">
-									{formatSatoshisAsBsv(sendState.satoshis)} BSV
-								</p>
+						<>
+							<div
+								className="flex flex-col items-center gap-(--dialog-gap)"
+								role="status"
+							>
+								<PaySuccessMark />
+								<div className="pay-success-copy flex flex-col gap-2">
+									<DialogTitle className="text-2xl leading-tight">
+										Payment sent
+									</DialogTitle>
+									<DialogDescription>
+										It will confirm shortly.
+									</DialogDescription>
+									<p className="font-mono font-semibold text-3xl wrap-anywhere">
+										{formatSatoshisAsBsv(sendState.satoshis)} BSV
+									</p>
+								</div>
 							</div>
 							<DialogClose asChild>
-								<Button className="h-14 w-full rounded-full bg-brand font-bold text-brand-foreground hover:bg-brand/90">
+								<Button
+									className="w-full bg-brand text-brand-foreground hover:bg-brand/90"
+									size="lg"
+								>
 									Done
 								</Button>
 							</DialogClose>
-							<details className="text-muted-foreground text-sm">
-								<summary className="cursor-pointer rounded-sm py-2 focus-visible:outline-2 focus-visible:outline-ring">
+							<details className="group text-muted-foreground text-sm">
+								<summary className="flex min-h-11 cursor-pointer list-none items-center justify-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring md:min-h-9 [&::-webkit-details-marker]:hidden">
 									Transaction details
+									<ChevronDown
+										aria-hidden="true"
+										className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+									/>
 								</summary>
-								<p className="mt-2 break-all font-mono text-xs">
+								<p className="mt-2 font-mono text-xs wrap-anywhere">
 									{sendState.txid}
 								</p>
 							</details>
-						</div>
-					) : sendState.status === "review" ||
-						sendState.status === "sending" ? (
-						<div className="space-y-4">
-							<dl className="space-y-3 rounded-lg border p-4 text-sm">
-								<div className="space-y-1">
-									<dt className="text-muted-foreground">Destination</dt>
-									<dd className="break-all font-mono">
-										{sendState.destination}
-									</dd>
-								</div>
-								<div className="flex justify-between gap-4">
-									<dt className="text-muted-foreground">Amount</dt>
-									<dd className="font-mono">
-										{formatSatoshisAsBsv(sendState.satoshis)} BSV
-									</dd>
-								</div>
-								<div className="flex justify-between gap-4">
-									<dt className="text-muted-foreground">Network fee</dt>
-									<dd>Calculated by wallet</dd>
-								</div>
-								<div className="flex justify-between gap-4 border-t pt-3 font-medium">
-									<dt>Total</dt>
-									<dd className="text-right font-mono">
-										{formatSatoshisAsBsv(sendState.satoshis)} BSV + fee
-									</dd>
-								</div>
-							</dl>
-							<p className="text-muted-foreground text-xs">
-								The network fee is added when the payment is sent.
-							</p>
-							<div className="grid grid-cols-2 gap-2">
+						</>
+					) : (
+						<DialogHeader>
+							<DialogTitle>Send BSV</DialogTitle>
+							<DialogDescription>
+								{sendState.status === "review" || sendState.status === "sending"
+									? "Check the amount and recipient."
+									: "Enter a BSV address and the amount to send."}
+							</DialogDescription>
+						</DialogHeader>
+					)}
+					{sendState.status === "review" || sendState.status === "sending" ? (
+						<>
+							<DetailList>
+								<DetailRow label="Recipient" stack>
+									{sendState.destination}
+								</DetailRow>
+								<DetailRow label="Amount">
+									{formatSatoshisAsBsv(sendState.satoshis)} BSV
+								</DetailRow>
+								<DetailRow label="Network fee" mono={false}>
+									Added when sent
+								</DetailRow>
+							</DetailList>
+							<DialogFooter>
 								<Button
 									disabled={sendState.status === "sending"}
 									onClick={() => setSendState({ status: "idle" })}
@@ -326,21 +332,28 @@ export function WalletHomeActions() {
 										? "Sending…"
 										: "Confirm and send"}
 								</Button>
-							</div>
-						</div>
-					) : (
-						<div className="space-y-4">
-							<div className="space-y-2">
+							</DialogFooter>
+						</>
+					) : sendState.status === "idle" || sendState.status === "error" ? (
+						<>
+							<div className="flex flex-col gap-2">
 								<Label htmlFor="wallet-home-recipient">Recipient</Label>
 								<Input
 									autoComplete="off"
+									aria-describedby="wallet-home-recipient-hint"
 									id="wallet-home-recipient"
 									onChange={(event) => setRecipient(event.target.value)}
 									placeholder="1A1z…"
 									value={recipient}
 								/>
+								<p
+									className="text-muted-foreground text-xs"
+									id="wallet-home-recipient-hint"
+								>
+									BSV addresses only. Paymail isn't supported yet.
+								</p>
 							</div>
-							<div className="space-y-2">
+							<div className="flex flex-col gap-2">
 								<Label htmlFor="wallet-home-amount">Amount (BSV)</Label>
 								<Input
 									id="wallet-home-amount"
@@ -352,26 +365,20 @@ export function WalletHomeActions() {
 								/>
 							</div>
 							{sendState.status === "error" && (
-								<div
-									className="flex gap-2 text-destructive text-sm"
-									role="alert"
-								>
-									<X className="mt-0.5 size-4 shrink-0" />
-									<span className="break-all">{sendState.message}</span>
-								</div>
+								<Notice tone="danger">
+									<span className="wrap-anywhere">{sendState.message}</span>
+								</Notice>
 							)}
-							<p className="text-muted-foreground text-xs">
-								BSV addresses only. Paymail isn't supported yet.
-							</p>
-							<Button
-								className="w-full"
-								disabled={!recipient.trim() || !amount.trim()}
-								onClick={reviewSend}
-							>
-								Review payment
-							</Button>
-						</div>
-					)}
+							<DialogFooter>
+								<Button
+									disabled={!recipient.trim() || !amount.trim()}
+									onClick={reviewSend}
+								>
+									Review payment
+								</Button>
+							</DialogFooter>
+						</>
+					) : null}
 				</DialogContent>
 			</SoundDialog>
 		</div>
