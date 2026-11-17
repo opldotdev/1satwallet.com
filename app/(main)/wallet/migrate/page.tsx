@@ -4,10 +4,17 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { MigrationSweepFlow } from "@/components/wallet/migration-sections";
+import { buildInfo } from "@/lib/build-info";
 import { useBsv20ContentLabels } from "@/lib/hooks/use-bsv20-content";
 import { useDefaultOrdinalSelection } from "@/lib/hooks/use-default-ordinal-selection";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
+import { type AuditPlan, auditPlanFromScan } from "@/lib/sweep-audit/plan";
+import {
+	migrationAuditSources,
+	sweepAuditIdentityKey,
+	useSweepAudit,
+} from "@/lib/sweep-audit/use-sweep-audit";
 import {
 	emptySweepResult,
 	executeMigrationSweep,
@@ -90,6 +97,11 @@ export default function MigratePage() {
 
 	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
 		defaultAssetTypes(),
+	);
+	const audit = useSweepAudit();
+	const auditIdentity = useMemo(
+		() => (walletKeys ? sweepAuditIdentityKey(walletKeys) : null),
+		[walletKeys],
 	);
 
 	// Detect migration status
@@ -314,6 +326,28 @@ export default function MigratePage() {
 		return [...plan.sweepOrdinals, ...plan.sweepListed];
 	}, [plan.sweepOrdinals, plan.sweepListed]);
 
+	// Starts this run's support record: what the scan found, what this run
+	// sends, and every output it leaves out. Addresses only, never keys.
+	const beginAudit = useCallback(
+		(runPlan: AuditPlan, skippedReason?: string) =>
+			audit.begin(
+				{
+					kind: "migration",
+					chain: toolbox.chain,
+					app: buildInfo(),
+					sources: migrationAuditSources({
+						payAddress: legacy?.payAddress,
+						ordAddress: legacy?.ordAddress,
+						identityAddress: legacy?.identityAddress,
+					}),
+					destination: "This wallet (its identity key)",
+					...auditPlanFromScan(assets, runPlan, { listings, skippedReason }),
+				},
+				auditIdentity,
+			),
+		[audit.begin, toolbox.chain, legacy, assets, listings, auditIdentity],
+	);
+
 	const runDelist = useCallback(async () => {
 		if (!toolbox.oneSatContext || plan.cancel.length === 0) {
 			return { ok: true, txids: [] as string[], errors: [] as string[] };
@@ -332,7 +366,27 @@ export default function MigratePage() {
 		setError(null);
 		setProgressPercent(20);
 		setSweepProgress(null);
+		const listedBsv21 = onlyListedTokens(assets.bsv21Tokens);
+		const listedBsv20 = onlyListedTokens(assets.bsv20Balances);
+		const returnsListed =
+			legacy !== null &&
+			plan.sweepListed.length +
+				tokenOutputCount(listedBsv21) +
+				tokenOutputCount(listedBsv20) >
+				0;
+		const trail = beginAudit(
+			{
+				cancel: plan.cancel,
+				sweepListed: returnsListed ? plan.sweepListed : [],
+				sweepOrdinals: [],
+				sweepFunding: [],
+				sweepBsv21: returnsListed ? listedBsv21 : [],
+				sweepBsv20: returnsListed ? listedBsv20 : [],
+			},
+			"not part of this run (cancel listings only)",
+		);
 		try {
+			trail.stage("cancel");
 			const cancelled = await runDelist();
 			if (!cancelled.ok) {
 				console.error("[migration] listing cancel failed", cancelled.errors);
@@ -342,30 +396,24 @@ export default function MigratePage() {
 						errors: cancelled.errors,
 					}),
 				);
-				setError(
-					`${
-						new ListingCancelError(
-							plan.cancel.length,
-							cancelled.txids,
-							cancelled.errors,
-						).message
-					} Nothing else was moved.`,
+				const cancelError = new ListingCancelError(
+					plan.cancel.length,
+					cancelled.txids,
+					cancelled.errors,
 				);
+				trail.fail(cancelError, {
+					cancelTxids: cancelled.txids,
+					errors: cancelled.errors,
+				});
+				setError(`${cancelError.message} Nothing else was moved.`);
 				setPhase("error");
 				return;
 			}
 			let result: SweepResult = emptySweepResult({
 				cancelTxids: cancelled.txids,
 			});
-			const listedBsv21 = onlyListedTokens(assets.bsv21Tokens);
-			const listedBsv20 = onlyListedTokens(assets.bsv20Balances);
-			if (
-				legacy &&
-				plan.sweepListed.length +
-					tokenOutputCount(listedBsv21) +
-					tokenOutputCount(listedBsv20) >
-					0
-			) {
+			if (legacy && returnsListed) {
+				trail.stage("sweep");
 				const target = requireMigrationTarget(toolbox);
 				setProgress("Returning listed assets to the wallet...");
 				setProgressPercent(50);
@@ -377,6 +425,7 @@ export default function MigratePage() {
 					legacyOrdWif: legacy.ordWif,
 					legacyIdentityWif: legacy.identityWif,
 					onProgress: (p) => {
+						trail.progress(p);
 						setProgress(p.message);
 						setProgressPercent(50 + Math.round((p.percent / 100) * 50));
 						setSweepProgress(p);
@@ -394,12 +443,14 @@ export default function MigratePage() {
 					result.errors,
 				);
 			}
+			trail.finish(result);
 			setSweepResult(result);
 			assets.rescan();
 			toolbox.refreshBalance();
 			setProgressPercent(100);
 			setPhase("complete");
 		} catch (err) {
+			trail.fail(err, partialRunResult(err));
 			reportMigrationFailure("wallet.migration.delist", err);
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
@@ -407,10 +458,11 @@ export default function MigratePage() {
 	}, [
 		assets,
 		legacy,
-		plan.cancel.length,
+		plan.cancel,
 		plan.sweepListed,
 		runDelist,
 		toolbox,
+		beginAudit,
 	]);
 
 	// Run migration (or sweep-only re-entry for already-migrated wallets)
@@ -421,6 +473,7 @@ export default function MigratePage() {
 		setError(null);
 		setProgressPercent(0);
 		setSweepProgress(null);
+		const trail = beginAudit(plan);
 
 		try {
 			const sweepInto = (
@@ -450,6 +503,7 @@ export default function MigratePage() {
 					legacyOrdWif: legacy.ordWif,
 					legacyIdentityWif: identityWif,
 					onProgress: (p) => {
+						trail.progress(p);
 						setProgress(p.message);
 						setProgressPercent(base + Math.round((p.percent / 100) * span));
 						setSweepProgress(p);
@@ -461,6 +515,7 @@ export default function MigratePage() {
 				});
 			};
 			const onStage = (stage: string) => {
+				trail.stage(stage);
 				if (stage === "cancel") setProgress("Cancelling listings...");
 				else if (stage === "transfer") {
 					setProgress("Moving this wallet's assets to your identity key...");
@@ -521,11 +576,13 @@ export default function MigratePage() {
 					run.sweep.errors,
 				);
 			}
-			setSweepResult({
+			const finalResult: SweepResult = {
 				...(run.sweep ?? emptySweepResult()),
 				cancelTxids: run.cancelTxids,
 				transferTxids: run.transferTxids,
-			});
+			};
+			trail.finish(finalResult);
+			setSweepResult(finalResult);
 			if (run.sweep || run.transferTxids.length > 0) {
 				// Refresh so the banner and any re-entry reflect what's left
 				assets.rescan();
@@ -537,6 +594,7 @@ export default function MigratePage() {
 		} catch (err) {
 			reportMigrationFailure("wallet.migration.run", err);
 			const partial = partialRunResult(err);
+			trail.fail(err, partial);
 			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
@@ -551,6 +609,8 @@ export default function MigratePage() {
 		plan.sweepFunding,
 		plan.sweepBsv21,
 		plan.sweepBsv20,
+		plan,
+		beginAudit,
 	]);
 
 	// What the wizard shows. Display only: the plan above decides what moves.
@@ -619,6 +679,7 @@ export default function MigratePage() {
 	}
 
 	const retryScan = () => {
+		audit.clear();
 		setSweepResult(null);
 		setSweepProgress(null);
 		setScanDetail(null);
@@ -677,6 +738,8 @@ export default function MigratePage() {
 			destination="This wallet (your identity key)"
 			bsv20={bsv20Display}
 			onStepChange={setWizardStep}
+			auditRecord={audit.record}
+			auditSaveError={audit.saveError}
 		/>
 	);
 }

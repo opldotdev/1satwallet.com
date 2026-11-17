@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import packageJson from "./package.json";
 
 export const baseSecurityHeaders = [
 	{
@@ -29,6 +30,12 @@ export const sensitiveRouteHeaders = [
 const nextConfig: NextConfig = {
 	/* config options here */
 	reactCompiler: true,
+	// Build constants for support reports (lib/build-info.ts). Vercel sets
+	// VERCEL_GIT_COMMIT_SHA on every deployment; a local build has none.
+	env: {
+		NEXT_PUBLIC_APP_VERSION: packageJson.version,
+		NEXT_PUBLIC_BUILD_COMMIT: process.env.VERCEL_GIT_COMMIT_SHA ?? "",
+	},
 	turbopack: {
 		resolveAlias: {
 			// @1sat/actions pulls in xdelta3-wasm, whose wasm loader has a

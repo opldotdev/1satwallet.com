@@ -33,7 +33,7 @@ export interface SweepAddress {
 	address: string;
 }
 
-function CopyButton({ value, label }: { value: string; label: string }) {
+export function CopyButton({ value, label }: { value: string; label: string }) {
 	const [copied, setCopied] = useState(false);
 	const [failed, setFailed] = useState(false);
 	return (

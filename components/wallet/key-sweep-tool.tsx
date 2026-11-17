@@ -16,7 +16,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
+import { SweepSupportReport } from "@/components/wallet/sweep-audit-view";
+import { buildInfo } from "@/lib/build-info";
 import { useAddressAssets } from "@/lib/hooks/use-legacy-assets";
+import { auditPlanFromScan } from "@/lib/sweep-audit/plan";
+import {
+	sweepAuditIdentityKey,
+	useSweepAudit,
+} from "@/lib/sweep-audit/use-sweep-audit";
 import {
 	executeKeySweep,
 	type SweepProgress,
@@ -256,6 +263,11 @@ export function KeySweepTool() {
 	const [progress, setProgress] = useState<SweepProgress | null>(null);
 	const [sweepError, setSweepError] = useState<string | null>(null);
 	const [runs, setRuns] = useState<SweepRun[]>([]);
+	const audit = useSweepAudit();
+	const auditIdentity = useMemo(
+		() => (walletKeys ? sweepAuditIdentityKey(walletKeys) : null),
+		[walletKeys],
+	);
 
 	const addresses = useMemo(() => keys?.map((k) => k.address) ?? [], [keys]);
 	const assets = useAddressAssets(addresses);
@@ -390,6 +402,22 @@ export function KeySweepTool() {
 		setSweepError(null);
 		setProgress(null);
 		const opnsNames = unlistedOpns.map((o) => o.name ?? o.outpoint);
+		// This run's support record: addresses and labels only, never keys.
+		const trail = audit.begin(
+			{
+				kind: "key-sweep",
+				chain: toolbox.chain,
+				app: buildInfo(),
+				sources: keys.map((key) => ({
+					address: key.address,
+					label: key.label,
+					scheme: `pasted key (${source})`,
+				})),
+				destination: "This wallet",
+				...auditPlanFromScan(assets, plan, { listings }),
+			},
+			auditIdentity,
+		);
 		try {
 			const target = requireMigrationTarget(toolbox);
 			const seen: { last: SweepProgress | null } = { last: null };
@@ -400,6 +428,7 @@ export function KeySweepTool() {
 				keys: keys.map(({ label, wif }) => ({ label, wif })),
 				onProgress: (p) => {
 					seen.last = p;
+					trail.progress(p);
 					setProgress(p);
 				},
 				funding: plan.sweepFunding,
@@ -409,11 +438,13 @@ export function KeySweepTool() {
 				logPrefix: "[sweep]",
 			});
 			const steps = seen.last?.steps ?? [];
+			trail.finish(result);
 			setRuns((prev) => [...prev, { result, steps, opnsNames }]);
 			assets.rescan();
 			toolbox.refreshBalance();
 			setPhase("done");
 		} catch (error) {
+			trail.fail(error);
 			reportMigrationFailure("wallet.sweep.run", error);
 			setSweepError(
 				error instanceof Error ? error.message : "The sweep could not start",
@@ -669,7 +700,13 @@ export function KeySweepTool() {
 							</div>
 						)}
 						{sweepError && (
-							<p className="pt-3 text-sm text-destructive">{sweepError}</p>
+							<div className="space-y-2 pt-3">
+								<p className="text-sm text-destructive">{sweepError}</p>
+								<SweepSupportReport
+									record={audit.record}
+									saveError={audit.saveError}
+								/>
+							</div>
 						)}
 					</CardContent>
 				</Card>
@@ -754,6 +791,10 @@ export function KeySweepTool() {
 							</p>
 						) : null}
 						{showTxids && <TxDetails runs={runs} chain={toolbox.chain} />}
+						<SweepSupportReport
+							record={audit.record}
+							saveError={audit.saveError}
+						/>
 					</CardContent>
 				</Card>
 			)}

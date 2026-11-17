@@ -37,7 +37,22 @@ export interface SweepStepState {
 	/** Live sub-status, e.g. "batch 2/5" or "fetching source txs 12/40" */
 	detail?: string;
 	txids: string[];
+	/** Short summary of what failed, e.g. "1 of 2 batches failed" */
 	error?: string;
+	/** Every error this step raised, verbatim (also in SweepResult.errors) */
+	errors?: string[];
+}
+
+/**
+ * An output a sweep run left at its address, and why: the exact error that
+ * kept it there. Reporting only (the run's audit record); never read by the
+ * sweep itself.
+ */
+export interface SweepLeftBehind {
+	outpoint: string;
+	/** The step it belonged to, when it reached one */
+	stepId?: string;
+	reason: string;
 }
 
 export interface SweepProgress {
@@ -45,6 +60,10 @@ export interface SweepProgress {
 	/** 0-100, derived from completed work units — never fabricated */
 	percent: number;
 	steps: SweepStepState[];
+	/** Every error so far, verbatim (SweepResult.errors as it stands) */
+	errors?: string[];
+	/** Outputs left behind so far (SweepResult.leftBehind as it stands) */
+	leftBehind?: SweepLeftBehind[];
 }
 
 export interface SweepResult {
@@ -59,6 +78,8 @@ export interface SweepResult {
 	/** Listed legacy outputs whose OrdLock was cancelled inside a sweep spend */
 	cancelledListings: string[];
 	errors: string[];
+	/** Outputs this run left at their address, each with its exact reason */
+	leftBehind?: SweepLeftBehind[];
 }
 
 export function emptySweepResult(
@@ -71,6 +92,7 @@ export function emptySweepResult(
 		bsv21Txids: [],
 		cancelledListings: [],
 		errors: [],
+		leftBehind: [],
 		...extra,
 	};
 }
@@ -338,6 +360,8 @@ export async function executeKeySweep(
 	const ctx = createContext(wallet, { services, chain });
 
 	const result = emptySweepResult();
+	const leftBehind: SweepLeftBehind[] = [];
+	result.leftBehind = leftBehind;
 
 	const keyMap = new Map<string, PrivateKey>();
 	for (const { label, wif } of keys) {
@@ -361,15 +385,25 @@ export async function executeKeySweep(
 	const activeTokens = excludeUnsweepableTokens(bsv21Tokens).filter(
 		(t) => t.outputs.length > 0,
 	);
+	const sweptTokens = new Set(activeTokens);
+	for (const token of bsv21Tokens) {
+		if (sweptTokens.has(token)) continue;
+		for (const o of token.outputs) {
+			leftBehind.push({
+				outpoint: o.outpoint,
+				reason: `Token ${token.symbol ?? token.tokenId.slice(0, 8)}: not swept (this token's outputs can't be signed by the generic sweep)`,
+			});
+		}
+	}
 	// Only amounts the indexer gives are swept (see splitBsv20Outputs); an
 	// amount from the inscription JSON alone could over-claim and burn.
 	const activeBsv20 = bsv20Tokens
 		.map((t) => {
 			const unconfirmed = t.outputs.filter((o) => !hasIndexedBsv20Amount(o));
 			for (const o of unconfirmed) {
-				result.errors.push(
-					`BSV-20 ${t.tick} output ${o.outpoint} was not swept: ${BSV20_UNCONFIRMED_REASON}.`,
-				);
+				const message = `BSV-20 ${t.tick} output ${o.outpoint} was not swept: ${BSV20_UNCONFIRMED_REASON}.`;
+				result.errors.push(message);
+				leftBehind.push({ outpoint: o.outpoint, reason: message });
 			}
 			return unconfirmed.length === 0
 				? t
@@ -397,6 +431,7 @@ export async function executeKeySweep(
 			label: `BSV funding (${funding.length} UTXO${funding.length !== 1 ? "s" : ""})`,
 			status: "pending",
 			txids: [],
+			errors: [],
 		});
 	}
 	if (ordinals.length > 0) {
@@ -405,6 +440,7 @@ export async function executeKeySweep(
 			label: `Ordinals (${ordinals.length})`,
 			status: "pending",
 			txids: [],
+			errors: [],
 		});
 	}
 	for (const token of activeBsv20) {
@@ -413,6 +449,7 @@ export async function executeKeySweep(
 			label: `${token.tick} (${token.outputs.length} output${token.outputs.length !== 1 ? "s" : ""})`,
 			status: "pending",
 			txids: [],
+			errors: [],
 		});
 	}
 	for (const token of activeTokens) {
@@ -421,6 +458,7 @@ export async function executeKeySweep(
 			label: `${token.symbol ?? token.tokenId.slice(0, 8)} (${token.outputs.length} output${token.outputs.length !== 1 ? "s" : ""})`,
 			status: "pending",
 			txids: [],
+			errors: [],
 		});
 	}
 
@@ -440,7 +478,13 @@ export async function executeKeySweep(
 				totalUnits === 0
 					? 100
 					: Math.round((completedUnits / totalUnits) * 100),
-			steps: steps.map((s) => ({ ...s, txids: [...s.txids] })),
+			steps: steps.map((s) => ({
+				...s,
+				txids: [...s.txids],
+				errors: [...(s.errors ?? [])],
+			})),
+			errors: [...result.errors],
+			leftBehind: [...leftBehind],
 		});
 	};
 
@@ -470,11 +514,22 @@ export async function executeKeySweep(
 		if (!step) return;
 		step.status = "active";
 		let failedChunks = 0;
+		// Every error is recorded on the run, on its step, and against the
+		// outputs it kept at the legacy address.
+		const fail = (message: string, outpoints: readonly string[]) => {
+			result.errors.push(message);
+			step.errors?.push(message);
+			for (const outpoint of outpoints) {
+				leftBehind.push({ outpoint, stepId, reason: message });
+			}
+		};
 
 		for (let i = 0; i < chunks.length; i++) {
 			const batchLabel =
 				chunks.length > 1 ? ` (batch ${i + 1}/${chunks.length})` : "";
 			let chunkFailed = false;
+			// Outputs of this chunk already swept or already left with a reason
+			const settled = new Set<string>();
 			try {
 				step.detail = `preparing inputs${batchLabel}`;
 				emit(`${errorLabel}: preparing inputs${batchLabel}...`);
@@ -490,8 +545,10 @@ export async function executeKeySweep(
 				);
 
 				for (const failure of failures) {
-					result.errors.push(
+					settled.add(failure.outpoint);
+					fail(
 						`${errorLabel}: skipped ${failure.outpoint} (${failure.error})`,
+						[failure.outpoint],
 					);
 				}
 				// A skipped output stays at the legacy address: the step is
@@ -507,6 +564,8 @@ export async function executeKeySweep(
 						keyMap,
 					);
 					const txResult = await execute(prepared, keys);
+					const preparedOutpoints = prepared.map((p) => p.output.outpoint);
+					for (const outpoint of preparedOutpoints) settled.add(outpoint);
 
 					if (txResult.error) {
 						chunkFailed = true;
@@ -514,7 +573,10 @@ export async function executeKeySweep(
 							`${logPrefix} ${errorLabel}${batchLabel} failed`,
 							txResult.error,
 						);
-						result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
+						fail(
+							`${errorLabel}${batchLabel}: ${txResult.error}`,
+							preparedOutpoints,
+						);
 					} else if (txResult.txid) {
 						collect(txResult.txid);
 						step.txids.push(txResult.txid);
@@ -533,8 +595,9 @@ export async function executeKeySweep(
 							: [];
 						if (left.length > 0) {
 							chunkFailed = true;
-							result.errors.push(
+							fail(
 								`${errorLabel}${batchLabel}: ${left.length} output${left.length !== 1 ? "s were" : " was"} not accepted by the token overlay and stayed at the legacy address (${left.map((o) => o.outpoint).join(", ")})`,
+								left.map((o) => o.outpoint),
 							);
 						}
 						for (const output of swept) {
@@ -544,16 +607,20 @@ export async function executeKeySweep(
 						}
 					} else {
 						chunkFailed = true;
-						result.errors.push(
+						fail(
 							`${errorLabel}${batchLabel}: the sweep returned no transaction id`,
+							preparedOutpoints,
 						);
 					}
 				}
 			} catch (error) {
 				chunkFailed = true;
 				console.error(`${logPrefix} ${errorLabel}${batchLabel} failed`, error);
-				result.errors.push(
+				fail(
 					`${errorLabel}${batchLabel}: ${error instanceof Error ? error.message : String(error)}`,
+					chunks[i]
+						.map((o) => o.outpoint)
+						.filter((outpoint) => !settled.has(outpoint)),
 				);
 			}
 			if (chunkFailed) failedChunks++;
@@ -631,11 +698,20 @@ export async function executeKeySweep(
 		const step = stepById(`token:${token.tokenId}`);
 		const batches = bsv21Batches.get(token.tokenId) ?? [];
 		if (!token.isActive) {
+			const message = `Token ${label}: not active on the overlay — skipped`;
 			if (step) {
 				step.status = "error";
 				step.error = "not validated on the overlay — skipped";
+				step.errors?.push(message);
 			}
-			result.errors.push(`Token ${label}: not active on the overlay — skipped`);
+			result.errors.push(message);
+			for (const o of token.outputs) {
+				leftBehind.push({
+					outpoint: o.outpoint,
+					stepId: `token:${token.tokenId}`,
+					reason: message,
+				});
+			}
 			completedUnits += batches.length;
 			emit(`Token ${label} skipped`);
 			continue;
