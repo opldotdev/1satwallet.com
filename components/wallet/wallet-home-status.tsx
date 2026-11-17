@@ -3,19 +3,24 @@
 import {
 	ArrowRight,
 	AtSign,
-	CircleDollarSign,
+	Coins,
 	Copy,
 	Gem,
 	History,
 	Inbox,
 	LockKeyhole,
+	type LucideIcon,
 	RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
+import { useOneColorBalances } from "@/hooks/use-one-color-balances";
 import { useWalletHandles } from "@/hooks/use-wallet-handles";
+import { endpointsOf, isOneColorAvailable } from "@/lib/chain-endpoints";
+import { type WalletTabValue, walletTabsFor } from "@/lib/chain-surfaces";
+import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
@@ -30,9 +35,55 @@ function describeSyncTask(task: SyncTaskState) {
 	return `Processed ${task.processed ?? "unknown"}, failed ${task.failed ?? "unknown"} · ${time} UTC`;
 }
 
+/** Testnet only: where to get test coins, shown under the balance. */
+export function TestnetFaucetLink() {
+	const chain = useWalletChain();
+	const { faucet } = endpointsOf(chain);
+	if (chain !== "test" || !faucet) return null;
+	return (
+		<a
+			className="inline-flex w-fit items-center text-muted-foreground text-xs underline underline-offset-4 hover:text-foreground max-md:min-h-11"
+			href={faucet}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			Get test coins
+		</a>
+	);
+}
+
+/** The Tokens row's line: BSV-21, and on testnet 1Color too. */
+function TokensDescription() {
+	const chain = useWalletChain();
+	const { bsv21State, connectionMode } = useWalletToolbox();
+	const oneColor = useOneColorBalances();
+	const bsv21 = describeAssetSurface(bsv21State, "BSV-21 token");
+	// 1Color is read from the built-in wallet only, on a chain with an overlay.
+	if (!isOneColorAvailable(chain) || connectionMode !== "built-in") {
+		return bsv21;
+	}
+	const colored = oneColor.isPending
+		? "1Color loading"
+		: oneColor.isError
+			? "1Color couldn't load"
+			: describeAssetSurface(
+					oneColor.data.length === 0
+						? { kind: "empty" }
+						: { kind: "ready", count: oneColor.data.length },
+					"1Color token",
+				);
+	return `${bsv21} · ${colored}`;
+}
+
+/** The sections that hold assets, as rows of the overview's Assets list. */
+const ASSET_ICONS: Partial<Record<WalletTabValue, LucideIcon>> = {
+	ordinals: Gem,
+	tokens: Coins,
+	opns: AtSign,
+};
+
 export function WalletHomeStatus() {
 	const {
-		bsv21State,
 		connectionMode,
 		hasActiveSync,
 		identityKey,
@@ -43,6 +94,17 @@ export function WalletHomeStatus() {
 		syncWallet,
 	} = useWalletToolbox();
 	const [, copy] = useCopyWithSound();
+	const assets = walletTabsFor(useWalletChain()).filter(
+		(tab) => ASSET_ICONS[tab.value] !== undefined,
+	);
+	const describe = (value: WalletTabValue) =>
+		value === "ordinals" ? (
+			describeAssetSurface(ordinalsState, "inscription")
+		) : value === "tokens" ? (
+			<TokensDescription />
+		) : (
+			"Names you own"
+		);
 	const handles = useWalletHandles();
 	const holdsHandle = (handles.data?.length ?? 0) > 0;
 	const shortenedIdentity = identityKey
@@ -58,37 +120,23 @@ export function WalletHomeStatus() {
 				>
 					<h2 id="wallet-assets-heading">Assets</h2>
 					<p className={styles.description}>Your on-chain assets and tokens.</p>
-					{[
-						{
-							title: "Ordinals",
-							href: "/wallet/ordinals",
-							icon: Gem,
-							state: ordinalsState,
-							noun: "inscription",
-						},
-						{
-							title: "BSV21",
-							href: "/wallet/bsv21",
-							icon: CircleDollarSign,
-							state: bsv21State,
-							noun: "token",
-						},
-					].map(({ title, href, icon: Icon, state, noun }) => (
-						<Link key={title} href={href} className={styles.assetRow}>
-							<Icon className={styles.accent} aria-hidden="true" />
-							<div>
-								<h3>{title}</h3>
-								{isBalanceLoading ? (
-									<Skeleton className="mt-2 h-4 w-24" />
-								) : (
-									<p className={styles.description}>
-										{describeAssetSurface(state, noun)}
-									</p>
-								)}
-							</div>
-							<ArrowRight className={styles.arrow} aria-hidden="true" />
-						</Link>
-					))}
+					{assets.map(({ value, label, href }) => {
+						const Icon = ASSET_ICONS[value] ?? Coins;
+						return (
+							<Link key={value} href={href} className={styles.assetRow}>
+								<Icon className={styles.accent} aria-hidden="true" />
+								<div>
+									<h3>{label}</h3>
+									{isBalanceLoading ? (
+										<Skeleton className="mt-2 h-4 w-24" />
+									) : (
+										<p className={styles.description}>{describe(value)}</p>
+									)}
+								</div>
+								<ArrowRight className={styles.arrow} aria-hidden="true" />
+							</Link>
+						);
+					})}
 				</section>
 				<section
 					className={styles.connection}
@@ -100,7 +148,7 @@ export function WalletHomeStatus() {
 							? "Services managed by your connected wallet."
 							: "Sync and delivery status for your wallet."}
 					</p>
-					<div className={styles.services}>
+					<div>
 						{[
 							{
 								id: "addresses",

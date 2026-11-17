@@ -7,7 +7,6 @@ import { PageHeader, PageTitle } from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { useSound } from "@/hooks/use-sound";
-import { endpointsOf } from "@/lib/chain-endpoints";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import { walletSectionFor } from "@/lib/wallet-sections";
 import { useWallet } from "@/providers/wallet-provider";
@@ -31,7 +30,6 @@ export function WalletHeader() {
 	const { play } = useSound();
 	const chain = useWalletChain();
 	const section = walletSectionFor(usePathname(), chain);
-	const { faucet } = endpointsOf(chain);
 	const label = isInitializing
 		? "Connecting…"
 		: connectionStatus === "locked"
@@ -75,16 +73,6 @@ export function WalletHeader() {
 							</span>
 						) : null}
 					</div>
-					{chain === "test" && faucet && section.tab === "overview" ? (
-						<a
-							className="inline-flex w-fit items-center text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground max-md:min-h-11"
-							href={faucet}
-							rel="noopener noreferrer"
-							target="_blank"
-						>
-							Get test coins
-						</a>
-					) : null}
 				</div>
 			</div>
 			<div className="flex shrink-0 items-center gap-1 md:gap-2">
