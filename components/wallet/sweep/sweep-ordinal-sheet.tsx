@@ -12,7 +12,9 @@ import {
 } from "@/components/ui/sheet";
 import { MigrationOrdinalCard } from "@/components/wallet/migration-ordinal-card";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 import type { SweepOrdinal } from "@/lib/wallet/sweep-summary";
+import { SWEEP_SHEET_LAYER } from "./sweep-layers";
 
 const PAGE = 30;
 
@@ -44,9 +46,11 @@ export function SweepOrdinalSheet({
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side={isMobile ? "bottom" : "right"}
-				className={
-					isMobile ? "max-h-[85dvh] rounded-t-xl" : "w-full sm:max-w-xl"
-				}
+				overlayClassName={SWEEP_SHEET_LAYER}
+				className={cn(
+					SWEEP_SHEET_LAYER,
+					isMobile ? "max-h-[85dvh] rounded-t-xl" : "w-full sm:max-w-xl",
+				)}
 			>
 				<SheetHeader className="pr-12">
 					<SheetTitle>Choose ordinals</SheetTitle>

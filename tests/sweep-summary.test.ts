@@ -12,6 +12,7 @@ import {
 	currentStepLine,
 	formatBsv,
 	formatTokenAmount,
+	listingsLine,
 	outcomeNotes,
 	reviewLines,
 	type SweepSummaryInput,
@@ -276,6 +277,21 @@ describe("staysRows", () => {
 		for (const r of rows) assert.doesNotMatch(r.label, /aaaa/);
 		// Listings are not "staying behind".
 		assert.equal(staysCount(summary), 3 + 2 + 1 + 2);
+	});
+
+	it("says what happens to listings in each mode", () => {
+		assert.equal(
+			listingsLine(2, "sweep"),
+			"2 listings are cancelled, then the ordinals move.",
+		);
+		assert.equal(
+			listingsLine(2, "skip"),
+			"2 listings are left open, so their ordinals stay at your old address.",
+		);
+		assert.equal(
+			listingsLine(1, "cancel-only"),
+			"1 listing is still open. Cancelling returns its ordinal to this wallet.",
+		);
 	});
 
 	it("says BSV-20 inscriptions are still yours", () => {

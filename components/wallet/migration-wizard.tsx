@@ -2,11 +2,12 @@
 
 import { ArrowRight, Download, Shield } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MigrationSweepFlow } from "@/components/wallet/migration-sections";
 import { WALLET_STORAGE_KEY } from "@/lib/constants";
 import { useBsv20ContentLabels } from "@/lib/hooks/use-bsv20-content";
+import { useDefaultOrdinalSelection } from "@/lib/hooks/use-default-ordinal-selection";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
 import {
@@ -87,10 +88,6 @@ export function MigrationWizard() {
 	const [sweepResult, setSweepResult] = useState<SweepResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	// Ordinal selection
-	const [selectedOrdinals, setSelectedOrdinals] = useState<Set<string>>(
-		new Set(),
-	);
 	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
 		defaultAssetTypes(),
 	);
@@ -173,6 +170,9 @@ export function MigrationWizard() {
 		() => withoutListed(assets.ordinals),
 		[assets.ordinals],
 	);
+	// Every unlisted ordinal starts selected, once per set of outpoints.
+	const [selectedOrdinals, setSelectedOrdinals] =
+		useDefaultOrdinalSelection(unlistedOrdinals);
 	const unlistedOpns = useMemo(
 		() => withoutListed(assets.opnsNames),
 		[assets.opnsNames],
@@ -223,35 +223,29 @@ export function MigrationWizard() {
 		],
 	);
 
-	// Select every unlisted ordinal by default, once per scan result, so a
-	// deliberate "Deselect all" stays deselected.
-	const defaultedOrdinals = useRef<typeof unlistedOrdinals | null>(null);
-	useEffect(() => {
-		if (defaultedOrdinals.current === unlistedOrdinals) return;
-		defaultedOrdinals.current = unlistedOrdinals;
-		setSelectedOrdinals(new Set(unlistedOrdinals.map((item) => item.outpoint)));
-	}, [unlistedOrdinals]);
-
 	// Ordinal selection handlers
-	const handleToggleOrdinal = useCallback((outpoint: string) => {
-		setSelectedOrdinals((prev) => {
-			const next = new Set(prev);
-			if (next.has(outpoint)) {
-				next.delete(outpoint);
-			} else {
-				next.add(outpoint);
-			}
-			return next;
-		});
-	}, []);
+	const handleToggleOrdinal = useCallback(
+		(outpoint: string) => {
+			setSelectedOrdinals((prev) => {
+				const next = new Set(prev);
+				if (next.has(outpoint)) {
+					next.delete(outpoint);
+				} else {
+					next.add(outpoint);
+				}
+				return next;
+			});
+		},
+		[setSelectedOrdinals],
+	);
 
 	const handleSelectAll = useCallback(() => {
 		setSelectedOrdinals(new Set(unlistedOrdinals.map((item) => item.outpoint)));
-	}, [unlistedOrdinals]);
+	}, [unlistedOrdinals, setSelectedOrdinals]);
 
 	const handleDeselectAll = useCallback(() => {
 		setSelectedOrdinals(new Set());
-	}, []);
+	}, [setSelectedOrdinals]);
 
 	const handleToggleType = useCallback((type: AssetType) => {
 		setSelectedTypes((prev) => toggleAssetType(prev, type));

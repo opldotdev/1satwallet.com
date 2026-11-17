@@ -13,12 +13,14 @@ import {
 } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { SweepResult } from "@/lib/sweep-migration";
+import { cn } from "@/lib/utils";
 import type { Bsv20Group } from "@/lib/wallet/bsv20-content";
 import {
 	BSV20_STAYS_DETAIL,
 	formatTokenAmount,
 	type StayRow,
 } from "@/lib/wallet/sweep-summary";
+import { SWEEP_SHEET_LAYER } from "./sweep-layers";
 
 /** A claimed amount as written, digits grouped; never verified or summed. */
 const formatClaimed = (amt: string) => {
@@ -139,9 +141,11 @@ export function SweepDetails({
 		<Sheet open={open} onOpenChange={onOpenChange}>
 			<SheetContent
 				side={isMobile ? "bottom" : "right"}
-				className={
-					isMobile ? "max-h-[85dvh] rounded-t-xl" : "w-full sm:max-w-md"
-				}
+				overlayClassName={SWEEP_SHEET_LAYER}
+				className={cn(
+					SWEEP_SHEET_LAYER,
+					isMobile ? "max-h-[85dvh] rounded-t-xl" : "w-full sm:max-w-md",
+				)}
 			>
 				<SheetHeader className="pr-12">
 					<SheetTitle>How the sweep works</SheetTitle>

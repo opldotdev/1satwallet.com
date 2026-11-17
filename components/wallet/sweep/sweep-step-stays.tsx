@@ -1,7 +1,7 @@
 import { Boxes, Hourglass, Lock, Tag, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import type { StayRow } from "@/lib/wallet/sweep-summary";
+import { listingsLine, type StayRow } from "@/lib/wallet/sweep-summary";
 import { type Bsv20StaysData, SweepBsv20Stays } from "./sweep-bsv20-stays";
 import { SweepRouteDiagram } from "./sweep-route-diagram";
 import { SweepToggleRow } from "./sweep-toggle-row";
@@ -73,7 +73,16 @@ export function SweepStepStays({
 						<span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
 							{ICONS.listings}
 						</span>
-						<p className="min-w-0 flex-1 text-sm">{listings.label}</p>
+						<p className="min-w-0 flex-1 text-sm">
+							{listingsLine(
+								listings.count,
+								onListingsIncludedChange
+									? listingsIncluded
+										? "sweep"
+										: "skip"
+									: "cancel-only",
+							)}
+						</p>
 					</div>
 					{onListingsIncludedChange && (
 						<SweepToggleRow

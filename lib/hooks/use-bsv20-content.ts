@@ -12,8 +12,60 @@ import {
 
 /** outpoint -> parsed content (null: unreadable, not BSV-20 or failed). */
 const cache = new Map<string, Bsv20Content | null>();
+/** The cache keeps at most this many outpoints, dropping the oldest first. */
+const CACHE_MAX_ENTRIES = 1000;
+
+function remember(outpoint: string, content: Bsv20Content | null) {
+	cache.delete(outpoint);
+	cache.set(outpoint, content);
+	while (cache.size > CACHE_MAX_ENTRIES) {
+		const oldest = cache.keys().next().value;
+		if (oldest === undefined) break;
+		cache.delete(oldest);
+	}
+}
 
 const REQUEST_TIMEOUT_MS = 8000;
+
+/** BSV-20 inscriptions are JSON; anything else is not worth reading. */
+const isTextual = (contentType: string | null) =>
+	!contentType || /json|text\/plain/i.test(contentType);
+
+/**
+ * Reads at most `max` bytes of the body, cancelling the stream past that, so
+ * a large or mislabelled inscription is never downloaded in full.
+ */
+async function readCapped(
+	response: Response,
+	max: number,
+): Promise<string | null> {
+	const declared = Number(response.headers.get("content-length") ?? "0");
+	if (declared > max) {
+		await response.body?.cancel();
+		return null;
+	}
+	if (!response.body) return null;
+	const reader = response.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		size += value.byteLength;
+		if (size > max) {
+			await reader.cancel();
+			return null;
+		}
+		chunks.push(value);
+	}
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(bytes);
+}
 
 async function fetchContent(
 	outpoint: string,
@@ -28,10 +80,12 @@ async function fetchContent(
 			signal: controller.signal,
 		});
 		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		const length = Number(response.headers.get("content-length") ?? "0");
-		if (length > BSV20_CONTENT_MAX_BYTES) return null;
-		const text = await response.text();
-		return parseBsv20Content(text);
+		if (!isTextual(response.headers.get("content-type"))) {
+			await response.body?.cancel();
+			return null;
+		}
+		const text = await readCapped(response, BSV20_CONTENT_MAX_BYTES);
+		return text === null ? null : parseBsv20Content(text);
 	} finally {
 		clearTimeout(timer);
 		parent.removeEventListener("abort", abort);
@@ -63,7 +117,13 @@ export function useBsv20ContentLabels(
 ): Bsv20ContentLabels {
 	const [version, setVersion] = useState(0);
 	const [loading, setLoading] = useState(false);
-	const wanted = useMemo(() => outpoints.slice(0, max), [outpoints, max]);
+	// Keyed on the outpoints themselves, so a list rebuilt on each render
+	// neither restarts nor aborts the fetches.
+	const wantedKey = outpoints.slice(0, max).join("|");
+	const wanted = useMemo(
+		() => (wantedKey ? wantedKey.split("|") : []),
+		[wantedKey],
+	);
 
 	useEffect(() => {
 		if (!enabled) return;
@@ -76,11 +136,11 @@ export function useBsv20ContentLabels(
 			while (next < todo.length && !controller.signal.aborted) {
 				const outpoint = todo[next++];
 				try {
-					cache.set(outpoint, await fetchContent(outpoint, controller.signal));
+					remember(outpoint, await fetchContent(outpoint, controller.signal));
 				} catch (error) {
 					if (controller.signal.aborted) return;
 					console.debug("[sweep] BSV-20 content not read", outpoint, error);
-					cache.set(outpoint, null);
+					remember(outpoint, null);
 				}
 				setVersion((v) => v + 1);
 			}

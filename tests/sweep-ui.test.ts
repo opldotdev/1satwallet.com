@@ -48,7 +48,12 @@ describe("sweep wizard wiring", () => {
 	it("keeps a deliberate deselect-all", () => {
 		for (const host of [page, wizard]) {
 			assert.doesNotMatch(host, /selectedOrdinals\.size === 0/);
+			assert.match(host, /useDefaultOrdinalSelection\(unlistedOrdinals\)/);
 		}
+		// The scanned lists keep their identity between renders.
+		const assets = read("lib/hooks/use-legacy-assets.ts");
+		assert.doesNotMatch(assets, /\?\? \[\]\)\.map\(enrichOrdinal\)/);
+		assert.match(assets, /const lists = useMemo\(/);
 	});
 });
 
@@ -130,6 +135,13 @@ describe("BSV-20 content labels stay out of the sweep", () => {
 		assert.match(hook, /new AbortController\(\)/);
 		assert.match(hook, /controller\.abort\(\)/);
 		assert.match(hook, /BSV20_CONTENT_MAX_BYTES/);
+		// The cap holds without a Content-Length, and the cache is bounded.
+		assert.match(hook, /getReader\(\)/);
+		assert.match(hook, /reader\.cancel\(\)/);
+		assert.match(hook, /CACHE_MAX_ENTRIES = 1000/);
+		// Fetches restart only when the outpoints change, not the array.
+		assert.match(hook, /\[enabled, wanted, concurrency\]/);
+		assert.match(hook, /\[wantedKey\]/);
 	});
 
 	it("leaves no 'no readable ticker' copy on screen", () => {

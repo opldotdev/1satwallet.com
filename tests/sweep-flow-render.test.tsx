@@ -122,4 +122,15 @@ describe("sweep wizard screens", () => {
 		assert.match(html, /Scanning pay address/);
 		assert.match(html, /Scanning…/);
 	});
+
+	it("lets a first run put the sweep off after a failed scan", () => {
+		const html = render({
+			screen: "scan",
+			scanError: "network down",
+			firstRun: true,
+			onLater: noop,
+		});
+		assert.match(html, /Retry scan/);
+		assert.match(html, /Migrate later/);
+	});
 });

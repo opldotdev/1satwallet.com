@@ -199,6 +199,18 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 		</>
 	);
 
+	// First run only: put the sweep off until the next unlock.
+	const laterButton = props.onLater ? (
+		<Button
+			variant="ghost"
+			size="sm"
+			className="text-muted-foreground"
+			onClick={props.onLater}
+		>
+			Migrate later
+		</Button>
+	) : null;
+
 	// -- Scan ----------------------------------------------------------------
 	if (screen === "scan") {
 		if (props.scanError) {
@@ -208,10 +220,13 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 					title: "Couldn't check your old addresses",
 					onEnter: props.onRetryScan,
 					footer: (
-						<Button className="w-full" onClick={props.onRetryScan}>
-							<RefreshCw data-icon="inline-start" />
-							Retry scan
-						</Button>
+						<>
+							<Button className="w-full" onClick={props.onRetryScan}>
+								<RefreshCw data-icon="inline-start" />
+								Retry scan
+							</Button>
+							{laterButton}
+						</>
 					),
 				},
 				<Notice tone="danger">{shortError(props.scanError)}</Notice>,
@@ -410,16 +425,7 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 				)}
 				{primary}
 			</SweepFooterRow>
-			{props.onLater && (stepIndex === 0 || isLast) && (
-				<Button
-					variant="ghost"
-					size="sm"
-					className="text-muted-foreground"
-					onClick={props.onLater}
-				>
-					Migrate later
-				</Button>
-			)}
+			{(stepIndex === 0 || isLast) && laterButton}
 		</>
 	);
 
@@ -446,17 +452,20 @@ export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
 				),
 			);
 		case "collectibles": {
-			const parts = [
-				summary.ordinals.count > 0
-					? plural(summary.ordinals.count, "ordinal")
-					: null,
-				summary.names.count > 0 ? plural(summary.names.count, "name") : null,
-			].filter(Boolean);
+			const { count } = summary.ordinals;
+			const names =
+				summary.names.count > 0 ? plural(summary.names.count, "name") : null;
+			const description =
+				count > 0 && selectedOrdinalCount < count
+					? `${selectedOrdinalCount} of ${plural(count, "ordinal")} selected${names ? `, plus ${names}` : ""}.`
+					: `${[count > 0 ? plural(count, "ordinal") : null, names]
+							.filter(Boolean)
+							.join(" and ")}, all selected.`;
 			return wizard(
 				{
 					...frame,
 					title: "Move your ordinals",
-					description: `${parts.join(" and ")}, all selected.`,
+					description,
 				},
 				<SweepStepCollectibles
 					ordinals={summary.ordinals}

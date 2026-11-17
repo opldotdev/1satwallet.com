@@ -71,7 +71,9 @@ export function SweepTokenRow({
 				</p>
 			</div>
 			{amount && (
-				<span className="max-w-[50%] truncate text-right font-mono text-sm tabular-nums">
+				// The amount always shows whole: it wraps at its digit groups
+				// when narrow, and the ticker truncates instead.
+				<span className="max-w-[60%] shrink-0 text-right font-mono text-sm tabular-nums [overflow-wrap:anywhere]">
 					{amount}
 				</span>
 			)}

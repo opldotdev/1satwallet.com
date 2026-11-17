@@ -4,7 +4,7 @@ import { SweepRouteDiagram } from "./sweep-route-diagram";
 import { SweepThumbStrip } from "./sweep-thumb-strip";
 import { SweepToggleRow } from "./sweep-toggle-row";
 
-/** Step: ordinals and names, all selected, previewed as a short strip. */
+/** Step: ordinals and names, selected by default, previewed as a short strip. */
 export function SweepStepCollectibles({
 	ordinals,
 	names,

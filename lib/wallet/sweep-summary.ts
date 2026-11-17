@@ -311,7 +311,7 @@ export function staysRows(summary: SweepSummary): StayRow[] {
 		rows.push({
 			key: "listings",
 			kind: "listings",
-			label: `${plural(summary.listings, "listing")} ${summary.listings === 1 ? "is" : "are"} cancelled, then the ordinals move.`,
+			label: listingsLine(summary.listings, "sweep"),
 			count: summary.listings,
 			detail:
 				"Open OrdLock listings are cancelled first; each ordinal then moves with the rest.",
@@ -319,6 +319,25 @@ export function staysRows(summary: SweepSummary): StayRow[] {
 		});
 	}
 	return rows;
+}
+
+/**
+ * What happens to open listings: cancelled as part of the sweep, left open
+ * (listings turned off), or cancelled on their own (nothing else to sweep).
+ */
+export type ListingsMode = "sweep" | "skip" | "cancel-only";
+
+export function listingsLine(count: number, mode: ListingsMode): string {
+	const n = plural(count, "listing");
+	const are = count === 1 ? "is" : "are";
+	switch (mode) {
+		case "sweep":
+			return `${n} ${are} cancelled, then the ordinals move.`;
+		case "skip":
+			return `${n} ${are} left open, so ${count === 1 ? "its ordinal stays" : "their ordinals stay"} at your old address.`;
+		case "cancel-only":
+			return `${n} ${are} still open. Cancelling returns ${count === 1 ? "its ordinal" : "their ordinals"} to this wallet.`;
+	}
 }
 
 /** "N BSV-20 inscriptions stay at your old address (still yours)". */
