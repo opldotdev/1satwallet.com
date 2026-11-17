@@ -162,6 +162,15 @@ describe("reading BSV-20 content", () => {
 			await readBsv20Content(ZOID, signal, served("", "text/plain", 404)),
 			{ content: null, reason: "the content server answered HTTP 404" },
 		);
+		// A server error is marked passing, so it isn't kept as the answer.
+		assert.deepEqual(
+			await readBsv20Content(ZOID, signal, served("", "text/plain", 503)),
+			{
+				content: null,
+				reason: "the content server answered HTTP 503",
+				transient: true,
+			},
+		);
 	});
 
 	it("checks every output, with no cap on how many", async () => {

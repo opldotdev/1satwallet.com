@@ -29,6 +29,31 @@ import {
  */
 export const WALLET_SERVER_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
+/** The largest request measured to pass that limit (it reached auth). */
+export const WALLET_SERVER_PROVEN_REQUEST_BYTES = 8_323_134;
+
+/**
+ * Room left in each request for what the packer doesn't measure: per input,
+ * the output the sweep writes for it (locking script, description, basket,
+ * tags); per request, the JSON-RPC envelope and auth. Both are generous,
+ * because a batch packed short costs one more transaction while an overfull
+ * one costs a refused upload of 8 MB.
+ */
+const OUTPUT_ALLOWANCE_BYTES = 1024;
+const ENVELOPE_ALLOWANCE_BYTES = 16 * 1024;
+
+/**
+ * Inputs per transaction. Not a server limit (none was found): a failure
+ * other than "too large" (one input the sweep refuses, a script check, a
+ * broadcast rejection) fails its whole transaction, so this bounds how much
+ * one bad input keeps at the old address until the next Rescan & Retry.
+ * These are the batch sizes the sweep used before size packing.
+ */
+const MAX_INPUTS_FUNDING = 200;
+const MAX_INPUTS_ASSETS = 50;
+export const maxInputsFor = (stepId: string): number =>
+	stepId === "funding" ? MAX_INPUTS_FUNDING : MAX_INPUTS_ASSETS;
+
 /**
  * Bytes a binary field such as inputBEEF takes in the createAction request
  * body. @1sat/wallet's factory creates its StorageClient with
@@ -797,7 +822,10 @@ export async function executeKeySweep(
 					(sum, txid) => sum + (sources.get(txid)?.beefBytes ?? 0),
 					0,
 				);
-			if (refusedBeforeSigning && prepared.length > 1) {
+			// Halves that share one source tx carry the same BEEF, so a split
+			// can't make them smaller: report them all instead of re-sending.
+			const splitShrinks = txidsOf(prepared).length > 1;
+			if (refusedBeforeSigning && prepared.length > 1 && splitShrinks) {
 				const half = Math.ceil(prepared.length / 2);
 				const halves = [prepared.slice(0, half), prepared.slice(half)];
 				console.error(
@@ -811,24 +839,26 @@ export async function executeKeySweep(
 				return first && second;
 			}
 			if (refusedBeforeSigning) {
-				const [only] = prepared;
-				const txid = txidOf(only.output.outpoint);
+				const [first] = prepared;
+				const txid = txidOf(first.output.outpoint);
 				const source = sources.get(txid);
 				const txBytes = source?.txBytes ?? 0;
 				const what = isOrdinals
 					? "this inscription's transaction"
 					: "this output's source transaction";
 				const detail = errorMessage(attempt.createActionError);
-				console.error(
-					`${logPrefix} ${errorLabel}${batchLabel}: ${only.output.outpoint} alone is too large for the wallet server (source tx ${txid}: ${txBytes} tx bytes, ${source?.beefBytes ?? 0} BEEF bytes)`,
-					attempt.createActionError,
-				);
-				fail(
-					`${errorLabel}: ${only.output.outpoint}: ${what} is ${formatBytes(txBytes)}, more than the wallet server accepts in one request; it stays at your old address.`,
-					[only.output.outpoint],
-					{ txid, txBytes, beefBytes: source?.beefBytes, detail },
-				);
-				settle(1);
+				for (const { output } of prepared) {
+					console.error(
+						`${logPrefix} ${errorLabel}${batchLabel}: ${output.outpoint} is too large for the wallet server with its source tx alone (source tx ${txid}: ${txBytes} tx bytes, ${source?.beefBytes ?? 0} BEEF bytes)`,
+						attempt.createActionError,
+					);
+					fail(
+						`${errorLabel}: ${output.outpoint}: ${what} is ${formatBytes(txBytes)}, more than the wallet server accepts in one request; it stays at your old address.`,
+						[output.outpoint],
+						{ txid, txBytes, beefBytes: source?.beefBytes, detail },
+					);
+				}
+				settle(prepared.length);
 				return false;
 			}
 
@@ -865,8 +895,11 @@ export async function executeKeySweep(
 			emit(`${errorLabel}: batch ${batchCount} complete`);
 		};
 
-		const budget = WALLET_SERVER_MAX_REQUEST_BYTES;
-		// Listed outputs alone, one per transaction; the rest packed by size.
+		const budget =
+			WALLET_SERVER_PROVEN_REQUEST_BYTES - ENVELOPE_ALLOWANCE_BYTES;
+		const maxInputs = maxInputsFor(stepId);
+		// Listed outputs alone, one per transaction; the rest packed by size
+		// and by input count.
 		for (const group of isolateListedBatches(
 			outputs,
 			Number.POSITIVE_INFINITY,
@@ -875,6 +908,7 @@ export async function executeKeySweep(
 			let batch: SweepSource[] = [];
 			let batchBeefBytes = 0;
 			let batchInputBytes = 0;
+			let batchInputs = 0;
 			let fetchFailed = false;
 			for (let i = 0; i < sourceGroups.length; i += PREPARE_CONCURRENCY) {
 				const window = sourceGroups.slice(i, i + PREPARE_CONCURRENCY);
@@ -896,23 +930,30 @@ export async function executeKeySweep(
 					// proofs and ancestors are stored once), so this bound keeps
 					// the batch's encoded BEEF under the budget.
 					const inputBytes = source.outputs.reduce(
-						(sum, o) => sum + inputDescriptorBytes(o.outpoint),
+						(sum, o) =>
+							sum + inputDescriptorBytes(o.outpoint) + OUTPUT_ALLOWANCE_BYTES,
 						0,
 					);
 					const nextBeefBytes = batchBeefBytes + source.beefBytes;
 					const nextSize =
 						encodedBinaryBytes(nextBeefBytes) + batchInputBytes + inputBytes;
-					if (batch.length > 0 && nextSize > budget) {
+					const nextInputs = batchInputs + source.outputs.length;
+					if (
+						batch.length > 0 &&
+						(nextSize > budget || nextInputs > maxInputs)
+					) {
 						await flush(batch);
 						batch = [];
 						batchBeefBytes = 0;
 						batchInputBytes = 0;
+						batchInputs = 0;
 					}
 					// A source over the budget on its own goes alone; if the
 					// server refuses it, it is reported with its size.
 					batch.push(source);
 					batchBeefBytes += source.beefBytes;
 					batchInputBytes += inputBytes;
+					batchInputs += source.outputs.length;
 				}
 			}
 			await flush(batch);

@@ -15,12 +15,23 @@ import {
 /** outpoint -> what reading its content gave. */
 const cache = new Map<string, Bsv20Read>();
 /**
+ * Reads that failed for a passing reason (timeout, network, 5xx). Shown
+ * while they are the latest answer, but never kept in `cache`, so the next
+ * pass over the list reads them again.
+ */
+const transient = new Map<string, Bsv20Read>();
+/**
  * The cache keeps at least this many outpoints (more while a longer list is
  * on screen), dropping the oldest first.
  */
 const CACHE_MIN_ENTRIES = 1000;
 
 function remember(outpoint: string, read: Bsv20Read, keep: number) {
+	if (read.transient) {
+		transient.set(outpoint, read);
+		return;
+	}
+	transient.delete(outpoint);
 	cache.delete(outpoint);
 	cache.set(outpoint, read);
 	while (cache.size > Math.max(CACHE_MIN_ENTRIES, keep)) {
@@ -93,11 +104,17 @@ export async function readBsv20Content(
 			return {
 				content: null,
 				reason: timedOut ? BSV20_UNREADABLE.timeout : BSV20_UNREADABLE.network,
+				transient: true,
 			};
 		}
 		if (!response.ok) {
 			await response.body?.cancel();
-			return { content: null, reason: BSV20_UNREADABLE.http(response.status) };
+			return {
+				content: null,
+				reason: BSV20_UNREADABLE.http(response.status),
+				// A server error may pass; a 404 is an answer.
+				...(response.status >= 500 ? { transient: true } : {}),
+			};
 		}
 		const contentType = response.headers.get("content-type");
 		if (!isBsv20ContentType(contentType)) {
@@ -152,7 +169,11 @@ export async function readBsv20Contents(
 			} catch (error) {
 				if (signal.aborted) return;
 				console.debug("[sweep] BSV-20 content not read", outpoint, error);
-				result = { content: null, reason: BSV20_UNREADABLE.network };
+				result = {
+					content: null,
+					reason: BSV20_UNREADABLE.network,
+					transient: true,
+				};
 			}
 			if (signal.aborted) return;
 			onRead(outpoint, result);
@@ -220,12 +241,14 @@ export function useBsv20ContentLabels(
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: version marks cache writes
 	return useMemo(() => {
-		const read = wanted.filter((outpoint) => cache.has(outpoint));
+		const read = wanted.filter(
+			(outpoint) => cache.has(outpoint) || transient.has(outpoint),
+		);
 		return {
 			groups: groupUnconfirmedBsv20(
 				read.map((outpoint) => ({
 					outpoint,
-					read: cache.get(outpoint) as Bsv20Read,
+					read: (cache.get(outpoint) ?? transient.get(outpoint)) as Bsv20Read,
 				})),
 			),
 			total: outpoints.length,

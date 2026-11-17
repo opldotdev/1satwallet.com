@@ -9,10 +9,12 @@ import {
 	encodedBinaryBytes,
 	executeKeySweep,
 	executeMigrationSweep,
+	maxInputsFor,
 	migrationSweepKeys,
 	type SweepActions,
 	type SweepProgress,
 	WALLET_SERVER_MAX_REQUEST_BYTES,
+	WALLET_SERVER_PROVEN_REQUEST_BYTES,
 } from "@/lib/sweep-migration";
 import {
 	BSV20_UNCONFIRMED_REASON,
@@ -747,6 +749,47 @@ describe("legacy sweep: requests too large for the wallet server", () => {
 		assert.deepEqual(
 			calls.map((c) => c.inputs.map((i) => i.outpoint)),
 			[[out(1).outpoint], [out(2).outpoint], [out(3).outpoint]],
+		);
+	});
+
+	it("reports outputs of one refused source tx without splitting them", async () => {
+		const sameTx = (vout: number): IndexedOutput => ({
+			...out(1),
+			outpoint: `${txid(1)}.${vout}`,
+		});
+		const ordinals = [sameTx(0), sameTx(1), sameTx(2)];
+		const { wallet, log } = sizeLimitedWallet(() => true);
+		const { actions } = fakeActions({ sweepOrdinals: twoPhaseOrdinals(log) });
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		// One upload, refused; halves would carry the same BEEF, so none.
+		assert.equal(log.refused.length, 1);
+		assert.deepEqual(
+			(result.leftBehind ?? []).map((l) => l.outpoint).sort(),
+			ordinals.map((o) => o.outpoint).sort(),
+		);
+		assert.ok(
+			(result.leftBehind ?? []).every((l) =>
+				/more than the wallet server accepts in one request/.test(l.reason),
+			),
+		);
+	});
+
+	it("caps inputs per transaction so one bad input strands few", async () => {
+		assert.equal(maxInputsFor("funding"), 200);
+		assert.equal(maxInputsFor("ordinals"), 50);
+		const { actions, calls } = fakeActions();
+		const ordinals = Array.from({ length: 120 }, (_, i) => out(i + 1));
+		await sweep({ ordinals }, actions);
+		assert.deepEqual(
+			calls.map((c) => c.inputs.length),
+			[50, 50, 20],
+		);
+	});
+
+	it("packs under the largest request measured to pass, not the refusal line", () => {
+		assert.equal(WALLET_SERVER_PROVEN_REQUEST_BYTES, 8_323_134);
+		assert.ok(
+			WALLET_SERVER_PROVEN_REQUEST_BYTES < WALLET_SERVER_MAX_REQUEST_BYTES,
 		);
 	});
 

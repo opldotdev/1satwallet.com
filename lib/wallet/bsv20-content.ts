@@ -47,8 +47,13 @@ export const BSV20_UNREADABLE = {
 
 /** What reading one output's content gave: its BSV-20 fields, or why not. */
 export type Bsv20Read =
-	| { content: Bsv20Content; reason?: undefined }
-	| { content: null; reason: string };
+	| { content: Bsv20Content; reason?: undefined; transient?: undefined }
+	| {
+			content: null;
+			reason: string;
+			/** Timeout, network error or 5xx: worth reading again later. */
+			transient?: boolean;
+	  };
 
 /** A `{"p":"bsv-20",...}` inscription, or null for anything else. */
 export function parseBsv20Content(text: string): Bsv20Content | null {
