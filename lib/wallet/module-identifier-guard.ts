@@ -27,7 +27,9 @@ export type RefusalReason =
 	/** Args, an output or a remittance that is not a plain object. */
 	| "not-an-object"
 	/** Key linkage for a reserved `p ` or `admin` protocol (apps only). */
-	| "reserved-linkage";
+	| "reserved-linkage"
+	/** `getPublicKey` asking for the identity key with a protocolID (apps only). */
+	| "identity-key-with-protocol";
 
 export interface MisroutedModuleIdentifier {
 	/** Where the value was found, e.g. `outputs[0].insertionRemittance.basket`. */
@@ -59,6 +61,8 @@ const describeRefusal = ({
 			return `Refused: ${field} must be a plain object, not ${value}.`;
 		case "reserved-linkage":
 			return `Refused: key linkage for the reserved "${prefix}" protocol ${quoted} is not available to apps.`;
+		case "identity-key-with-protocol":
+			return "Refused: getPublicKey cannot ask for the identity key together with a protocolID. Ask for the identity key on its own.";
 	}
 };
 
@@ -230,15 +234,33 @@ export function findMisroutedModuleIdentifier(
 /**
  * What an app is held to on top of `findMisroutedModuleIdentifier`: every
  * name already canonical (trimmed, lowercase), so no name means one thing to
- * the manager and another to the wallet; and no `revealSpecificKeyLinkage`
- * for a reserved `p ` or `admin` protocol.
+ * the manager and another to the wallet; no `revealSpecificKeyLinkage` for a
+ * reserved `p ` or `admin` protocol; and no `getPublicKey` that asks for the
+ * identity key together with a protocolID. The manager (wallet-toolbox-client
+ * 2.17.0) hands a `p ` protocol's `getPublicKey` to its module before its own
+ * identity-key prompt, and the wallet underneath returns the identity key
+ * whenever `identityKey` is set, ignoring the protocol. So `p color …` (or a
+ * 1Sat module's `p ` scheme) would give an app the identity key unasked. An
+ * app asks for the identity key on its own, which the manager prompts for.
  */
 export function findRefusedAppName(
 	method: string,
 	args: unknown,
 ): MisroutedModuleIdentifier | null {
 	const hit = walkNames(args, notCanonical);
-	if (hit || method !== "revealSpecificKeyLinkage") return hit;
+	if (hit) return hit;
+	if (method === "getPublicKey") {
+		const call = record(args);
+		// Truthy, as both the manager and the wallet read it.
+		if (call?.identityKey && call.protocolID != null)
+			return {
+				field: "identityKey",
+				value: typeOf(call.identityKey),
+				reason: "identity-key-with-protocol",
+			};
+		return null;
+	}
+	if (method !== "revealSpecificKeyLinkage") return null;
 	const protocolID = record(args)?.protocolID;
 	if (!Array.isArray(protocolID) || typeof protocolID[1] !== "string")
 		return null;
@@ -254,16 +276,18 @@ export function findRefusedAppName(
 }
 
 /**
- * 1Sat module schemes that are the wallet's own (admin only). Their labels,
- * baskets and outputs never show in an app's listing. Other `p ` schemes
- * (`p nosend`, `p 1sat …`) are open to apps and stay visible.
+ * Module schemes an app reaches only through the module's own consent. An
+ * app's general listing never shows their actions or outputs: a `p color`
+ * action shows only to a listActions that names one of its `p color` labels,
+ * which the color module asks the user about first. Other `p ` schemes
+ * (`p nosend`, `p 1sat …`) stay visible.
  */
-export const ADMIN_ONLY_SCHEMES = ["color"] as const;
+export const CONSENT_ONLY_SCHEMES = ["color"] as const;
 
-const isAdminOnlyName = (value: unknown): boolean => {
+const isConsentOnlyName = (value: unknown): boolean => {
 	if (typeof value !== "string") return false;
 	const name = normalize(value);
-	return ADMIN_ONLY_SCHEMES.some(
+	return CONSENT_ONLY_SCHEMES.some(
 		(scheme) => name === `p ${scheme}` || name.startsWith(`p ${scheme} `),
 	);
 };
@@ -275,21 +299,103 @@ type ListActions = (
 	originator: unknown,
 ) => Promise<ListedActions>;
 
-const isHiddenAction = (action: ListedAction): boolean =>
-	(Array.isArray(action.labels) ? action.labels : []).some(isAdminOnlyName);
+/**
+ * Hidden from an app: an action with a consent-only label, unless it carries
+ * one the app named (and the module asked the user about).
+ */
+const isHiddenAction = (
+	action: ListedAction,
+	named: ReadonlySet<string>,
+): boolean => {
+	const labels = Array.isArray(action.labels) ? action.labels : [];
+	return (
+		labels.some(isConsentOnlyName) &&
+		!labels.some((label) => typeof label === "string" && named.has(label))
+	);
+};
 
-/** An action as the app sees it: admin-only outputs and unasked labels gone. */
+/**
+ * An output without `customInstructions`. A `p color` output's instructions
+ * are its custody record, whose `senderIdentityKey` is the wallet's identity
+ * key, so an app reading them would learn the identity key without the
+ * identity-key prompt (a saved basket grant answers the read silently).
+ */
+const withoutCustody = (output: unknown): unknown => {
+	const fields = record(output);
+	if (!fields || !("customInstructions" in fields)) return output;
+	const { customInstructions: _custody, ...rest } = fields;
+	return rest;
+};
+
+/**
+ * `labels` without consent-only labels. A `p color plan` label is a hex
+ * chunk of the action's BRC-207 plan, whose `ownedOutputs[].senderIdentityKey`
+ * is the wallet's identity key on the wallet's own mints, sends and splits,
+ * and the color module (0.2.3) keeps them on the action as written. Every
+ * other label stays.
+ */
+const appLabels = (labels: unknown[]): unknown[] =>
+	labels.filter((label) => !isConsentOnlyName(label));
+
+/**
+ * An action as the app sees it: consent-only outputs and consent-only labels
+ * (`p color plan …`, see `appLabels`) gone, its other labels only when the
+ * app asked for them (`includeLabels: true`), and, on an action with a
+ * consent-only label, no output's custom instructions.
+ */
 const forApp = (
 	action: ListedAction,
 	args: Record<string, unknown>,
 ): ListedAction => {
 	const next = { ...action };
-	if (Array.isArray(action.outputs))
-		next.outputs = action.outputs.filter(
-			(output) => !isAdminOnlyName(record(output)?.basket),
+	const consentOnly =
+		Array.isArray(action.labels) && action.labels.some(isConsentOnlyName);
+	if (Array.isArray(action.outputs)) {
+		const outputs = action.outputs.filter(
+			(output) => !isConsentOnlyName(record(output)?.basket),
 		);
+		next.outputs = consentOnly ? outputs.map(withoutCustody) : outputs;
+	}
 	if (args.includeLabels !== true) delete next.labels;
+	else if (Array.isArray(next.labels)) next.labels = appLabels(next.labels);
 	return next;
+};
+
+/**
+ * One output of an app's `listOutputs`. From a consent-only basket (a
+ * `p color` asset basket or `p color assets`) it has no custom instructions
+ * (see `withoutCustody`) and no `labels`: those are its transaction's labels,
+ * which on a token output are the action's `p color plan` labels (see
+ * `appLabels`). From any other basket only consent-only labels go.
+ */
+const outputForApp = (output: unknown, consentOnly: boolean): unknown => {
+	if (consentOnly) {
+		const fields = record(withoutCustody(output));
+		if (!fields || !("labels" in fields)) return fields ?? output;
+		const { labels: _labels, ...rest } = fields;
+		return rest;
+	}
+	const fields = record(output);
+	if (!fields || !Array.isArray(fields.labels)) return output;
+	return { ...fields, labels: appLabels(fields.labels) };
+};
+
+/**
+ * An app's `listOutputs` result without the wallet's identity key: no custom
+ * instructions or labels on the outputs of a consent-only basket, and no
+ * consent-only label on any other output; see `outputForApp`.
+ */
+export const listOutputsForApp = (
+	args: Record<string, unknown> | null,
+	result: unknown,
+): unknown => {
+	const listing = record(result);
+	if (!listing || !Array.isArray(listing.outputs)) return result;
+	const consentOnly = isConsentOnlyName(args?.basket);
+	return {
+		...listing,
+		outputs: listing.outputs.map((output) => outputForApp(output, consentOnly)),
+	};
 };
 
 /**
@@ -320,9 +426,12 @@ const SCAN_CACHE_SIZE = 8;
 export const createListScanCache = (): ListScanCache => new Map();
 
 /**
- * An app's `listActions` result without admin-only module data: actions with
- * an admin-only label (e.g. `p color …`) are left out, and outputs in an
- * admin-only basket are stripped from the rest.
+ * An app's `listActions` result without consent-only module data: actions
+ * with a consent-only label (e.g. `p color …`) are left out unless the app
+ * named one of their labels, and outputs in a consent-only basket (read only
+ * through the module's own basket consent) are stripped from the rest. No
+ * returned action carries a consent-only label, not even one the app named,
+ * since `p color plan` labels carry the wallet's identity key (see `forApp`).
  *
  * `offset` and `limit` count visible actions. A label-only scan reads forward
  * only until `offset + limit` visible actions are found or the wallet's list
@@ -337,9 +446,11 @@ export const createListScanCache = (): ListScanCache => new Map();
  * scan reaches the 10,000-action cap it is the visible actions found, since
  * nothing past the cap can be read.
  *
- * A request carrying a spec-op label goes to the wallet once, as asked, and
- * only its result is filtered; its `totalActions` is the wallet's total less
- * the actions dropped from that page (an upper bound).
+ * A request carrying a spec-op label, or naming a consent-only label, goes
+ * to the wallet once, as asked, and only its result is filtered; its
+ * `totalActions` is the wallet's total less the actions dropped from that page
+ * (an upper bound). A consent-only label read is passed once because the
+ * module asks the user on every call.
  */
 export async function listActionsForApp(
 	listActions: ListActions,
@@ -353,13 +464,21 @@ export async function listActionsForApp(
 		args as unknown as ListActionsArgs,
 	);
 	const labels = Array.isArray(args.labels) ? args.labels : [];
+	const named = new Set(
+		labels.filter(
+			(label): label is string =>
+				typeof label === "string" && isConsentOnlyName(label),
+		),
+	);
 
-	if (labels.some(isSpecOpLabel)) {
+	if (labels.some(isSpecOpLabel) || named.size > 0) {
 		const result = await listActions(
 			{ ...args, includeLabels: true },
 			originator,
 		);
-		const kept = result.actions.filter((action) => !isHiddenAction(action));
+		const kept = result.actions.filter(
+			(action) => !isHiddenAction(action, named),
+		);
 		return {
 			totalActions: Math.max(
 				0,
@@ -410,7 +529,8 @@ export async function listActionsForApp(
 				return await scanTo(undefined);
 			scan.sourceTotal = page.totalActions;
 			for (const [index, action] of page.actions.entries())
-				if (!isHiddenAction(action)) scan.visible.push(scan.scanned + index);
+				if (!isHiddenAction(action, named))
+					scan.visible.push(scan.scanned + index);
 			scan.scanned += page.actions.length;
 			if (page.actions.length < pageSize) {
 				scan.sourceTotal = scan.scanned;
@@ -454,7 +574,9 @@ export async function listActionsForApp(
 		}
 		const kept = window
 			.map((position) => full.actions[position - first])
-			.filter((action) => action !== undefined && !isHiddenAction(action));
+			.filter(
+				(action) => action !== undefined && !isHiddenAction(action, named),
+			);
 		// An action in the window was relabelled or removed with the total
 		// unchanged: the scan is stale, so scan again from 0, once.
 		if (kept.length < window.length && retry) {
@@ -474,9 +596,10 @@ export async function listActionsForApp(
  * Wrap the permissions manager so no BRC-100 call can carry a misrouted
  * reserved name. Every BRC-100 call is checked before it reaches the manager;
  * calls from any originator but `adminOriginator` (exact match, the same test
- * the 1Color gate uses) are held to the app rules too, and an app's
- * `listActions` result is filtered. A refusal is reported in full and the
- * caller gets `MisroutedModuleIdentifierError`. The manager's own methods
+ * the 1Color consent uses, so a missing originator is an app) are held to
+ * the app rules too, and an app's `listActions` and `listOutputs` results are
+ * filtered (no consent-only actions, custody or `p color` labels). A refusal
+ * is reported in full and the caller gets `MisroutedModuleIdentifierError`. The manager's own methods
  * (callbacks, grants, token listings) pass through, bound to the manager.
  */
 export function guardModuleIdentifiers<T extends object>(
@@ -503,6 +626,10 @@ export function guardModuleIdentifiers<T extends object>(
 							listArgs ?? {},
 							args[1],
 							scans,
+						);
+					if (isApp && method === "listOutputs")
+						return Promise.resolve(value.apply(target, args)).then(
+							(result: unknown) => listOutputsForApp(listArgs, result),
 						);
 					return value.apply(target, args);
 				}
