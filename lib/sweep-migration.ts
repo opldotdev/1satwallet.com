@@ -14,6 +14,7 @@ import { type IndexedOutput, normalizeOutpoint } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { Beef, PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
+	type MeteredStorageRequest,
 	meterStorageRequests,
 	type StorageRequestEncoding,
 	type StorageRequestMeter,
@@ -87,6 +88,29 @@ const BINARY_FIELD_WRAPPER_BYTES = JSON.stringify({
 }).length;
 export const encodedBinaryBytes = (bytes: number): number =>
 	BINARY_FIELD_WRAPPER_BYTES + 4 * Math.ceil(bytes / 3);
+
+/**
+ * The packing budget from what the server has shown it takes: the largest
+ * createAction body it accepted and the smallest it refused as too large,
+ * both measured. Before any refusal, the start budget (or a larger request
+ * already taken). After one, halfway between the two, so a limit far under
+ * the first refusal is found in a few requests rather than one refusal per
+ * batch. Once the two are within 5% of each other, the largest accepted.
+ */
+export function nextRequestBudget(
+	largestPassed: number,
+	smallestRefused: number,
+): number {
+	if (!Number.isFinite(smallestRefused)) {
+		return Math.max(CREATE_ACTION_START_BUDGET_BYTES, largestPassed);
+	}
+	const ceiling = smallestRefused - 1;
+	if (largestPassed >= ceiling) return ceiling;
+	if (smallestRefused - largestPassed <= smallestRefused * 0.05) {
+		return largestPassed;
+	}
+	return Math.floor((largestPassed + smallestRefused) / 2);
+}
 
 /**
  * Bytes a binary field takes when the client doesn't send binary
@@ -577,8 +601,13 @@ async function runKeySweep(
 	result.leftBehind = leftBehind;
 	const requests: SweepRequest[] = [];
 	result.requests = requests;
-	// Lowered for the rest of the run by any request refused as too large.
-	let requestBudget = CREATE_ACTION_START_BUDGET_BYTES;
+	// What the server has shown it takes: the largest createAction body it
+	// accepted and the smallest it refused as too large, both as measured.
+	let largestPassed = 0;
+	let smallestRefused = Number.POSITIVE_INFINITY;
+	const budgetFromEvidence = () =>
+		nextRequestBudget(largestPassed, smallestRefused);
+	let requestBudget = budgetFromEvidence();
 	// Until the client says otherwise, size for the larger encoding.
 	const encoding = (): StorageRequestEncoding =>
 		meter?.encoding() ?? "number-array";
@@ -898,10 +927,25 @@ async function runKeySweep(
 			]
 				.map((txid) => sources.get(txid))
 				.filter((source): source is SweepSource => source !== undefined);
-			const metered = meter?.requests
+			// The meter sees every createAction on this wallet, so another
+			// caller's request can land in this window. A refusal is the 413
+			// one; otherwise the batch's is the largest.
+			const meteredCreates = (meter?.requests ?? [])
 				.slice(meteredBefore)
-				.filter((r) => r.method === "createAction")
-				.at(-1);
+				.filter((r) => r.method === "createAction");
+			const largestOf = (list: readonly MeteredStorageRequest[]) =>
+				list.reduce<MeteredStorageRequest | undefined>(
+					(max, r) => (!max || r.bytes > max.bytes ? r : max),
+					undefined,
+				);
+			const metered = refusedBeforeSigning
+				? (largestOf(meteredCreates.filter((r) => r.status === 413)) ??
+					largestOf(meteredCreates))
+				: (largestOf(
+						meteredCreates.filter(
+							(r) => r.status !== null && r.status >= 200 && r.status < 300,
+						),
+					) ?? largestOf(meteredCreates));
 			const request: SweepRequest = {
 				stepId,
 				batch: batchCount,
@@ -931,10 +975,16 @@ async function runKeySweep(
 				// The server's limit is under this request: pack the rest of
 				// the run below it.
 				const refusedAt = metered?.bytes ?? request.estimatedBytes;
-				requestBudget = Math.min(requestBudget, refusedAt - 1);
+				smallestRefused = Math.min(smallestRefused, refusedAt);
+				requestBudget = budgetFromEvidence();
 				console.error(
-					`${logPrefix} ${errorLabel}${batchLabel}: createAction refused as too large at ${refusedAt} request bytes (${metered ? `measured, ${metered.encoding}` : "estimated"}); request budget now ${requestBudget} bytes`,
+					`${logPrefix} ${errorLabel}${batchLabel}: createAction refused as too large at ${refusedAt} request bytes (${metered ? `measured, ${metered.encoding}` : "estimated"}); largest accepted so far ${largestPassed} bytes; request budget now ${requestBudget} bytes`,
 				);
+			} else if (txResult.txid && metered && metered.status !== null) {
+				if (metered.status >= 200 && metered.status < 300) {
+					largestPassed = Math.max(largestPassed, metered.bytes);
+					requestBudget = budgetFromEvidence();
+				}
 			}
 
 			if (txResult.txid) {

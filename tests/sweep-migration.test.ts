@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { Bsv20Balance, TokenBalance } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
+import { meterStorageRequests } from "@/lib/sweep/storage-request-meter";
 import {
 	buildKeys,
 	CREATE_ACTION_START_BUDGET_BYTES,
@@ -13,6 +14,7 @@ import {
 	executeMigrationSweep,
 	maxInputsFor,
 	migrationSweepKeys,
+	nextRequestBudget,
 	type SweepActions,
 	type SweepProgress,
 	WALLET_SERVER_MAX_REQUEST_BYTES,
@@ -859,17 +861,120 @@ describe("legacy sweep: requests too large for the wallet server", () => {
 		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
 	});
 
-	it("lowers the budget for later batches to under the refused request", async () => {
-		// Two steps: ordinals refused at a measured size, then funding packs
-		// under it.
+	it("lowers the budget after a refusal, halfway to the largest request accepted", async () => {
 		const { wallet, log } = meteredWallet({ binary: true, refuseOver: 3_000 });
 		const ordinals = [1, 2, 3, 4].map((n) => out(n));
 		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
 		const { result } = await sweep({ wallet, ordinals }, actions);
-		const requests = result.requests ?? [];
-		const refusedAt = requests[0].measuredBytes ?? 0;
-		assert.equal(requests[0].outcome, "too-large");
-		assert.ok(requests.slice(1).every((r) => r.budgetBytes === refusedAt - 1));
+		const [refused, firstHalf, secondHalf] = result.requests ?? [];
+		const refusedAt = refused.measuredBytes ?? 0;
+		const passedAt = firstHalf.measuredBytes ?? 0;
+		assert.equal(refused.outcome, "too-large");
+		assert.equal(firstHalf.outcome, "sent");
+		// Nothing accepted yet: half the refused size.
+		assert.equal(firstHalf.budgetBytes, Math.floor(refusedAt / 2));
+		// Then halfway between what passed and what was refused.
+		assert.equal(
+			secondHalf.budgetBytes,
+			Math.max(passedAt, Math.floor((passedAt + refusedAt) / 2)),
+		);
+	});
+
+	it("finds a limit far under the first refusal in a few requests", () => {
+		// The server takes 1.5 MB; every batch is packed right up to the
+		// budget, the worst case for refusals.
+		const limit = 1_500_000;
+		let passed = 0;
+		let refused = 2_400_000;
+		let refusals = 1;
+		for (let i = 0; i < 100; i++) {
+			const size = nextRequestBudget(passed, refused);
+			if (size > limit) {
+				refused = Math.min(refused, size);
+				refusals++;
+			} else passed = Math.max(passed, size);
+		}
+		assert.ok(refusals <= 6, `${refusals} refusals`);
+		const settled = nextRequestBudget(passed, refused);
+		assert.ok(settled <= limit && settled >= limit * 0.9, String(settled));
+		// Before any refusal: the start budget, or a larger body already taken.
+		assert.equal(
+			nextRequestBudget(0, Number.POSITIVE_INFINITY),
+			CREATE_ACTION_START_BUDGET_BYTES,
+		);
+		assert.equal(
+			nextRequestBudget(2_500_000, Number.POSITIVE_INFINITY),
+			2_500_000,
+		);
+		// Never at or over a refused size.
+		assert.equal(nextRequestBudget(3_000_000, 2_000_000), 1_999_999);
+	});
+
+	it("takes the refused request's size, not another createAction in the same window", async () => {
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: 5_000,
+		});
+		// Another caller's small createAction lands while each batch is out.
+		const original = client.createAction.bind(client);
+		client.createAction = async (args) => {
+			try {
+				return await original(args);
+			} finally {
+				await client.authenticatedFetch("https://wallet", {
+					method: "POST",
+					body: JSON.stringify({ method: "createAction", params: [] }),
+				});
+			}
+		};
+		const ordinals = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		const [refused, firstHalf] = result.requests ?? [];
+		assert.equal(refused.status, 413);
+		assert.ok((refused.measuredBytes ?? 0) > 8_000);
+		assert.equal(firstHalf.status, 200);
+		assert.ok((firstHalf.measuredBytes ?? 0) > 4_000);
+	});
+
+	it("meters overlapping runs on one wallet and puts the client back once both end", async () => {
+		const { wallet, client } = meteredWallet({
+			binary: true,
+			refuseOver: Infinity,
+		});
+		const a = meterStorageRequests(wallet);
+		const b = meterStorageRequests(wallet);
+		assert.ok(a && b);
+		await client.createAction({ inputs: [{ outpoint: "x_0" }] });
+		assert.equal(a.requests.length, 1);
+		assert.equal(b.requests.length, 1);
+		a.restore();
+		await client.createAction({ inputs: [{ outpoint: "x_0" }] });
+		assert.equal(a.requests.length, 1);
+		assert.equal(b.requests.length, 2);
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), true);
+		b.restore();
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+		// restore() twice is harmless.
+		a.restore();
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+	});
+
+	it("counts body bytes as UTF-8", async () => {
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: Infinity,
+		});
+		const meter = meterStorageRequests(wallet);
+		assert.ok(meter);
+		const body = JSON.stringify({ method: "createAction", note: "é€😀a" });
+		await client.authenticatedFetch("https://wallet", { method: "POST", body });
+		assert.equal(
+			meter.requests[0].bytes,
+			new TextEncoder().encode(body).length,
+		);
+		assert.equal(meter.requests[0].bytes, log.bodies[0]);
+		meter.restore();
 	});
 
 	it("budgets binary fields exactly as the client writes them", () => {
