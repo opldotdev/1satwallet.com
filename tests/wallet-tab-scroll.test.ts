@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
 	centredScrollLeft,
+	type Glide,
 	glideDuration,
+	glideFrame,
 	glidePosition,
+	planCentre,
+	type RowView,
 	tabInView,
 } from "../lib/wallet-tab-scroll";
 
@@ -97,5 +101,156 @@ describe("glide", () => {
 		assert.equal(glideDuration(-20), 170);
 		assert.equal(glideDuration(186), 336);
 		assert.equal(glideDuration(5000), 400);
+	});
+});
+
+// The same phone row, seen whole: Certificates is current unless said
+// otherwise, `start` px into the row and `width` px wide.
+function view({
+	scrollLeft = 0,
+	scrollWidth = 529,
+	start = 287,
+	width = 104,
+	boxWidth = 343,
+	href = "/wallet/certificates" as string | null,
+} = {}): RowView {
+	const left = 16 + start - scrollLeft;
+	return {
+		row: { left: 16, scrollLeft, clientWidth: boxWidth, scrollWidth },
+		box: { left: 16, right: 16 + boxWidth, width: boxWidth },
+		tab: href === null ? null : { left, right: left + width, width },
+		href,
+	};
+}
+
+// The glide from the start of the row to Certificates.
+const toCertificates: Glide = {
+	href: "/wallet/certificates",
+	from: 0,
+	target: 287 + 52 - 343 / 2,
+	duration: 300,
+};
+
+describe("planCentre", () => {
+	it("glides to the current tab", () => {
+		assert.deepEqual(planCentre(view(), false), {
+			type: "glide",
+			glide: { ...toCertificates, duration: glideDuration(167.5) },
+		});
+	});
+
+	it("jumps under reduced motion, or when already there", () => {
+		assert.deepEqual(planCentre(view(), true), { type: "jump", left: 167.5 });
+		assert.deepEqual(planCentre(view({ scrollLeft: 167.5 }), false), {
+			type: "jump",
+			left: 167.5,
+		});
+	});
+
+	it("does nothing when no tab is current", () => {
+		assert.deepEqual(planCentre(view({ href: null }), false), {
+			type: "none",
+		});
+	});
+
+	it("defers a row or a tab with no width until it has one", () => {
+		assert.deepEqual(planCentre(view({ boxWidth: 0 }), false), {
+			type: "defer",
+		});
+		assert.deepEqual(planCentre(view({ width: 0 }), true), { type: "defer" });
+	});
+});
+
+describe("glideFrame", () => {
+	const quiet = { elapsed: 100, written: 80, userInput: false };
+
+	it("steps along the glide while it runs", () => {
+		assert.deepEqual(
+			glideFrame(toCertificates, view({ scrollLeft: 80 }), quiet),
+			{ type: "step", left: glidePosition(0, 167.5, 100, 300) },
+		);
+	});
+
+	it("stops when another section becomes current, or none is", () => {
+		assert.deepEqual(
+			glideFrame(
+				toCertificates,
+				view({ scrollLeft: 80, start: 66, href: "/wallet/ordinals" }),
+				quiet,
+			),
+			{ type: "stop" },
+		);
+		assert.deepEqual(
+			glideFrame(toCertificates, view({ scrollLeft: 80, href: null }), quiet),
+			{ type: "stop" },
+		);
+	});
+
+	it("yields to a finger, pointer, wheel or key on the row", () => {
+		// A resting finger has not moved the row yet; a drag has.
+		for (const scrollLeft of [80, 30]) {
+			assert.deepEqual(
+				glideFrame(toCertificates, view({ scrollLeft }), {
+					...quiet,
+					userInput: true,
+				}),
+				{ type: "yield" },
+			);
+		}
+	});
+
+	it("aims again when the layout clamps the row with no one touching it", () => {
+		// The tabs change mid-glide: the row shrinks to 400px of tabs, so the
+		// browser clamps scrollLeft from 80 to 57.
+		const clamped = view({
+			scrollLeft: 57,
+			scrollWidth: 400,
+			start: 200,
+			width: 90,
+		});
+		assert.deepEqual(glideFrame(toCertificates, clamped, quiet), {
+			type: "reaim",
+		});
+		// Aiming again from there puts the tab in view rather than leaving it.
+		const plan = planCentre(clamped, false);
+		assert.deepEqual(plan, { type: "jump", left: 57 });
+		const tab = clamped.tab;
+		assert.ok(tab && tabInView(tab, clamped.box));
+	});
+
+	it("lands on its target when the tab is in view there", () => {
+		assert.deepEqual(
+			glideFrame(toCertificates, view({ scrollLeft: 160 }), {
+				...quiet,
+				elapsed: 300,
+				written: 160,
+			}),
+			{ type: "land", left: 167.5 },
+		);
+	});
+
+	it("lands centred on the tab when the layout moved it out of view", () => {
+		// Tabs were added before Certificates without moving the row: at the
+		// old target it would sit past the right edge.
+		const moved = view({ scrollLeft: 160, scrollWidth: 800, start: 500 });
+		assert.deepEqual(
+			glideFrame(toCertificates, moved, {
+				...quiet,
+				elapsed: 300,
+				written: 160,
+			}),
+			{ type: "land", left: 500 + 52 - 343 / 2 },
+		);
+	});
+
+	it("defers when the row or the tab loses its width mid-glide", () => {
+		assert.deepEqual(
+			glideFrame(toCertificates, view({ scrollLeft: 80, boxWidth: 0 }), quiet),
+			{ type: "defer" },
+		);
+		assert.deepEqual(
+			glideFrame(toCertificates, view({ scrollLeft: 80, width: 0 }), quiet),
+			{ type: "defer" },
+		);
 	});
 });

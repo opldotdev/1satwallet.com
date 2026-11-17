@@ -22,12 +22,7 @@ import {
 	normalizeWalletPath,
 	walletSubPageFor,
 } from "@/lib/wallet-sections";
-import {
-	centredScrollLeft,
-	glideDuration,
-	glidePosition,
-	tabInView,
-} from "@/lib/wallet-tab-scroll";
+import { glideFrame, planCentre, type RowView } from "@/lib/wallet-tab-scroll";
 import styles from "./wallet-tabs.module.css";
 
 const icons: Record<WalletTabValue, LucideIcon> = {
@@ -40,6 +35,23 @@ const icons: Record<WalletTabValue, LucideIcon> = {
 	"1color": Palette,
 	history: History,
 };
+
+/** The tab row as it stands now, for the glide's decisions. */
+function viewOf(list: HTMLUListElement): RowView {
+	const box = list.getBoundingClientRect();
+	const current = list.querySelector<HTMLElement>('[aria-current="page"]');
+	return {
+		row: {
+			left: box.left,
+			scrollLeft: list.scrollLeft,
+			clientWidth: list.clientWidth,
+			scrollWidth: list.scrollWidth,
+		},
+		box,
+		tab: current?.getBoundingClientRect() ?? null,
+		href: current?.getAttribute("href") ?? null,
+	};
+}
 
 /**
  * The wallet's sections, one link each, in a row that scrolls sideways when
@@ -67,6 +79,10 @@ export function WalletTabs() {
 	// always cancels the last one's: a browser smooth scroll left running could
 	// land after the new section had already been centred.
 	const glideRef = useRef<number | null>(null);
+	// A finger, pointer, wheel or key went to the row since the glide began:
+	// the glide yields to it. Any other scroll it did not write is the layout
+	// moving, and the glide aims again instead.
+	const userInputRef = useRef(false);
 	// The row had no size when it should have been centred: centre it once
 	// the ResizeObserver sees it get one.
 	const pendingRef = useRef(false);
@@ -78,72 +94,53 @@ export function WalletTabs() {
 	}, []);
 
 	// Centre the current tab in the row. Only the row scrolls, never the page;
-	// instantly under reduced motion, otherwise in a short glide that gives way
-	// to anyone else who scrolls the row (a finger, a wheel, a focus).
+	// instantly under reduced motion, otherwise in a short glide. What each
+	// frame does is decided by glideFrame (lib/wallet-tab-scroll.ts).
 	const centreCurrent = useCallback(() => {
 		const list = listRef.current;
 		if (!list) return;
 		stopGlide();
-		const current = list.querySelector<HTMLElement>('[aria-current="page"]');
-		if (!current) {
-			pendingRef.current = false;
-			return;
-		}
-		const rowOf = () => {
-			const box = list.getBoundingClientRect();
-			return {
-				box,
-				row: {
-					left: box.left,
-					scrollLeft: list.scrollLeft,
-					clientWidth: list.clientWidth,
-					scrollWidth: list.scrollWidth,
-				},
-			};
-		};
-		const { box, row } = rowOf();
-		const tab = current.getBoundingClientRect();
-		if (box.width === 0 || tab.width === 0) {
-			pendingRef.current = true;
-			return;
-		}
-		pendingRef.current = false;
-		const from = row.scrollLeft;
-		const target = centredScrollLeft(row, tab);
+		userInputRef.current = false;
 		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		if (still || Math.abs(target - from) < 1) {
-			list.scrollTo({ left: target, behavior: "instant" });
+		const plan = planCentre(viewOf(list), still);
+		pendingRef.current = plan.type === "defer";
+		if (plan.type === "none" || plan.type === "defer") return;
+		if (plan.type === "jump") {
+			list.scrollTo({ left: plan.left, behavior: "instant" });
 			measure();
 			return;
 		}
-		const duration = glideDuration(target - from);
+		const { glide } = plan;
 		let start: number | null = null;
-		let written = from;
+		let written = glide.from;
 		const step = (now: number) => {
 			glideRef.current = null;
-			// Someone else moved the row since our last frame: leave it to them.
-			if (Math.abs(list.scrollLeft - written) > 1) return;
 			start ??= now;
-			const elapsed = now - start;
-			list.scrollTo({
-				left: glidePosition(from, target, elapsed, duration),
-				behavior: "instant",
+			const next = glideFrame(glide, viewOf(list), {
+				elapsed: now - start,
+				written,
+				userInput: userInputRef.current,
 			});
-			written = list.scrollLeft;
-			if (elapsed < duration) {
-				glideRef.current = requestAnimationFrame(step);
-				return;
+			switch (next.type) {
+				case "stop":
+				case "yield":
+					return;
+				case "defer":
+					pendingRef.current = true;
+					return;
+				case "reaim":
+					centreCurrent();
+					return;
+				case "step":
+					list.scrollTo({ left: next.left, behavior: "instant" });
+					written = list.scrollLeft;
+					glideRef.current = requestAnimationFrame(step);
+					return;
+				case "land":
+					list.scrollTo({ left: next.left, behavior: "instant" });
+					measure();
+					return;
 			}
-			// Landed. If the layout moved under the glide, put the tab in view now.
-			const { box, row } = rowOf();
-			const tab = current.getBoundingClientRect();
-			if (current.isConnected && !tabInView(tab, box)) {
-				list.scrollTo({
-					left: centredScrollLeft(row, tab),
-					behavior: "instant",
-				});
-			}
-			measure();
 		};
 		glideRef.current = requestAnimationFrame(step);
 	}, [measure, stopGlide]);
@@ -156,7 +153,18 @@ export function WalletTabs() {
 			if (pendingRef.current) centreCurrent();
 		});
 		observer.observe(list);
-		return () => observer.disconnect();
+		// Someone is scrolling the row by hand: the glide's next frame yields.
+		const onInput = () => {
+			userInputRef.current = true;
+		};
+		const inputs = ["pointerdown", "touchstart", "wheel", "keydown"] as const;
+		for (const type of inputs) {
+			list.addEventListener(type, onInput, { passive: true });
+		}
+		return () => {
+			observer.disconnect();
+			for (const type of inputs) list.removeEventListener(type, onInput);
+		};
 	}, [hidden, measure, centreCurrent]);
 
 	// Centre the current tab whenever the section changes.
