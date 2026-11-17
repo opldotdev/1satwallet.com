@@ -22,18 +22,28 @@ import {
 	OpnsSection,
 	OrdinalsSection,
 	RunSection,
+	SweepResultRows,
 	SweepStepsList,
+	sweepResultIsEmpty,
 	TokensSection,
 	TypeChecklist,
 } from "@/components/wallet/migration-sections";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
+	emptySweepResult,
 	executeMigrationSweep,
 	type SweepProgress,
 	type SweepResult,
 } from "@/lib/sweep-migration";
+import {
+	ListingCancelError,
+	type MigrationTarget,
+	partialRunResult,
+	requireMigrationTarget,
+	runFirstRunMigration,
+	runMigrationOnTarget,
+} from "@/lib/wallet/first-run-migration";
 import {
 	type AssetType,
 	cancelListedAssets,
@@ -41,14 +51,17 @@ import {
 	listedFromLegacy,
 	listedFromWallet,
 	mergeListed,
+	onlyListedTokens,
 	planMigration,
 	plannedCount,
 	toggleAssetType,
+	tokenOutputCount,
 	withoutListed,
 } from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
 	type MigrationStatus,
+	reportMigrationFailure,
 } from "@/lib/wallet-migration";
 import { reencryptWallet } from "@/lib/wallet-storage";
 import { useWallet } from "@/providers/wallet-provider";
@@ -160,38 +173,10 @@ function CompletionState({
 			<CardContent className="space-y-4">
 				{sweepResult && (
 					<div className="space-y-2 text-sm">
-						{sweepResult.bsvTxids.map((txid) => (
-							<div key={txid} className="flex justify-between">
-								<span className="text-muted-foreground">BSV Sweep</span>
-								<code className="text-xs font-mono">
-									{txid.slice(0, 16)}...
-								</code>
-							</div>
-						))}
-						{sweepResult.ordinalTxids.map((txid) => (
-							<div key={txid} className="flex justify-between">
-								<span className="text-muted-foreground">Ordinal Sweep</span>
-								<code className="text-xs font-mono">
-									{txid.slice(0, 16)}...
-								</code>
-							</div>
-						))}
-						{sweepResult.bsv21Txids.map((txid) => (
-							<div key={txid} className="flex justify-between">
-								<span className="text-muted-foreground">Token Sweep</span>
-								<code className="text-xs font-mono">
-									{txid.slice(0, 16)}...
-								</code>
-							</div>
-						))}
-						{(sweepResult.cancelTxids ?? []).map((txid) => (
-							<div key={txid} className="flex justify-between">
-								<span className="text-muted-foreground">Listing cancelled</span>
-								<code className="text-xs font-mono">
-									{txid.slice(0, 16)}...
-								</code>
-							</div>
-						))}
+						<SweepResultRows
+							result={sweepResult}
+							rowClassName="flex justify-between"
+						/>
 						{sweepResult.errors.length > 0 && (
 							<div className="space-y-1">
 								<p className="text-sm font-medium text-destructive">
@@ -204,15 +189,11 @@ function CompletionState({
 								))}
 							</div>
 						)}
-						{sweepResult.bsvTxids.length === 0 &&
-							sweepResult.ordinalTxids.length === 0 &&
-							sweepResult.bsv21Txids.length === 0 &&
-							(sweepResult.cancelTxids?.length ?? 0) === 0 &&
-							sweepResult.errors.length === 0 && (
-								<p className="text-sm text-muted-foreground">
-									No assets found at legacy addresses.
-								</p>
-							)}
+						{sweepResultIsEmpty(sweepResult) && (
+							<p className="text-sm text-muted-foreground">
+								No assets found at legacy addresses.
+							</p>
+						)}
 					</div>
 				)}
 				{hadErrors && (
@@ -346,6 +327,7 @@ export default function MigratePage() {
 					...assets.opnsNames,
 					...assets.locked,
 					...assets.run,
+					...assets.listings,
 				]),
 			),
 		[
@@ -354,6 +336,7 @@ export default function MigratePage() {
 			assets.opnsNames,
 			assets.locked,
 			assets.run,
+			assets.listings,
 		],
 	);
 	const unlistedOrdinals = useMemo(
@@ -391,10 +374,8 @@ export default function MigratePage() {
 		() => ({
 			listings: listings.length,
 			ordinals: unlistedOrdinals.length + unlistedOpns.length,
-			bsv21: assets.bsv21Tokens.reduce(
-				(sum, token) => sum + token.outputs.length,
-				0,
-			),
+			bsv21: tokenOutputCount(assets.bsv21Tokens),
+			bsv20: tokenOutputCount(assets.bsv20Balances),
 			bsv: assets.funding.length,
 		}),
 		[
@@ -402,6 +383,7 @@ export default function MigratePage() {
 			unlistedOrdinals.length,
 			unlistedOpns.length,
 			assets.bsv21Tokens,
+			assets.bsv20Balances,
 			assets.funding.length,
 		],
 	);
@@ -422,6 +404,7 @@ export default function MigratePage() {
 				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
 				funding: assets.funding,
 				bsv21: assets.bsv21Tokens,
+				bsv20: assets.bsv20Balances,
 			}),
 		[
 			selectedTypes,
@@ -431,6 +414,7 @@ export default function MigratePage() {
 			unlistedOpns,
 			assets.funding,
 			assets.bsv21Tokens,
+			assets.bsv20Balances,
 		],
 	);
 
@@ -460,10 +444,8 @@ export default function MigratePage() {
 			assets.funding.length +
 				assets.ordinals.length +
 				assets.opnsNames.length +
-				assets.bsv21Tokens.reduce(
-					(sum, token) => sum + token.outputs.length,
-					0,
-				) ===
+				tokenOutputCount(assets.bsv21Tokens) +
+				tokenOutputCount(assets.bsv20Balances) ===
 				0 &&
 			listings.length === 0
 		) {
@@ -482,6 +464,7 @@ export default function MigratePage() {
 		assets.ordinals.length,
 		assets.opnsNames.length,
 		assets.bsv21Tokens,
+		assets.bsv20Balances,
 		listings.length,
 		toolbox.isBalanceLoading,
 	]);
@@ -546,37 +529,43 @@ export default function MigratePage() {
 		try {
 			const cancelled = await runDelist();
 			if (!cancelled.ok) {
-				setSweepResult({
-					bsvTxids: [],
-					ordinalTxids: [],
-					bsv21Txids: [],
-					cancelTxids: cancelled.txids,
-					errors: cancelled.errors,
-				});
+				console.error("[migration] listing cancel failed", cancelled.errors);
+				setSweepResult(
+					emptySweepResult({
+						cancelTxids: cancelled.txids,
+						errors: cancelled.errors,
+					}),
+				);
 				setError(
-					"Listings must be cancelled before this step can finish. Nothing else was moved.",
+					`${
+						new ListingCancelError(
+							plan.cancel.length,
+							cancelled.txids,
+							cancelled.errors,
+						).message
+					} Nothing else was moved.`,
 				);
 				setPhase("error");
 				return;
 			}
-			let result: SweepResult = {
-				bsvTxids: [],
-				ordinalTxids: [],
-				bsv21Txids: [],
+			let result: SweepResult = emptySweepResult({
 				cancelTxids: cancelled.txids,
-				errors: [],
-			};
+			});
+			const listedBsv21 = onlyListedTokens(assets.bsv21Tokens);
+			const listedBsv20 = onlyListedTokens(assets.bsv20Balances);
 			if (
-				plan.sweepListed.length > 0 &&
 				legacy &&
-				toolbox.wallet &&
-				toolbox.services
+				plan.sweepListed.length +
+					tokenOutputCount(listedBsv21) +
+					tokenOutputCount(listedBsv20) >
+					0
 			) {
-				setProgress("Returning listed ordinals to the wallet...");
+				const target = requireMigrationTarget(toolbox);
+				setProgress("Returning listed assets to the wallet...");
 				setProgressPercent(50);
 				result = await executeMigrationSweep({
-					wallet: toolbox.wallet,
-					services: toolbox.services,
+					wallet: target.wallet,
+					services: target.services,
 					chain: toolbox.chain,
 					legacyPayWif: legacy.payWif,
 					legacyOrdWif: legacy.ordWif,
@@ -588,7 +577,8 @@ export default function MigratePage() {
 					},
 					funding: [],
 					ordinals: plan.sweepListed,
-					bsv21Tokens: [],
+					bsv21Tokens: listedBsv21,
+					bsv20Tokens: listedBsv20,
 				});
 				result = { ...result, cancelTxids: cancelled.txids };
 			}
@@ -598,16 +588,18 @@ export default function MigratePage() {
 			setProgressPercent(100);
 			setPhase("complete");
 		} catch (err) {
-			reportDiagnostic({
-				category: "action",
-				code: "action.failed",
-				operation: "wallet.migration.delist",
-				recoverable: true,
-			});
+			reportMigrationFailure("wallet.migration.delist", err);
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
-	}, [assets, legacy, plan.sweepListed, runDelist, toolbox]);
+	}, [
+		assets,
+		legacy,
+		plan.cancel.length,
+		plan.sweepListed,
+		runDelist,
+		toolbox,
+	]);
 
 	// Run migration (or sweep-only re-entry for already-migrated wallets)
 	const runMigration = useCallback(async () => {
@@ -619,70 +611,16 @@ export default function MigratePage() {
 		setSweepProgress(null);
 
 		try {
-			let identityWif = legacy.identityWif;
-
-			if (!legacy.sweepOnly) {
-				// 1. Derive identity key
-				setProgress("Deriving identity key...");
-				setProgressPercent(10);
-				const identityKey = deriveIdentityKey(legacy.payWif, legacy.ordWif);
-				identityWif = identityKey.toWif();
-
-				// 2. Update keys with identity
-				const updatedKeys = {
-					...walletKeys,
-					identityPk: identityWif,
-					identityAddressPath: "derived" as string | number | undefined,
-				};
-
-				// 3. Re-encrypt wallet
-				setProgress("Updating encrypted wallet...");
-				setProgressPercent(25);
-				const reencrypted = await reencryptWallet(updatedKeys);
-				if (!reencrypted) {
-					throw new Error(
-						"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
-					);
-				}
-
-				// 4. Reinitialize BRC-100 wallet with identity key
-				setProgress("Reinitializing BRC-100 wallet...");
-				setProgressPercent(40);
-				if (toolbox.isInitialized) {
-					await toolbox.destroyWallet();
-				}
-
-				await new Promise((r) => setTimeout(r, 500));
-
-				const { wifToHex } = await import("@1sat/utils");
-				const rootKeyHex = wifToHex(identityWif);
-				const initialized = await toolbox.initializeWallet(rootKeyHex);
-
-				if (!initialized) {
-					throw new Error("Failed to initialize wallet with identity key");
-				}
-			}
-
-			const cancelled = await runDelist();
-			if (!cancelled.ok) {
-				throw new Error(
-					"Listings must be cancelled before migration can finish.",
-				);
-			}
-
-			// 5. Sweep selected legacy assets
-			if (!toolbox.wallet || !toolbox.services) {
-				throw new Error(
-					"BRC-100 wallet is not initialized — unlock your wallet and try again",
-				);
-			}
-
-			const totalSweepable =
-				plan.sweepFunding.length +
-				sweepOrdinals.length +
-				plan.sweepBsv21.reduce((sum, token) => sum + token.outputs.length, 0);
-
-			if (totalSweepable > 0) {
+			const sweepInto = (
+				target: MigrationTarget,
+				identityWif: string | undefined,
+			) => {
+				const totalSweepable =
+					plan.sweepFunding.length +
+					sweepOrdinals.length +
+					tokenOutputCount(plan.sweepBsv21) +
+					tokenOutputCount(plan.sweepBsv20);
+				if (totalSweepable === 0) return Promise.resolve(null);
 				setProgress(
 					`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 				);
@@ -692,10 +630,9 @@ export default function MigratePage() {
 				const base = legacy.sweepOnly ? 0 : 60;
 				const span = 100 - base;
 				setProgressPercent(base);
-
-				const result = await executeMigrationSweep({
-					wallet: toolbox.wallet,
-					services: toolbox.services,
+				return executeMigrationSweep({
+					wallet: target.wallet,
+					services: target.services,
 					chain: toolbox.chain,
 					legacyPayWif: legacy.payWif,
 					legacyOrdWif: legacy.ordWif,
@@ -708,31 +645,81 @@ export default function MigratePage() {
 					funding: plan.sweepFunding,
 					ordinals: sweepOrdinals,
 					bsv21Tokens: plan.sweepBsv21,
+					bsv20Tokens: plan.sweepBsv20,
 				});
+			};
+			const onStage = (stage: string) => {
+				if (stage === "cancel") setProgress("Cancelling listings...");
+				else if (stage === "transfer") {
+					setProgress("Moving this wallet's assets to your identity key...");
+					setProgressPercent(20);
+				} else if (stage === "persist") {
+					setProgress("Updating encrypted wallet...");
+					setProgressPercent(25);
+				} else if (stage === "reroot") {
+					setProgress("Reinitializing BRC-100 wallet...");
+					setProgressPercent(40);
+				}
+			};
 
-				setSweepResult({ ...result, cancelTxids: cancelled.txids });
+			let run: Awaited<ReturnType<typeof runMigrationOnTarget>>;
+			if (legacy.sweepOnly) {
+				run = await runMigrationOnTarget(requireMigrationTarget(toolbox), {
+					listings: plan.cancel,
+					sweep: (target) => sweepInto(target, legacy.identityWif),
+					onStage,
+				});
+			} else {
+				setProgress("Deriving identity key...");
+				setProgressPercent(10);
+				const identityWif = deriveIdentityKey(
+					legacy.payWif,
+					legacy.ordWif,
+				).toWif();
+				const updatedKeys = {
+					...walletKeys,
+					identityPk: identityWif,
+					identityAddressPath: "derived" as string | number | undefined,
+				};
+				// `toolbox` is this render's snapshot: after the re-root it still
+				// points at the destroyed pay-key wallet, so the sweep uses the
+				// wallet runFirstRunMigration hands back.
+				run = await runFirstRunMigration({
+					current: toolbox,
+					listings: plan.cancel,
+					identityWif,
+					isInitialized: toolbox.isInitialized,
+					destroyWallet: toolbox.destroyWallet,
+					initializeWallet: toolbox.initializeWallet,
+					persistIdentity: async () => {
+						if (!(await reencryptWallet(updatedKeys))) {
+							throw new Error(
+								"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
+							);
+						}
+					},
+					sweep: (target) => sweepInto(target, identityWif),
+					onStage,
+				});
+			}
+
+			setSweepResult({
+				...(run.sweep ?? emptySweepResult()),
+				cancelTxids: run.cancelTxids,
+				transferTxids: run.transferTxids,
+			});
+			if (run.sweep || run.transferTxids.length > 0) {
 				// Refresh so the banner and any re-entry reflect what's left
 				assets.rescan();
 				toolbox.refreshBalance();
-			} else {
-				setSweepResult({
-					bsvTxids: [],
-					ordinalTxids: [],
-					bsv21Txids: [],
-					cancelTxids: cancelled.txids,
-					errors: cancelled.errors,
-				});
 			}
 
 			setProgressPercent(100);
 			setPhase("complete");
 		} catch (err) {
-			reportDiagnostic({
-				category: "action",
-				code: "action.failed",
-				operation: "wallet.migration.run",
-				recoverable: true,
-			});
+			reportMigrationFailure("wallet.migration.run", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setPhase("error");
 		}
@@ -742,9 +729,10 @@ export default function MigratePage() {
 		toolbox,
 		assets,
 		sweepOrdinals,
+		plan.cancel,
 		plan.sweepFunding,
 		plan.sweepBsv21,
-		runDelist,
+		plan.sweepBsv20,
 	]);
 
 	if (toolbox.connectionMode === "external") {
@@ -857,7 +845,10 @@ export default function MigratePage() {
 								onToggle={handleToggleType}
 							/>
 
-							<ListingsSection listings={listings} />
+							<ListingsSection
+								reRoot={legacy ? !legacy.sweepOnly : false}
+								listings={listings}
+							/>
 
 							{selectedTypes.has("bsv") && (
 								<FundingSection
@@ -885,7 +876,10 @@ export default function MigratePage() {
 								<TokensSection tokens={assets.bsv21Tokens} />
 							)}
 
-							<Bsv20Section tokens={assets.bsv20Tokens} />
+							<Bsv20Section
+								tokens={selectedTypes.has("bsv20") ? assets.bsv20Balances : []}
+								unsweepable={assets.bsv20Unsweepable}
+							/>
 
 							<LockedSection locked={unlistedLocked} />
 

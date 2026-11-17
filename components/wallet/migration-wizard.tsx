@@ -23,7 +23,9 @@ import {
 	OpnsSection,
 	OrdinalsSection,
 	RunSection,
+	SweepResultRows,
 	SweepStepsList,
+	sweepResultIsEmpty,
 	TokensSection,
 	TypeChecklist,
 } from "@/components/wallet/migration-sections";
@@ -33,15 +35,19 @@ import {
 	useLegacyAssets,
 } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
+	emptySweepResult,
 	executeMigrationSweep,
 	type SweepProgress,
 	type SweepResult,
 } from "@/lib/sweep-migration";
 import {
+	cancelWalletListings,
+	partialRunResult,
+	runFirstRunMigration,
+} from "@/lib/wallet/first-run-migration";
+import {
 	type AssetType,
-	cancelListedAssets,
 	defaultAssetTypes,
 	type ListedAsset,
 	listedFromLegacy,
@@ -50,12 +56,14 @@ import {
 	planMigration,
 	plannedCount,
 	toggleAssetType,
+	tokenOutputCount,
 	withoutListed,
 } from "@/lib/wallet/migration-listings";
 import {
 	detectMigrationStatus,
 	type MigrationStatus,
 	migrationDeferredKey,
+	reportMigrationFailure,
 } from "@/lib/wallet-migration";
 import { reencryptWallet } from "@/lib/wallet-storage";
 import { useWallet } from "@/providers/wallet-provider";
@@ -180,6 +188,7 @@ export function MigrationWizard() {
 					...assets.opnsNames,
 					...assets.locked,
 					...assets.run,
+					...assets.listings,
 				]),
 			),
 		[
@@ -188,6 +197,7 @@ export function MigrationWizard() {
 			assets.opnsNames,
 			assets.locked,
 			assets.run,
+			assets.listings,
 		],
 	);
 	const unlistedOrdinals = useMemo(
@@ -230,6 +240,7 @@ export function MigrationWizard() {
 				opns: selectedTypes.has("ordinals") ? unlistedOpns : [],
 				funding: assets.funding,
 				bsv21: assets.bsv21Tokens,
+				bsv20: assets.bsv20Balances,
 			}),
 		[
 			selectedTypes,
@@ -239,6 +250,7 @@ export function MigrationWizard() {
 			unlistedOpns,
 			assets.funding,
 			assets.bsv21Tokens,
+			assets.bsv20Balances,
 		],
 	);
 
@@ -281,9 +293,10 @@ export function MigrationWizard() {
 		return [...plan.sweepOrdinals, ...plan.sweepListed];
 	}, [plan.sweepOrdinals, plan.sweepListed]);
 
-	const bsv21OutputCount = useMemo(() => {
-		return plan.sweepBsv21.reduce((sum, tb) => sum + tb.outputs.length, 0);
-	}, [plan.sweepBsv21]);
+	const tokenOutputs = useMemo(
+		() => tokenOutputCount(plan.sweepBsv21) + tokenOutputCount(plan.sweepBsv20),
+		[plan.sweepBsv21, plan.sweepBsv20],
+	);
 
 	// Run migration
 	const runMigration = useCallback(async () => {
@@ -309,64 +322,51 @@ export function MigrationWizard() {
 				identityAddressPath: "derived" as string | number | undefined,
 			};
 
-			setProgress("Updating encrypted wallet...");
-			setProgressPercent(25);
-			const reencrypted = await reencryptWallet(updatedKeys);
-			if (!reencrypted) {
-				throw new Error(
-					"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
-				);
-			}
-
-			setProgress("Reinitializing BRC-100 wallet...");
-			setProgressPercent(40);
-			if (toolbox.isInitialized) {
-				await toolbox.destroyWallet();
-			}
-
-			await new Promise((r) => setTimeout(r, 500));
-
-			const { wifToHex } = await import("@1sat/utils");
-			const rootKeyHex = wifToHex(identityWif);
-			const initialized = await toolbox.initializeWallet(rootKeyHex);
-
-			if (!initialized) {
-				throw new Error("Failed to initialize wallet with identity key");
-			}
-
-			let cancelTxids: string[] = [];
-			if (plan.cancel.length > 0) {
-				if (!toolbox.oneSatContext) {
-					throw new Error("Unlock your wallet to cancel listings.");
-				}
-				setProgress("Cancelling listings...");
-				const cancelled = await cancelListedAssets(
-					toolbox.oneSatContext,
-					plan.cancel,
-				);
-				cancelTxids = cancelled.txids;
-				if (!cancelled.ok) {
-					throw new Error(
-						"Listings must be cancelled before migration can finish.",
-					);
-				}
-			}
-
-			if (toolbox.wallet && toolbox.services) {
-				const totalSweepable =
-					plan.sweepFunding.length + sweepOrdinals.length + bsv21OutputCount;
-
-				if (totalSweepable > 0) {
+			// `toolbox` is this render's snapshot: after the re-root it still
+			// points at the destroyed pay-key wallet, so the sweep uses the
+			// wallet runFirstRunMigration hands back.
+			const run = await runFirstRunMigration({
+				current: toolbox,
+				listings: plan.cancel,
+				identityWif,
+				isInitialized: toolbox.isInitialized,
+				destroyWallet: toolbox.destroyWallet,
+				initializeWallet: toolbox.initializeWallet,
+				persistIdentity: async () => {
+					if (!(await reencryptWallet(updatedKeys))) {
+						throw new Error(
+							"Failed to re-encrypt wallet. Try unlocking your wallet again first.",
+						);
+					}
+				},
+				onStage: (stage) => {
+					if (stage === "cancel") {
+						setProgress("Cancelling listings...");
+						setProgressPercent(15);
+					} else if (stage === "transfer") {
+						setProgress("Moving this wallet's assets to your identity key...");
+						setProgressPercent(20);
+					} else if (stage === "persist") {
+						setProgress("Updating encrypted wallet...");
+						setProgressPercent(25);
+					} else if (stage === "reroot") {
+						setProgress("Reinitializing BRC-100 wallet...");
+						setProgressPercent(40);
+					}
+				},
+				sweep: async (target) => {
+					const totalSweepable =
+						plan.sweepFunding.length + sweepOrdinals.length + tokenOutputs;
+					if (totalSweepable === 0) return null;
 					setProgress(
 						`Sweeping ${totalSweepable} asset${totalSweepable !== 1 ? "s" : ""}...`,
 					);
 					// Pre-sweep stages span 0-60%; the sweep's unit-based percent
 					// fills the remaining 40%
 					setProgressPercent(60);
-
-					const result = await executeMigrationSweep({
-						wallet: toolbox.wallet,
-						services: toolbox.services,
+					return executeMigrationSweep({
+						wallet: target.wallet,
+						services: target.services,
 						chain: toolbox.chain,
 						legacyPayWif: migrationStatus.legacyPayWif,
 						legacyOrdWif: migrationStatus.legacyOrdWif,
@@ -379,32 +379,28 @@ export function MigrationWizard() {
 						funding: plan.sweepFunding,
 						ordinals: sweepOrdinals,
 						bsv21Tokens: plan.sweepBsv21,
+						bsv20Tokens: plan.sweepBsv20,
 					});
+				},
+			});
 
-					setSweepResult({ ...result, cancelTxids });
-					assets.rescan();
-					toolbox.refreshBalance();
-				} else {
-					setSweepResult({
-						bsvTxids: [],
-						ordinalTxids: [],
-						bsv21Txids: [],
-						cancelTxids,
-						errors: [],
-					});
-				}
+			setSweepResult({
+				...(run.sweep ?? emptySweepResult()),
+				cancelTxids: run.cancelTxids,
+				transferTxids: run.transferTxids,
+			});
+			if (run.sweep || run.transferTxids.length > 0) {
+				assets.rescan();
+				toolbox.refreshBalance();
 			}
 
 			window.localStorage.removeItem(migrationDeferredKey(walletKeys));
 			setProgressPercent(100);
 			setStep("complete");
 		} catch (err) {
-			reportDiagnostic({
-				category: "action",
-				code: "action.failed",
-				operation: "wallet.migration.run",
-				recoverable: true,
-			});
+			reportMigrationFailure("wallet.migration.run", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
@@ -414,10 +410,11 @@ export function MigrationWizard() {
 		toolbox,
 		assets.rescan,
 		sweepOrdinals,
-		bsv21OutputCount,
+		tokenOutputs,
 		plan.cancel,
 		plan.sweepFunding,
 		plan.sweepBsv21,
+		plan.sweepBsv20,
 	]);
 
 	const runDelistOnly = useCallback(async () => {
@@ -431,33 +428,19 @@ export function MigrationWizard() {
 		setProgress("Cancelling listings...");
 		setProgressPercent(20);
 		try {
-			const cancelled = await cancelListedAssets(
+			const cancelTxids = await cancelWalletListings(
 				toolbox.oneSatContext,
 				listings.filter((item) => item.source === "wallet"),
 			);
-			if (!cancelled.ok) {
-				throw new Error(
-					"Listings must be cancelled before this step can finish.",
-				);
-			}
-			setSweepResult({
-				bsvTxids: [],
-				ordinalTxids: [],
-				bsv21Txids: [],
-				cancelTxids: cancelled.txids,
-				errors: [],
-			});
+			setSweepResult(emptySweepResult({ cancelTxids }));
 			assets.rescan();
 			toolbox.refreshBalance();
 			setProgressPercent(100);
 			setStep("complete");
 		} catch (err) {
-			reportDiagnostic({
-				category: "action",
-				code: "action.failed",
-				operation: "wallet.migration.delist",
-				recoverable: true,
-			});
+			reportMigrationFailure("wallet.migration.delist", err);
+			const partial = partialRunResult(err);
+			if (partial) setSweepResult(emptySweepResult(partial));
 			setError(err instanceof Error ? err.message : String(err));
 			setStep("error");
 		}
@@ -518,10 +501,8 @@ export function MigrationWizard() {
 						typeCounts={{
 							listings: listings.length,
 							ordinals: unlistedOrdinals.length + unlistedOpns.length,
-							bsv21: assets.bsv21Tokens.reduce(
-								(sum, token) => sum + token.outputs.length,
-								0,
-							),
+							bsv21: tokenOutputCount(assets.bsv21Tokens),
+							bsv20: tokenOutputCount(assets.bsv20Balances),
 							bsv: assets.funding.length,
 						}}
 						selectedOrdinals={selectedOrdinals}
@@ -782,7 +763,7 @@ function PreviewStep({
 					counts={typeCounts}
 					onToggle={onToggleType}
 				/>
-				<ListingsSection listings={listings} />
+				<ListingsSection reRoot listings={listings} />
 				{selectedTypes.has("bsv") && (
 					<FundingSection funding={assets.funding} totalBsv={assets.totalBsv} />
 				)}
@@ -803,7 +784,10 @@ function PreviewStep({
 				{selectedTypes.has("bsv21") && (
 					<TokensSection tokens={assets.bsv21Tokens} />
 				)}
-				<Bsv20Section tokens={assets.bsv20Tokens} />
+				<Bsv20Section
+					tokens={selectedTypes.has("bsv20") ? assets.bsv20Balances : []}
+					unsweepable={assets.bsv20Unsweepable}
+				/>
 				<LockedSection locked={withoutListed(assets.locked)} />
 				<RunSection run={withoutListed(assets.run)} />
 			</div>
@@ -927,42 +911,10 @@ function CompleteStep({
 
 			{sweepResult && (
 				<div className="mx-auto max-w-sm space-y-2 text-sm text-left">
-					{sweepResult.bsvTxids.map((txid) => (
-						<div
-							key={txid}
-							className="flex justify-between border-b border-border/30 pb-2"
-						>
-							<span className="text-muted-foreground">BSV Sweep</span>
-							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
-						</div>
-					))}
-					{sweepResult.ordinalTxids.map((txid) => (
-						<div
-							key={txid}
-							className="flex justify-between border-b border-border/30 pb-2"
-						>
-							<span className="text-muted-foreground">Ordinal Sweep</span>
-							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
-						</div>
-					))}
-					{sweepResult.bsv21Txids.map((txid) => (
-						<div
-							key={txid}
-							className="flex justify-between border-b border-border/30 pb-2"
-						>
-							<span className="text-muted-foreground">Token Sweep</span>
-							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
-						</div>
-					))}
-					{(sweepResult.cancelTxids ?? []).map((txid) => (
-						<div
-							key={txid}
-							className="flex justify-between border-b border-border/30 pb-2"
-						>
-							<span className="text-muted-foreground">Listing cancelled</span>
-							<code className="text-xs font-mono">{txid.slice(0, 16)}...</code>
-						</div>
-					))}
+					<SweepResultRows
+						result={sweepResult}
+						rowClassName="flex justify-between border-b border-border/30 pb-2"
+					/>
 					{sweepResult.errors.length > 0 && (
 						<div className="space-y-1 pt-2">
 							<p className="text-sm font-medium text-destructive">
@@ -975,15 +927,11 @@ function CompleteStep({
 							))}
 						</div>
 					)}
-					{sweepResult.bsvTxids.length === 0 &&
-						sweepResult.ordinalTxids.length === 0 &&
-						sweepResult.bsv21Txids.length === 0 &&
-						(sweepResult.cancelTxids?.length ?? 0) === 0 &&
-						sweepResult.errors.length === 0 && (
-							<p className="text-center text-muted-foreground">
-								No assets found at legacy addresses.
-							</p>
-						)}
+					{sweepResultIsEmpty(sweepResult) && (
+						<p className="text-center text-muted-foreground">
+							No assets found at legacy addresses.
+						</p>
+					)}
 				</div>
 			)}
 

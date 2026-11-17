@@ -172,7 +172,7 @@ describe("wallet provider color wiring", () => {
 		);
 		assert.match(
 			init,
-			/catch \{\s*for \(const module of pendingPermissionModules\) module\.dispose\(\)/,
+			/catch \(error\) \{\s*for \(const module of pendingPermissionModules\) module\.dispose\(\)/,
 		);
 	});
 

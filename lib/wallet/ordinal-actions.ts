@@ -7,7 +7,7 @@ import {
 	sendOrdinals,
 	type WalletOutput,
 } from "@1sat/actions";
-import { readAssetIdTag } from "@1sat/types";
+import { ORDLOCK_V2_TAG, readAssetIdTag } from "@1sat/types";
 import { PublicKey } from "@bsv/sdk";
 import { isP2pkhAddressForChain } from "@/components/wallet/wallet-home-utils";
 import {
@@ -56,8 +56,14 @@ export function parseSatoshiPrice(value: string): number | null {
 	}
 }
 
+/**
+ * A wallet ordinal under an OrdLock listing: v1 (`ordlock`) or v2
+ * (`ordlock2`, what sellOrdinal now writes). cancelOrdinalListing picks the
+ * v1 or v2 unlock from the locking script, so both cancel the same way.
+ */
 export function isOrdinalListed(output: WalletOutput): boolean {
-	return output.tags?.includes("ordlock") ?? false;
+	const tags = output.tags ?? [];
+	return tags.includes("ordlock") || tags.includes(ORDLOCK_V2_TAG);
 }
 
 export function ordinalAssetId(output: WalletOutput): string | null {

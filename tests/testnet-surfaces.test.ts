@@ -298,7 +298,7 @@ describe("an account on another network replacing this one", () => {
 		// An unreadable stored wallet says so instead of failing silently.
 		assert.match(init, /storedNetwork === null && hasStoredWallet\(\)/);
 		assert.match(init, /setInitError\(/);
-		assert.match(init, /refreshWalletChain\(\);\s*return false;/);
+		assert.match(init, /refreshWalletChain\(\);\s*return null;/);
 		assert.match(init, /operation: "wallet\.initialize\.chain"/);
 	});
 

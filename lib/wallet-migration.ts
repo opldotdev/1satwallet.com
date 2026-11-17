@@ -1,8 +1,24 @@
 "use client";
 
 import { PrivateKey } from "@bsv/sdk";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { Keys } from "@/lib/types";
+
+/**
+ * A migration step failed: the full error (with any cause) goes to the
+ * console for debugging; the diagnostic keeps only the error's class name.
+ * The caller shows the user the short message.
+ */
+export function reportMigrationFailure(operation: string, error: unknown) {
+	console.error(`[migration] ${operation} failed`, error);
+	reportDiagnostic({
+		category: "action",
+		code: "action.failed",
+		operation,
+		recoverable: true,
+		context: { errorName: errorNameOf(error) },
+	});
+}
 
 /** Identity-scoped so deferring one imported wallet cannot hide another. */
 export function migrationDeferredKey(keys: Keys): string {
@@ -53,13 +69,8 @@ export function detectMigrationStatus(keys: Keys): MigrationStatus {
 						.toAddress()
 						.toString(),
 				};
-			} catch {
-				reportDiagnostic({
-					category: "action",
-					code: "action.failed",
-					operation: "wallet.migration.inspect",
-					recoverable: true,
-				});
+			} catch (error) {
+				reportMigrationFailure("wallet.migration.inspect", error);
 			}
 		}
 		return { status: "migrated" };

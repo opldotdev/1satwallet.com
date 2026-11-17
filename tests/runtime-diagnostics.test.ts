@@ -7,6 +7,7 @@ import {
 	errorNameOf,
 	getDiagnosticEvents,
 	reportDiagnostic,
+	reportFailure,
 	sanitizeDiagnosticContext,
 } from "@/lib/runtime-diagnostics";
 
@@ -84,6 +85,30 @@ describe("runtime diagnostics", () => {
 		assert.notEqual(event.correlationId, secretWif);
 		assert.deepEqual(event.context, { route: "/wallet" });
 		assert.doesNotMatch(JSON.stringify(event), new RegExp(secretWif));
+	});
+
+	it("logs a caught failure in full and keeps only its class in the event", () => {
+		const logged: unknown[][] = [];
+		console.error = (...args: unknown[]) => {
+			logged.push(args);
+		};
+		const failure = new RangeError("storage endpoint unreachable");
+		const event = reportFailure(
+			{
+				category: "provider",
+				code: "provider.failed",
+				operation: "wallet.initialize",
+				recoverable: true,
+				context: { mode: "built-in" },
+			},
+			failure,
+		);
+		assert.deepEqual(logged[0], ["[wallet.initialize]", failure]);
+		assert.deepEqual(event.context, {
+			mode: "built-in",
+			errorName: "RangeError",
+		});
+		assert.doesNotMatch(JSON.stringify(event), /unreachable/);
 	});
 
 	it("keeps a bounded in-memory event history", () => {

@@ -9,13 +9,16 @@ import {
 	defaultAssetTypes,
 	excludeUnsweepableTokens,
 	isListedOutput,
+	isolateListedBatches,
 	listedFromLegacy,
 	listedFromWallet,
 	MNEE_TOKEN_ID,
 	mergeListed,
+	onlyListedTokens,
 	planMigration,
 	plannedCount,
 	toggleAssetType,
+	tokenOutputCount,
 	withoutListed,
 } from "@/lib/wallet/migration-listings";
 import type { OrdinalActionSet } from "@/lib/wallet/ordinal-actions";
@@ -141,6 +144,103 @@ describe("migration listing plan", () => {
 		assert.equal(result.ok, false);
 		assert.match(result.errors[0] ?? "", /asset ID/);
 		assert.doesNotMatch(result.errors.join(" "), /seed|wif|private/i);
+	});
+});
+
+describe("OrdLock v2 listings", () => {
+	it("recognises v2 listings by tag event, list: event or data, and keeps v1", () => {
+		const v2Event = { outpoint: tx("a1"), events: ["ordlock2"] };
+		const listEvent = { outpoint: tx("a2"), events: ["list:1000"] };
+		const v2Data = { outpoint: tx("a3"), data: { ordlock2: { price: 1 } } };
+		const v1 = { outpoint: tx("a4"), events: ["ordlock"] };
+		const plain = { outpoint: tx("a5"), events: ["type:image/png"] };
+		for (const listed of [v2Event, listEvent, v2Data, v1]) {
+			assert.equal(isListedOutput(listed), true, listed.outpoint);
+		}
+		assert.equal(isListedOutput(plain), false);
+		assert.deepEqual(
+			listedFromLegacy([v2Event, plain, listEvent]).map((l) => l.outpoint),
+			[v2Event.outpoint, listEvent.outpoint],
+		);
+	});
+
+	it("puts every listed output in its own batch and chunks the rest", () => {
+		const listed = [
+			{ outpoint: tx("b1"), events: ["ordlock2"] },
+			{ outpoint: tx("b2"), events: ["list:5"] },
+		];
+		const unlisted = Array.from({ length: 5 }, (_, i) => ({
+			outpoint: `${"c".repeat(63)}${i}.0`,
+		}));
+		const batches = isolateListedBatches(
+			[unlisted[0], listed[0], ...unlisted.slice(1), listed[1]],
+			2,
+		);
+		assert.deepEqual(
+			batches.map((batch) => batch.map((o) => o.outpoint)),
+			[
+				[listed[0].outpoint],
+				[listed[1].outpoint],
+				[unlisted[0].outpoint, unlisted[1].outpoint],
+				[unlisted[2].outpoint, unlisted[3].outpoint],
+				[unlisted[4].outpoint],
+			],
+		);
+		assert.deepEqual(isolateListedBatches([], 2), []);
+	});
+});
+
+describe("BSV-20 in the migration plan", () => {
+	const bsv20 = (outpoints: { outpoint: string; events?: string[] }[]) => ({
+		tick: "PEPE",
+		decimals: 0,
+		totalAmount: 3n,
+		outputs: outpoints.map((o) => ({ ...o, score: 0 })),
+		amounts: new Map(outpoints.map((o) => [o.outpoint, "1"])),
+	});
+	const base = {
+		listings: [],
+		listedLegacyOutputs: [],
+		ordinals: [],
+		opns: [],
+		funding: [],
+		bsv21: [],
+	};
+
+	it("plans and counts BSV-20 outputs when the type is selected", () => {
+		const tokens = [bsv20([{ outpoint: tx("d1") }, { outpoint: tx("d2") }])];
+		const plan = planMigration({
+			...base,
+			types: defaultAssetTypes(),
+			bsv20: tokens,
+		});
+		assert.equal(tokenOutputCount(plan.sweepBsv20), 2);
+		assert.equal(plannedCount(plan), 2);
+		assert.ok(ASSET_TYPES.includes("bsv20"));
+
+		const without = planMigration({
+			...base,
+			types: toggleAssetType(defaultAssetTypes(), "bsv20"),
+			bsv20: tokens,
+		});
+		assert.deepEqual(without.sweepBsv20, []);
+		assert.equal(plannedCount(without), 0);
+	});
+
+	it("leaves listed token outputs out when listings are not selected", () => {
+		const listed = { outpoint: tx("e1"), events: ["ordlock2"] };
+		const plain = { outpoint: tx("e2") };
+		const tokens = [bsv20([listed, plain])];
+		const types = toggleAssetType(defaultAssetTypes(), "listings");
+		const plan = planMigration({ ...base, types, bsv20: tokens });
+		assert.deepEqual(
+			plan.sweepBsv20.flatMap((t) => t.outputs.map((o) => o.outpoint)),
+			[plain.outpoint],
+		);
+		assert.deepEqual(
+			onlyListedTokens(tokens).flatMap((t) => t.outputs.map((o) => o.outpoint)),
+			[listed.outpoint],
+		);
 	});
 });
 

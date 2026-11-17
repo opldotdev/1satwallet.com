@@ -55,7 +55,7 @@ import {
 	type ReceiveAddressState,
 	saveReceiveAddressState,
 } from "@/lib/receive-address-state";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { reportDiagnostic, reportFailure } from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
@@ -79,6 +79,7 @@ import {
 	EXTERNAL_NETWORK_CHANGED,
 	externalWalletChain,
 } from "@/lib/wallet/external-network";
+import type { MigrationTarget } from "@/lib/wallet/first-run-migration";
 import { createWalletContext } from "@/lib/wallet/legacy-baskets";
 import { guardModuleIdentifiers } from "@/lib/wallet/module-identifier-guard";
 import { PERMISSIONS_CONFIG } from "@/lib/wallet/permissions-config";
@@ -254,6 +255,8 @@ interface WalletToolboxContextValue {
 	isInitialized: boolean;
 	isInitializing: boolean;
 	initError: string | null;
+	/** Show why the built-in wallet did not start (the bridge's own failures). */
+	reportInitFailure: (message: string) => void;
 	chain: Chain;
 	identityKey: string | null;
 
@@ -294,7 +297,12 @@ interface WalletToolboxContextValue {
 
 	exchangeRate: number | null;
 
-	initializeWallet: (rootKeyHex: string) => Promise<boolean>;
+	/**
+	 * Opens the built-in wallet at `rootKeyHex`. Resolves with the new wallet
+	 * (the context value only reflects it after the next render), or null when
+	 * it could not open.
+	 */
+	initializeWallet: (rootKeyHex: string) => Promise<MigrationTarget | null>;
 	connectExternalWallet: (option?: WalletConnectionOption) => Promise<boolean>;
 	switchWallet: (option: WalletConnectionOption) => Promise<boolean>;
 	disconnectExternalWallet: () => Promise<void>;
@@ -372,6 +380,10 @@ export function WalletToolboxProvider({
 	const [isInitializing, setIsInitializing] = useState(false);
 	const initGuardRef = useRef(false);
 	const [initError, setInitError] = useState<string | null>(null);
+
+	const reportInitFailure = useCallback((message: string) => {
+		setInitError(message);
+	}, []);
 
 	useEffect(() => {
 		const carried = carriedInitError;
@@ -972,11 +984,11 @@ export function WalletToolboxProvider({
 
 	// -- Wallet init --
 	const initializeWallet = useCallback(
-		async (rootKeyHex: string): Promise<boolean> => {
+		async (rootKeyHex: string): Promise<MigrationTarget | null> => {
 			const pendingTeardown = teardownPromiseRef.current;
 			if (pendingTeardown) await pendingTeardown;
 			if (initGuardRef.current) {
-				return false;
+				return null;
 			}
 			// The keys must belong to the account stored on this chain. If the
 			// wallet was replaced or removed meanwhile, move the chain and let
@@ -996,7 +1008,7 @@ export function WalletToolboxProvider({
 					context: { mode: "built-in", retryable: true },
 				});
 				refreshWalletChain();
-				return false;
+				return null;
 			}
 			const generation = ++connectionGenerationRef.current;
 			initGuardRef.current = true;
@@ -1021,7 +1033,7 @@ export function WalletToolboxProvider({
 				pendingResult = result;
 				if (generation !== connectionGenerationRef.current) {
 					await result.destroy();
-					return false;
+					return null;
 				}
 
 				const assetPermissionModules = createAssetPermissionModules({
@@ -1077,7 +1089,7 @@ export function WalletToolboxProvider({
 					for (const module of pendingPermissionModules) module.dispose();
 					pendingPermissionModules = [];
 					await result.destroy();
-					return false;
+					return null;
 				}
 
 				pendingResult = null;
@@ -1126,18 +1138,29 @@ export function WalletToolboxProvider({
 				setInitError(null);
 				persistBuiltInConnection();
 
-				return true;
-			} catch {
+				return {
+					wallet: result.wallet,
+					services: result.services,
+					oneSatContext: createWalletContext(result.wallet, {
+						services: result.services,
+						chain,
+						builtIn: true,
+					}),
+				};
+			} catch (error) {
 				for (const module of pendingPermissionModules) module.dispose();
 				await pendingResult?.destroy();
-				if (generation !== connectionGenerationRef.current) return false;
-				reportDiagnostic({
-					category: "provider",
-					code: "provider.failed",
-					operation: "wallet.initialize",
-					recoverable: true,
-					context: { mode: "built-in", retryable: true },
-				});
+				if (generation !== connectionGenerationRef.current) return null;
+				reportFailure(
+					{
+						category: "provider",
+						code: "provider.failed",
+						operation: "wallet.initialize",
+						recoverable: true,
+						context: { mode: "built-in", retryable: true },
+					},
+					error,
+				);
 				setInitError(
 					"Built-in wallet initialization failed. Lock and unlock the wallet, then try again.",
 				);
@@ -1145,7 +1168,7 @@ export function WalletToolboxProvider({
 				setIsInitialized(false);
 				setAddressManagerReady(false);
 				initGuardRef.current = false;
-				return false;
+				return null;
 			} finally {
 				if (generation === connectionGenerationRef.current) {
 					setIsInitializing(false);
@@ -1369,6 +1392,7 @@ export function WalletToolboxProvider({
 			isInitialized,
 			isInitializing,
 			initError,
+			reportInitFailure,
 			chain,
 			identityKey,
 			depositAddress,
@@ -1415,6 +1439,7 @@ export function WalletToolboxProvider({
 			isInitialized,
 			isInitializing,
 			initError,
+			reportInitFailure,
 			chain,
 			identityKey,
 			depositAddress,

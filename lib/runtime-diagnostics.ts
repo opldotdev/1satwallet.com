@@ -142,6 +142,21 @@ export function reportDiagnostic(input: DiagnosticInput): DiagnosticEvent {
 	return event;
 }
 
+/**
+ * A caught failure: the full error goes to the console for debugging, and
+ * the diagnostic log keeps only its class name with the allowlisted context.
+ */
+export function reportFailure(
+	input: DiagnosticInput,
+	error: unknown,
+): DiagnosticEvent {
+	console.error(`[${safeToken(input.operation, "unknown")}]`, error);
+	return reportDiagnostic({
+		...input,
+		context: { ...input.context, errorName: errorNameOf(error) },
+	});
+}
+
 export function getDiagnosticEvents(): DiagnosticEvent[] {
 	return events;
 }
