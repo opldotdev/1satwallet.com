@@ -79,7 +79,10 @@ export function proxy(request: NextRequest) {
 	}
 
 	// The cookie is set only while the wallet is on testnet; anything else is
-	// mainnet. A page the chain lacks that has a home elsewhere (1Color's, off
+	// mainnet. A browser that blocks the cookie is treated as mainnet here, so
+	// its testnet wallet can't open 1Color's pages (or get the testnet notice):
+	// the request alone can't tell its chain, and guessing testnet would show
+	// 1Color to mainnet accounts. A page the chain lacks that has a home elsewhere (1Color's, off
 	// testnet) redirects there. A wallet on testnet gets a static notice in
 	// place of mainnet-only pages, so those pages stay static for everyone
 	// else and never render here.

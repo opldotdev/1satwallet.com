@@ -189,8 +189,10 @@ describe("testnet surfaces", () => {
 
 	it("decides nothing chain-specific about 1Color before the client knows the chain", () => {
 		const grid = read("components/wallet/one-color-grid.tsx");
+		assert.match(grid, /const mounted = useMounted\(\);/);
+		const mounted = read("lib/hooks/use-mounted.ts");
 		assert.match(
-			grid,
+			mounted,
 			/useSyncExternalStore\(\s*noSubscription,\s*\(\) => true,\s*\(\) => false,\s*\)/,
 		);
 		assert.doesNotMatch(grid, /Switch the network/);

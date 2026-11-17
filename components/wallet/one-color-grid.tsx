@@ -1,11 +1,12 @@
 "use client";
 
 import { Coins, KeyRound, Loader2, RefreshCw } from "lucide-react";
-import { type ReactNode, useSyncExternalStore } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useOneColorBalances } from "@/hooks/use-one-color-balances";
 import { isOneColorAvailable } from "@/lib/chain-endpoints";
+import { useMounted } from "@/lib/hooks/use-mounted";
 import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
 import { tokenDetailHref } from "@/lib/wallet/create-token";
@@ -59,8 +60,6 @@ export function OneColorLoading({ label }: { label: string }) {
 	);
 }
 
-const noSubscription = () => () => {};
-
 /**
  * Whether the built-in wallet's 1Color tokens can be read here, before any
  * read: "unavailable" on a chain without 1Color, "locked" with no wallet
@@ -80,11 +79,7 @@ export function useOneColorAccess(): OneColorAccess {
 	// Pages prerender as mainnet, so nothing chain-specific is decided until
 	// the client knows the active account's network: a testnet account is
 	// never sent away from a 1Color page, and hydration never mismatches.
-	const mounted = useSyncExternalStore(
-		noSubscription,
-		() => true,
-		() => false,
-	);
+	const mounted = useMounted();
 	if (!mounted) return "loading";
 	if (!isOneColorAvailable(chain)) return "unavailable";
 	if (isInitializing) return "loading";

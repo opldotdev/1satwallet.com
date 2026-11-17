@@ -262,8 +262,17 @@ describe("wallet chrome", () => {
 
 	it("heads the page with the section and drops the tagline", () => {
 		const header = read("components/wallet/wallet-header.tsx");
-		assert.match(header, /walletSectionFor\(usePathname\(\), chain\)/);
-		assert.match(header, /<PageTitle[^>]*>\{section\.title\}<\/PageTitle>/);
+		assert.match(header, /walletSectionFor\(pathname, chain\)/);
+		assert.match(
+			header,
+			/<PageTitle[^>]*>\s*\{unnamed \? null : section\.title\}\s*<\/PageTitle>/,
+		);
+		// Before the client knows the chain, a page only some chains have shows
+		// no headline instead of mainnet's.
+		assert.match(
+			header,
+			/!mounted && unavailableRouteRedirect\("main", pathname\) !== null/,
+		);
 		assert.match(header, /aria-label=\{`Back to \$\{section\.parentTitle\}`\}/);
 		assert.doesNotMatch(header, /at a glance/);
 		// The connection is a dot with a screen-reader label; Lock and

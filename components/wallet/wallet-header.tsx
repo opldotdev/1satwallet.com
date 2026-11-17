@@ -7,6 +7,8 @@ import { PageHeader, PageTitle } from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
 import { useSound } from "@/hooks/use-sound";
+import { unavailableRouteRedirect } from "@/lib/chain-surfaces";
+import { useMounted } from "@/lib/hooks/use-mounted";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
 import { walletSectionFor } from "@/lib/wallet-sections";
 import { useWallet } from "@/providers/wallet-provider";
@@ -29,7 +31,14 @@ export function WalletHeader() {
 	} = useWalletToolbox();
 	const { play } = useSound();
 	const chain = useWalletChain();
-	const section = walletSectionFor(usePathname(), chain);
+	const pathname = usePathname();
+	const section = walletSectionFor(pathname, chain);
+	// A page only some chains have (1Color's) can't be named before the client
+	// knows the account's chain: the server always renders mainnet, which has
+	// no such page. Show no headline until then rather than the wrong one.
+	const mounted = useMounted();
+	const unnamed =
+		!mounted && unavailableRouteRedirect("main", pathname) !== null;
 	const label = isInitializing
 		? "Connecting…"
 		: connectionStatus === "locked"
@@ -48,7 +57,7 @@ export function WalletHeader() {
 	return (
 		<PageHeader className="min-h-11 items-start">
 			<div className="flex min-w-0 items-start gap-1">
-				{section.parentHref ? (
+				{section.parentHref && !unnamed ? (
 					<Button
 						asChild
 						className="-ml-3 shrink-0 md:-ml-2"
@@ -66,7 +75,9 @@ export function WalletHeader() {
 				) : null}
 				<div className="flex min-w-0 flex-col gap-1 max-md:min-h-11 max-md:justify-center">
 					<div className="flex min-w-0 items-center gap-2">
-						<PageTitle className="truncate">{section.title}</PageTitle>
+						<PageTitle className="truncate">
+							{unnamed ? null : section.title}
+						</PageTitle>
 						{chain === "test" ? (
 							<span className="flex shrink-0">
 								<TestnetBadge />

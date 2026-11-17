@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	formatBsv21Amount,
 	normalizeBsv21TokenId,
@@ -64,7 +64,7 @@ function useMintAuthority(tokenId: string): boolean | null {
 					code: "provider.failed",
 					operation: "wallet.bsv21.mint-authority",
 					recoverable: true,
-					context: { retryable: true },
+					context: { retryable: true, errorName: errorNameOf(error) },
 				});
 				throw error;
 			}
