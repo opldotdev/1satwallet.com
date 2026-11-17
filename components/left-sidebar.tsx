@@ -38,6 +38,7 @@ import { useSoundSettings } from "@/hooks/use-sound-settings";
 import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
+import { goHintFor } from "@/lib/keyboard-shortcuts";
 import type { StackFeature } from "@/lib/stack-features";
 
 // Custom 1Sat Icon in Lucide style
@@ -63,7 +64,6 @@ interface NavItem {
 	title: string;
 	url: string;
 	icon: React.ComponentType<{ className?: string }>;
-	shortcut?: string;
 	feature?: StackFeature;
 }
 
@@ -78,8 +78,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 				url: "/activity",
 
 				icon: Activity,
-
-				shortcut: "g a",
 
 				feature: "activity",
 			},
@@ -97,8 +95,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 
 				icon: OneSatIcon,
 
-				shortcut: "g m",
-
 				feature: "ordinalMarket",
 			},
 
@@ -108,8 +104,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 				url: "/market/bsv21",
 
 				icon: Coins,
-
-				shortcut: "g v",
 
 				feature: "bsv21",
 			},
@@ -126,8 +120,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 				url: "/inscribe",
 
 				icon: Hammer,
-
-				shortcut: "g i",
 
 				feature: "inscribe",
 			},
@@ -152,8 +144,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 				url: "/docs",
 
 				icon: Book,
-
-				shortcut: "g d",
 			},
 
 			{
@@ -162,8 +152,6 @@ const navData: Array<{ title: string; items: NavItem[] }> = [
 				url: "/settings",
 
 				icon: Settings,
-
-				shortcut: "g s",
 			},
 		],
 	},
@@ -234,9 +222,9 @@ export function LeftSidebar({
 														<Link href={item.url} onClick={() => play("click")}>
 															<item.icon className="h-4 w-4" />
 															<span>{item.title}</span>
-															{item.shortcut && (
+															{goHintFor(item.url) && (
 																<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground group-data-[collapsible=icon]:hidden md:block">
-																	{item.shortcut}
+																	{goHintFor(item.url)}
 																</span>
 															)}
 														</Link>
