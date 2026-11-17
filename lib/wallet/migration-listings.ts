@@ -61,7 +61,7 @@ export interface UnsweepableBsv20 {
 	reason: string;
 }
 
-export const BSV20_UNREADABLE_REASON = "no readable ticker or amount";
+export const BSV20_UNREADABLE_REASON = "not confirmed by the indexer";
 export const BSV20_UNCONFIRMED_REASON =
 	"amount comes only from the inscription text, not from the indexer, so a sweep could claim more than the output holds and burn it";
 

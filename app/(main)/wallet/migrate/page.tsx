@@ -2,32 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-	Bsv20Section,
-	FundingSection,
-	ListingsSection,
-	LockedSection,
-	OpnsSection,
-	OrdinalsSection,
-	RunSection,
-	SweepResultRows,
-	SweepStepsList,
-	sweepResultIsEmpty,
-	TokensSection,
-	TypeChecklist,
-} from "@/components/wallet/migration-sections";
+import { Card, CardContent } from "@/components/ui/card";
+import { MigrationSweepFlow } from "@/components/wallet/migration-sections";
+import { useBsv20ContentLabels } from "@/lib/hooks/use-bsv20-content";
+import { useDefaultOrdinalSelection } from "@/lib/hooks/use-default-ordinal-selection";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
 import { deriveIdentityKey } from "@/lib/keys";
 import {
@@ -63,6 +41,11 @@ import {
 	withoutListed,
 } from "@/lib/wallet/migration-listings";
 import {
+	buildSweepSummary,
+	sweepScreenFor,
+	type WizardStepId,
+} from "@/lib/wallet/sweep-summary";
+import {
 	detectMigrationStatus,
 	type MigrationStatus,
 	reportMigrationFailure,
@@ -72,189 +55,18 @@ import { useWallet } from "@/providers/wallet-provider";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 type MigrationPhase = "scan" | "preview" | "migrate" | "complete" | "error";
-const SCANNING_SKELETON_KEYS = [
-	"scan-card-1",
-	"scan-card-2",
-	"scan-card-3",
-	"scan-card-4",
-	"scan-card-5",
-	"scan-card-6",
-] as const;
 
-// ---------------------------------------------------------------------------
-// Scanning skeleton
-// ---------------------------------------------------------------------------
-
-function ScanningState({ scanDetail }: { scanDetail: string | null }) {
-	return (
-		<div className="space-y-6">
-			<Card>
-				<CardHeader>
-					<CardTitle>Scanning Legacy Addresses</CardTitle>
-					<CardDescription className="animate-pulse">
-						{scanDetail ??
-							"Looking for BSV, ordinals and tokens at your legacy addresses..."}
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<Skeleton className="h-16 w-full" />
-					<div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6">
-						{SCANNING_SKELETON_KEYS.map((key) => (
-							<Skeleton key={key} className="aspect-square w-full" />
-						))}
-					</div>
-					<Skeleton className="h-12 w-full" />
-				</CardContent>
-			</Card>
-		</div>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Migration Progress
-// ---------------------------------------------------------------------------
-
-function MigrationProgress({
-	progress,
-	progressPercent,
-	sweepProgress,
-}: {
-	progress: string;
-	progressPercent: number;
-	sweepProgress: SweepProgress | null;
-}) {
-	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>Migrating</CardTitle>
-				<CardDescription>
-					Do not close this page or lock your wallet.
-				</CardDescription>
-			</CardHeader>
-			<CardContent className="space-y-4">
-				<Progress value={progressPercent} />
-				<div className="text-sm text-muted-foreground animate-pulse">
-					{progress}
-				</div>
-				{sweepProgress && <SweepStepsList steps={sweepProgress.steps} />}
-			</CardContent>
-		</Card>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Completion State
-// ---------------------------------------------------------------------------
-
-function CompletionState({
-	sweepResult,
-	remaining,
-	onBackToWallet,
-	onRetryFailed,
-}: {
-	sweepResult: SweepResult | null;
-	remaining: number;
-	onBackToWallet: () => void;
-	onRetryFailed: () => void;
-}) {
+/** The finished screen's primary action; a rescan is always offered. */
+function rescanLabelFor(
+	sweepResult: SweepResult | null,
+	remaining: number,
+): string {
 	const hadErrors = (sweepResult?.errors.length ?? 0) > 0;
-	const rescanLabel = hadErrors
+	return hadErrors
 		? "Rescan & Retry Failed Sweeps"
 		: remaining > 0
 			? `Sweep Remaining ${remaining} ${remaining === 1 ? "Item" : "Items"}`
 			: "Scan Legacy Addresses Again";
-	return (
-		<Card>
-			<CardHeader>
-				<CardTitle>
-					{sweepResult
-						? hadErrors
-							? "Sweep Finished With Errors"
-							: "Migration Complete"
-						: "Nothing Left to Sweep"}
-				</CardTitle>
-				<CardDescription>
-					{sweepResult
-						? hadErrors
-							? "Some assets could not be swept. You can rescan and retry the remainder — successfully swept assets are already safe in your wallet."
-							: "Your wallet has been migrated to the identity key system."
-						: "A fresh scan found nothing left to sweep at your legacy addresses. You can scan again at any time."}
-				</CardDescription>
-			</CardHeader>
-			<CardContent className="space-y-4">
-				{sweepResult && (
-					<div className="space-y-2 text-sm">
-						<SweepResultRows
-							result={sweepResult}
-							rowClassName="flex justify-between"
-						/>
-						{sweepResult.errors.length > 0 && (
-							<div className="space-y-1">
-								<p className="text-sm font-medium text-destructive">
-									Some sweeps had errors:
-								</p>
-								{sweepResult.errors.map((err) => (
-									<p key={err} className="text-xs text-destructive/80">
-										{err}
-									</p>
-								))}
-							</div>
-						)}
-						{sweepResultIsEmpty(sweepResult) && (
-							<p className="text-sm text-muted-foreground">
-								No assets found at legacy addresses.
-							</p>
-						)}
-					</div>
-				)}
-				{sweepResult && remaining > 0 && (
-					<p className="text-sm text-muted-foreground">
-						{remaining} {remaining === 1 ? "item is" : "items are"} still at
-						your legacy addresses.
-					</p>
-				)}
-				<Button className="w-full" onClick={onRetryFailed}>
-					{rescanLabel}
-				</Button>
-				<Button variant="outline" className="w-full" onClick={onBackToWallet}>
-					Back to Wallet
-				</Button>
-			</CardContent>
-		</Card>
-	);
-}
-
-// ---------------------------------------------------------------------------
-// Error State
-// ---------------------------------------------------------------------------
-
-function ErrorState({
-	error,
-	onRetry,
-	onBack,
-}: {
-	error: string;
-	onRetry: () => void;
-	onBack: () => void;
-}) {
-	return (
-		<Card className="border-destructive/50">
-			<CardHeader>
-				<CardTitle className="text-destructive">Migration Error</CardTitle>
-			</CardHeader>
-			<CardContent className="space-y-4">
-				<p className="text-sm text-destructive">{error}</p>
-				<div className="flex gap-2">
-					<Button variant="outline" onClick={onRetry}>
-						Retry
-					</Button>
-					<Button variant="outline" onClick={onBack}>
-						Back to Wallet
-					</Button>
-				</div>
-			</CardContent>
-		</Card>
-	);
 }
 
 // ---------------------------------------------------------------------------
@@ -276,11 +88,6 @@ export default function MigratePage() {
 	const [sweepResult, setSweepResult] = useState<SweepResult | null>(null);
 	const [error, setError] = useState<string | null>(null);
 
-	// Ordinal selection state
-	const [selectedOrdinals, setSelectedOrdinals] = useState<Set<string>>(
-		new Set(),
-	);
-	const [ordinalPage, setOrdinalPage] = useState(0);
 	const [selectedTypes, setSelectedTypes] = useState<Set<AssetType>>(() =>
 		defaultAssetTypes(),
 	);
@@ -358,6 +165,9 @@ export default function MigratePage() {
 		() => withoutListed(assets.ordinals),
 		[assets.ordinals],
 	);
+	// Every unlisted ordinal starts selected, once per set of outpoints.
+	const [selectedOrdinals, setSelectedOrdinals] =
+		useDefaultOrdinalSelection(unlistedOrdinals);
 	const unlistedOpns = useMemo(
 		() => withoutListed(assets.opnsNames),
 		[assets.opnsNames],
@@ -383,24 +193,6 @@ export default function MigratePage() {
 			),
 		],
 		[assets.ordinals, assets.opnsNames, listings],
-	);
-
-	const typeCounts = useMemo(
-		() => ({
-			listings: listings.length,
-			ordinals: unlistedOrdinals.length + unlistedOpns.length,
-			bsv21: tokenOutputCount(assets.bsv21Tokens),
-			bsv20: tokenOutputCount(assets.bsv20Balances),
-			bsv: assets.funding.length,
-		}),
-		[
-			listings.length,
-			unlistedOrdinals.length,
-			unlistedOpns.length,
-			assets.bsv21Tokens,
-			assets.bsv20Balances,
-			assets.funding.length,
-		],
 	);
 
 	const selectedUnlisted = useMemo(
@@ -489,35 +281,29 @@ export default function MigratePage() {
 		listings.length,
 	]);
 
-	// Select all unlisted ordinals by default when assets load
-	useEffect(() => {
-		if (unlistedOrdinals.length > 0 && selectedOrdinals.size === 0) {
-			setSelectedOrdinals(
-				new Set(unlistedOrdinals.map((item) => item.outpoint)),
-			);
-		}
-	}, [unlistedOrdinals, selectedOrdinals.size]);
-
 	// Ordinal selection handlers
-	const handleToggleOrdinal = useCallback((outpoint: string) => {
-		setSelectedOrdinals((prev) => {
-			const next = new Set(prev);
-			if (next.has(outpoint)) {
-				next.delete(outpoint);
-			} else {
-				next.add(outpoint);
-			}
-			return next;
-		});
-	}, []);
+	const handleToggleOrdinal = useCallback(
+		(outpoint: string) => {
+			setSelectedOrdinals((prev) => {
+				const next = new Set(prev);
+				if (next.has(outpoint)) {
+					next.delete(outpoint);
+				} else {
+					next.add(outpoint);
+				}
+				return next;
+			});
+		},
+		[setSelectedOrdinals],
+	);
 
 	const handleSelectAll = useCallback(() => {
 		setSelectedOrdinals(new Set(unlistedOrdinals.map((item) => item.outpoint)));
-	}, [unlistedOrdinals]);
+	}, [unlistedOrdinals, setSelectedOrdinals]);
 
 	const handleDeselectAll = useCallback(() => {
 		setSelectedOrdinals(new Set());
-	}, []);
+	}, [setSelectedOrdinals]);
 
 	const handleToggleType = useCallback((type: AssetType) => {
 		setSelectedTypes((prev) => toggleAssetType(prev, type));
@@ -601,6 +387,12 @@ export default function MigratePage() {
 					bsv20Tokens: listedBsv20,
 				});
 				result = { ...result, cancelTxids: cancelled.txids };
+			}
+			if (result.errors.length > 0) {
+				console.error(
+					"[migration] listing return finished with errors",
+					result.errors,
+				);
 			}
 			setSweepResult(result);
 			assets.rescan();
@@ -723,6 +515,12 @@ export default function MigratePage() {
 				});
 			}
 
+			if (run.sweep && run.sweep.errors.length > 0) {
+				console.error(
+					"[migration] sweep finished with errors",
+					run.sweep.errors,
+				);
+			}
 			setSweepResult({
 				...(run.sweep ?? emptySweepResult()),
 				cancelTxids: run.cancelTxids,
@@ -755,6 +553,41 @@ export default function MigratePage() {
 		plan.sweepBsv20,
 	]);
 
+	// What the wizard shows. Display only: the plan above decides what moves.
+	const summary = useMemo(
+		() =>
+			buildSweepSummary({
+				funding: assets.funding,
+				totalBsv: assets.totalBsv,
+				ordinals: unlistedOrdinals,
+				opnsNames: unlistedOpns,
+				bsv21Tokens: assets.bsv21Tokens,
+				bsv20Balances: assets.bsv20Balances,
+				listings: listings.length,
+				bsv20Unsweepable: assets.bsv20Unsweepable,
+				locked: unlistedLocked,
+				run: unlistedRun,
+			}),
+		[
+			assets.funding,
+			assets.totalBsv,
+			unlistedOrdinals,
+			unlistedOpns,
+			assets.bsv21Tokens,
+			assets.bsv20Balances,
+			listings.length,
+			assets.bsv20Unsweepable,
+			unlistedLocked,
+			unlistedRun,
+		],
+	);
+	const [wizardStep, setWizardStep] = useState<WizardStepId | null>(null);
+	// Labels for the BSV-20 inscriptions that stay put, read only while that
+	// step is on screen. Never part of the sweep.
+	const bsv20Display = useBsv20ContentLabels(summary.bsv20Unconfirmed, {
+		enabled: wizardStep === "stays",
+	});
+
 	if (toolbox.connectionMode === "external") {
 		return (
 			<section className="space-y-6">
@@ -785,220 +618,65 @@ export default function MigratePage() {
 		);
 	}
 
+	const retryScan = () => {
+		setSweepResult(null);
+		setSweepProgress(null);
+		setScanDetail(null);
+		setPhase("scan");
+		assets.rescan();
+	};
+
 	return (
-		<section className="space-y-6">
-			{phase === "preview" && totalAssets > 0 && (
-				<div className="flex justify-end">
-					<Badge variant="secondary">
-						{totalAssets} sweepable asset
-						{totalAssets !== 1 ? "s" : ""}
-					</Badge>
-				</div>
-			)}
-
-			<div className="space-y-4">
-				{/* Scanning */}
-				{phase === "scan" && assets.loading && (
-					<ScanningState scanDetail={scanDetail} />
-				)}
-
-				{/* Scan error */}
-				{phase === "scan" && assets.error && (
-					<Card className="border-destructive/50">
-						<CardContent className="py-6 space-y-3">
-							<p className="text-sm text-destructive">{assets.error}</p>
-							<Button variant="outline" onClick={assets.rescan}>
-								Retry Scan
-							</Button>
-						</CardContent>
-					</Card>
-				)}
-
-				{/* Preview: show categorized assets */}
-				{phase === "preview" && (
-					<>
-						{legacy ? (
-							<Card>
-								<CardHeader>
-									<CardTitle>
-										{legacy.sweepOnly
-											? "Legacy Assets Found"
-											: "Migration Required"}
-									</CardTitle>
-									<CardDescription>
-										{legacy.sweepOnly
-											? "Your wallet is already migrated, but assets remain at your legacy addresses. Review them below, then sweep."
-											: "Your wallet uses the legacy payment key as its BRC-100 root. Review the assets below, then migrate."}
-									</CardDescription>
-								</CardHeader>
-								<CardContent className="space-y-2 text-sm">
-									<div className="flex justify-between">
-										<span className="text-muted-foreground">
-											Legacy Pay Address
-										</span>
-										<code className="text-xs">{legacy.payAddress}</code>
-									</div>
-									<div className="flex justify-between">
-										<span className="text-muted-foreground">
-											Legacy Ord Address
-										</span>
-										<code className="text-xs">{legacy.ordAddress}</code>
-									</div>
-								</CardContent>
-							</Card>
-						) : (
-							<Card>
-								<CardHeader>
-									<CardTitle>Open listings</CardTitle>
-									<CardDescription>
-										These listings are being retired. Cancel them to return each
-										ordinal to your wallet. Nothing else will be moved.
-									</CardDescription>
-								</CardHeader>
-							</Card>
-						)}
-
-						<div className="space-y-3">
-							<TypeChecklist
-								types={selectedTypes}
-								counts={typeCounts}
-								onToggle={handleToggleType}
-							/>
-
-							<ListingsSection
-								reRoot={legacy ? !legacy.sweepOnly : false}
-								listings={listings}
-							/>
-
-							{selectedTypes.has("bsv") && (
-								<FundingSection
-									funding={assets.funding}
-									totalBsv={assets.totalBsv}
-								/>
-							)}
-
-							{selectedTypes.has("ordinals") && (
-								<>
-									<OrdinalsSection
-										ordinals={unlistedOrdinals}
-										selectedOrdinals={selectedOrdinals}
-										onToggle={handleToggleOrdinal}
-										onSelectAll={handleSelectAll}
-										onDeselectAll={handleDeselectAll}
-										ordinalPage={ordinalPage}
-										onPageChange={setOrdinalPage}
-									/>
-									<OpnsSection opnsNames={unlistedOpns} />
-								</>
-							)}
-
-							{selectedTypes.has("bsv21") && (
-								<TokensSection tokens={assets.bsv21Tokens} />
-							)}
-
-							<Bsv20Section
-								tokens={selectedTypes.has("bsv20") ? assets.bsv20Balances : []}
-								unsweepable={assets.bsv20Unsweepable}
-							/>
-
-							<LockedSection locked={unlistedLocked} />
-
-							<RunSection run={unlistedRun} />
-						</div>
-
-						{totalAssets === 0 &&
-							listings.length === 0 &&
-							assets.bsv20Tokens.length === 0 && (
-								<Card>
-									<CardContent className="py-8 text-center text-muted-foreground">
-										No assets found at legacy addresses.
-										{legacy &&
-											!legacy.sweepOnly &&
-											" Migration will still derive your identity key."}
-									</CardContent>
-								</Card>
-							)}
-
-						<Separator />
-
-						<div className="space-y-3">
-							{listings.length > 0 && (
-								<>
-									<p className="text-xs text-muted-foreground">
-										Cancel listings only returns those ordinals to the wallet.
-										It does not sweep BSV, tokens, or other ordinals.
-									</p>
-									<Button
-										variant="outline"
-										onClick={() => void runDelistOnly()}
-										className="w-full"
-									>
-										Cancel listings only
-										{` (${listings.length})`}
-									</Button>
-								</>
-							)}
-							{legacy && (
-								<>
-									<div className="text-xs text-muted-foreground">
-										{legacy.sweepOnly
-											? "This will cancel selected listings, then sweep the selected asset types into your wallet."
-											: `This will: derive your identity key, re-encrypt your wallet backup, reinitialize the BRC-100 wallet${
-													totalAssets > 0
-														? ", cancel selected listings, and sweep selected asset types"
-														: ""
-												}.`}
-									</div>
-									<Button
-										onClick={() => void runMigration()}
-										className="w-full"
-									>
-										{legacy.sweepOnly
-											? "Sweep selected assets"
-											: "Derive Identity Key & Sweep"}
-										{totalAssets > 0 &&
-											` (${totalAssets} asset${totalAssets !== 1 ? "s" : ""})`}
-									</Button>
-								</>
-							)}
-						</div>
-					</>
-				)}
-
-				{/* Migrating */}
-				{phase === "migrate" && (
-					<MigrationProgress
-						progress={progress}
-						progressPercent={progressPercent}
-						sweepProgress={sweepProgress}
-					/>
-				)}
-
-				{/* Complete */}
-				{phase === "complete" && (
-					<CompletionState
-						sweepResult={sweepResult}
-						remaining={assets.scanned && !assets.loading ? sweepableLegacy : 0}
-						onBackToWallet={() => router.push("/wallet")}
-						onRetryFailed={() => {
-							setSweepResult(null);
-							setSweepProgress(null);
-							setScanDetail(null);
-							setPhase("scan");
-							assets.rescan();
-						}}
-					/>
-				)}
-
-				{/* Error */}
-				{phase === "error" && error && (
-					<ErrorState
-						error={error}
-						onRetry={() => setPhase("preview")}
-						onBack={() => router.push("/wallet")}
-					/>
-				)}
-			</div>
-		</section>
+		<MigrationSweepFlow
+			variant="page"
+			screen={sweepScreenFor(phase === "error" && !error ? "preview" : phase)}
+			firstRun={legacy ? !legacy.sweepOnly : false}
+			canSweep={legacy !== null}
+			scanDetail={scanDetail}
+			scanError={assets.error}
+			onRetryScan={assets.rescan}
+			summary={summary}
+			ordinals={unlistedOrdinals}
+			selectedOrdinals={selectedOrdinals}
+			onToggleOrdinal={handleToggleOrdinal}
+			onSelectAllOrdinals={handleSelectAll}
+			onDeselectAllOrdinals={handleDeselectAll}
+			selectedTypes={selectedTypes}
+			onToggleType={handleToggleType}
+			plannedTotal={totalAssets}
+			onSweep={() => void runMigration()}
+			onCancelListingsOnly={() => void runDelistOnly()}
+			progressMessage={progress}
+			progressPercent={progressPercent}
+			sweepProgress={sweepProgress}
+			sweepResult={sweepResult}
+			remaining={assets.scanned && !assets.loading ? sweepableLegacy : 0}
+			doneLabel={(remaining) => rescanLabelFor(sweepResult, remaining)}
+			onDone={retryScan}
+			doneSecondary={{
+				label: "Back to wallet",
+				onClick: () => router.push("/wallet"),
+			}}
+			error={error}
+			onTryAgain={() => setPhase("preview")}
+			errorSecondary={{
+				label: "Back to wallet",
+				onClick: () => router.push("/wallet"),
+			}}
+			addresses={[
+				...(legacy?.payAddress
+					? [{ label: "Old pay address", address: legacy.payAddress }]
+					: []),
+				...(legacy?.ordAddress
+					? [{ label: "Old ordinals address", address: legacy.ordAddress }]
+					: []),
+				...(legacy?.identityAddress
+					? [{ label: "Old identity address", address: legacy.identityAddress }]
+					: []),
+			]}
+			destination="This wallet (your identity key)"
+			bsv20={bsv20Display}
+			onStepChange={setWizardStep}
+		/>
 	);
 }

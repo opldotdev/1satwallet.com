@@ -1,11 +1,11 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import type { EnrichedOrdinal } from "@/lib/hooks/use-legacy-assets";
 import { cn } from "@/lib/utils";
+import type { SweepOrdinal } from "@/lib/wallet/sweep-summary";
 
 export interface MigrationOrdinalCardProps {
-	ordinal: EnrichedOrdinal;
+	ordinal: SweepOrdinal;
 	isSelected: boolean;
 	onToggle: () => void;
 }
@@ -16,6 +16,48 @@ function isIframeType(contentType: string): boolean {
 
 function isImageType(contentType: string): boolean {
 	return contentType.startsWith("image/") && contentType !== "image/svg+xml";
+}
+
+/**
+ * An ordinal's content in a square tile: an image, a sandboxed frame for SVG
+ * and HTML, else a diamond. Lazy, so a long list loads as it scrolls.
+ */
+export function OrdinalThumb({
+	contentUrl,
+	contentType,
+	title,
+	className,
+}: {
+	contentUrl: string;
+	contentType?: string;
+	title: string;
+	className?: string;
+}) {
+	const type = contentType || "";
+	return (
+		<div className={cn("aspect-square overflow-hidden bg-muted", className)}>
+			{isIframeType(type) ? (
+				<iframe
+					src={contentUrl}
+					title={title}
+					className="pointer-events-none h-full w-full"
+					sandbox=""
+					loading="lazy"
+				/>
+			) : isImageType(type) ? (
+				<img
+					src={contentUrl}
+					alt={title}
+					className="h-full w-full object-cover"
+					loading="lazy"
+				/>
+			) : (
+				<div className="flex h-full w-full items-center justify-center text-muted-foreground">
+					&#9670;
+				</div>
+			)}
+		</div>
+	);
 }
 
 export function MigrationOrdinalCard({
@@ -29,10 +71,10 @@ export function MigrationOrdinalCard({
 		<button
 			type="button"
 			className={cn(
-				"relative aspect-square w-full cursor-pointer border transition-all",
+				"relative aspect-square w-full cursor-pointer overflow-hidden rounded-lg border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 				isSelected
-					? "ring-2 ring-primary bg-primary/5"
-					: "border-border/50 hover:border-primary/30 bg-muted/30",
+					? "border-primary ring-2 ring-primary"
+					: "border-border hover:border-primary/40",
 			)}
 			onClick={onToggle}
 			aria-pressed={isSelected}
@@ -52,40 +94,19 @@ export function MigrationOrdinalCard({
 			</div>
 
 			{/* Thumbnail */}
-			<div className="aspect-square overflow-hidden bg-black/20">
-				{isIframeType(contentType) ? (
-					<iframe
-						src={ordinal.contentUrl}
-						title={ordinal.name || ordinal.outpoint}
-						className="h-full w-full pointer-events-none"
-						sandbox=""
-						loading="lazy"
-					/>
-				) : isImageType(contentType) ? (
-					<img
-						src={ordinal.contentUrl}
-						alt={ordinal.name || ordinal.outpoint}
-						className="h-full w-full object-cover"
-						loading="lazy"
-					/>
-				) : (
-					<div className="flex h-full w-full items-center justify-center text-2xl text-muted-foreground">
-						&#9670;
-					</div>
-				)}
-			</div>
+			<OrdinalThumb
+				contentUrl={ordinal.contentUrl}
+				contentType={contentType}
+				title={ordinal.name || ordinal.outpoint}
+			/>
 
 			{/* Footer info */}
 			<div className="absolute bottom-0 left-0 right-0 space-y-0.5 bg-background/80 p-1.5">
 				<Badge variant="secondary" className="text-[10px]">
 					{contentType?.split("/")[1] || "unknown"}
 				</Badge>
-				{ordinal.name ? (
+				{ordinal.name && (
 					<p className="truncate text-[11px] font-medium">{ordinal.name}</p>
-				) : (
-					<p className="truncate text-[10px] font-mono text-muted-foreground">
-						{ordinal.outpoint}
-					</p>
 				)}
 			</div>
 		</button>

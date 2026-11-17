@@ -60,6 +60,9 @@ export interface LegacyAssets {
 	rescan: () => void;
 }
 
+// One shared empty list, so a hook with no scan result returns stable lists.
+const EMPTY: never[] = [];
+
 const getEvent = (events: string[], prefix: string): string | undefined => {
 	const e = events.find((ev) => ev.startsWith(prefix));
 	return e ? e.slice(prefix.length) : undefined;
@@ -190,6 +193,27 @@ export function useAddressAssets(
 		[result],
 	);
 
+	// Every derived list keeps its identity for one scan result, so callers
+	// can key effects on it without re-running on each render.
+	const lists = useMemo(
+		() => ({
+			funding: result?.funding ?? EMPTY,
+			ordinals: (result?.ordinals ?? EMPTY).map(enrichOrdinal),
+			opnsNames: (result?.opnsNames ?? EMPTY).map(enrichOrdinal),
+			bsv21Tokens: excludeUnsweepableTokens(result?.bsv21Tokens ?? EMPTY).map(
+				(t) => ({
+					...t,
+					icon: resolveIconUrl(t.tokenId, t.icon),
+				}),
+			),
+			bsv20Tokens: result?.bsv20Tokens ?? EMPTY,
+			listings: result?.listings ?? EMPTY,
+			locked: result?.locked ?? EMPTY,
+			run: result?.run ?? EMPTY,
+		}),
+		[result],
+	);
+
 	const scanned = addressKey !== null && scannedKey === addressKey;
 
 	return {
@@ -198,21 +222,16 @@ export function useAddressAssets(
 		loading: loading || (addressKey !== null && !scanned),
 		scanned,
 		error,
-		funding: result?.funding ?? [],
-		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
-		opnsNames: (result?.opnsNames ?? []).map(enrichOrdinal),
-		bsv21Tokens: excludeUnsweepableTokens(result?.bsv21Tokens ?? []).map(
-			(t) => ({
-				...t,
-				icon: resolveIconUrl(t.tokenId, t.icon),
-			}),
-		),
-		bsv20Tokens: result?.bsv20Tokens ?? [],
+		funding: lists.funding,
+		ordinals: lists.ordinals,
+		opnsNames: lists.opnsNames,
+		bsv21Tokens: lists.bsv21Tokens,
+		bsv20Tokens: lists.bsv20Tokens,
 		bsv20Balances: bsv20.balances,
 		bsv20Unsweepable: bsv20.unsweepable,
-		listings: result?.listings ?? [],
-		locked: result?.locked ?? [],
-		run: result?.run ?? [],
+		listings: lists.listings,
+		locked: lists.locked,
+		run: lists.run,
 		totalBsv: result?.totalFundingSats ?? 0,
 		addressStatus,
 		rescan,

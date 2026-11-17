@@ -1,580 +1,543 @@
 "use client";
 
-import type { IndexedOutput } from "@1sat/types";
-import { CheckCircle2, Circle, Loader2, XCircle } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { ArrowLeft, Loader2, RefreshCw } from "lucide-react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { MigrationOrdinalCard } from "@/components/wallet/migration-ordinal-card";
-import type {
-	Bsv20Balance,
-	EnrichedOrdinal,
-	TokenBalance,
-} from "@/lib/hooks/use-legacy-assets";
+import { Notice } from "@/components/ui/notice";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { Bsv20StaysData } from "@/components/wallet/sweep/sweep-bsv20-stays";
 import {
-	cancelledListingCount,
-	type SweepResult,
-	type SweepStepState,
-} from "@/lib/sweep-migration";
-import type {
-	AssetType,
-	ListedAsset,
-	UnsweepableBsv20,
-} from "@/lib/wallet/migration-listings";
+	type SweepAddress,
+	SweepDetails,
+} from "@/components/wallet/sweep/sweep-details";
+import { SweepOrdinalSheet } from "@/components/wallet/sweep/sweep-ordinal-sheet";
+import { SweepOutcome } from "@/components/wallet/sweep/sweep-outcome";
+import { SweepRouteDiagram } from "@/components/wallet/sweep/sweep-route-diagram";
+import { SweepFooterRow } from "@/components/wallet/sweep/sweep-shell";
+import { SweepStepBsv } from "@/components/wallet/sweep/sweep-step-bsv";
+import { SweepStepCollectibles } from "@/components/wallet/sweep/sweep-step-collectibles";
+import { SweepStepLine } from "@/components/wallet/sweep/sweep-step-line";
+import { SweepStepReview } from "@/components/wallet/sweep/sweep-step-review";
+import { SweepStepStays } from "@/components/wallet/sweep/sweep-step-stays";
+import { SweepStepTokens } from "@/components/wallet/sweep/sweep-step-tokens";
+import { SweepWizard } from "@/components/wallet/sweep/sweep-wizard";
+import type { SweepProgress, SweepResult } from "@/lib/sweep-migration";
+import type { AssetType } from "@/lib/wallet/migration-listings";
+import {
+	bsv20StaysLine,
+	buildWizardSteps,
+	currentStepLine,
+	reviewLines,
+	type SweepOrdinal,
+	type SweepScreen,
+	type SweepSummary,
+	shortError,
+	staysCount,
+	staysRows,
+	summarizeOutcome,
+	type WizardStepId,
+} from "@/lib/wallet/sweep-summary";
 
-const ORDINALS_PER_PAGE = 20;
+const SCAN_ROWS = ["scan-1", "scan-2", "scan-3"] as const;
 
-export function formatSats(sats: number): string {
-	return sats.toLocaleString();
+export interface FooterAction {
+	label: string;
+	onClick: () => void;
 }
 
-export function formatTokenAmount(
-	rawAmount: string | bigint,
-	decimals: number,
-): string {
-	const raw = rawAmount.toString();
-	if (decimals === 0) return raw;
-	const padded = raw.padStart(decimals + 1, "0");
-	const intPart = padded.slice(0, -decimals) || "0";
-	const decPart = padded.slice(-decimals).replace(/0+$/, "");
-	return decPart ? `${intPart}.${decPart}` : intPart;
+export interface MigrationSweepFlowProps {
+	variant: "page" | "dialog";
+	screen: SweepScreen;
+	/** First run: the sweep also upgrades the wallet to its identity key. */
+	firstRun: boolean;
+	/** Legacy keys are present; without them only listings can be cancelled. */
+	canSweep: boolean;
+
+	scanDetail: string | null;
+	scanError: string | null;
+	onRetryScan: () => void;
+
+	summary: SweepSummary;
+	/** Unlisted ordinals, for the chooser. */
+	ordinals: SweepOrdinal[];
+	selectedOrdinals: ReadonlySet<string>;
+	onToggleOrdinal: (outpoint: string) => void;
+	onSelectAllOrdinals: () => void;
+	onDeselectAllOrdinals: () => void;
+	selectedTypes: ReadonlySet<AssetType>;
+	onToggleType: (type: AssetType) => void;
+	/** Everything the plan sends (plannedCount). */
+	plannedTotal: number;
+	onSweep: () => void;
+	onCancelListingsOnly: () => void;
+	/** First-run wizard only: put the upgrade off. */
+	onLater?: () => void;
+
+	progressMessage: string;
+	progressPercent: number;
+	sweepProgress: SweepProgress | null;
+
+	sweepResult: SweepResult | null;
+	/** What a finished rescan still finds at the old addresses. */
+	remaining: number;
+	doneLabel: (remaining: number) => string;
+	onDone: () => void;
+	doneSecondary?: FooterAction;
+
+	error: string | null;
+	onTryAgain: () => void;
+	errorSecondary?: FooterAction;
+
+	addresses: SweepAddress[];
+	destination: string;
+	bsv20: Bsv20StaysData;
+	/** The choice step on screen, or null on scan, progress and done. */
+	onStepChange?: (step: WizardStepId | null) => void;
 }
 
-const TYPE_ROWS: { id: AssetType; label: string }[] = [
-	{ id: "listings", label: "Open listings" },
-	{ id: "ordinals", label: "Ordinals" },
-	{ id: "bsv21", label: "BSV21" },
-	{ id: "bsv20", label: "BSV20" },
-	{ id: "bsv", label: "BSV" },
-];
+const plural = (n: number, one: string, many = `${one}s`) =>
+	`${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
-export function TypeChecklist({
-	types,
-	counts,
-	onToggle,
-}: {
-	types: ReadonlySet<AssetType>;
-	counts: Record<AssetType, number>;
-	onToggle: (type: AssetType) => void;
-}) {
-	return (
-		<div className="border border-border/50 bg-muted/10 p-5 space-y-3">
-			<div className="text-sm font-semibold">Assets to move</div>
-			<p className="text-xs text-muted-foreground">
-				Choose which asset types to include. Open listings are cancelled first.
-			</p>
-			<div className="grid gap-2 sm:grid-cols-2">
-				{TYPE_ROWS.map((row) => {
-					const count = counts[row.id];
-					const checked = types.has(row.id);
-					return (
-						<label
-							key={row.id}
-							className="flex items-center gap-2 border border-border/40 bg-background/40 px-3 py-2 text-sm"
-						>
-							<input
-								type="checkbox"
-								className="size-4 accent-primary"
-								checked={checked}
-								disabled={count === 0}
-								onChange={() => onToggle(row.id)}
-							/>
-							<span className="flex-1">{row.label}</span>
-							<Badge variant="secondary" className="text-xs">
-								{count}
-							</Badge>
-						</label>
-					);
-				})}
-			</div>
-		</div>
+/**
+ * The legacy sweep as a short wizard, shared by the migrate page and the
+ * first-run dialog. Each host keeps its own state, scan gate and handlers
+ * and passes plain data in; this decides only what is on screen.
+ */
+export function MigrationSweepFlow(props: MigrationSweepFlowProps) {
+	const {
+		variant,
+		screen,
+		firstRun,
+		canSweep,
+		summary,
+		selectedTypes,
+		onToggleType,
+		onStepChange,
+	} = props;
+	const [detailsOpen, setDetailsOpen] = useState(false);
+	const [ordinalsOpen, setOrdinalsOpen] = useState(false);
+	const [index, setIndex] = useState(0);
+	const [direction, setDirection] = useState<"forward" | "back">("forward");
+
+	const steps: WizardStepId[] = useMemo(
+		() => (canSweep ? buildWizardSteps(summary) : ["stays"]),
+		[canSweep, summary],
 	);
-}
+	const stepIndex = Math.min(index, steps.length - 1);
+	const step = steps[stepIndex];
 
-export function ListingsSection({
-	listings,
-	reRoot,
-}: {
-	listings: ListedAsset[];
-	/** First run: the wallet moves to the identity key after the cancels. */
-	reRoot: boolean;
-}) {
-	if (listings.length === 0) return null;
+	// A new pass through the choices starts at the first step.
+	const lastScreen = useRef(screen);
+	useEffect(() => {
+		if (screen === "steps" && lastScreen.current !== "steps") {
+			setIndex(0);
+			setDirection("forward");
+		}
+		lastScreen.current = screen;
+	}, [screen]);
 
-	return (
-		<div className="bg-gradient-to-br from-chart-1/5 to-transparent border border-chart-1/20 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-chart-1" />
-				<span className="text-sm font-semibold text-chart-1">
-					Open listings
-				</span>
-				<Badge variant="secondary" className="text-xs ml-auto">
-					{listings.length} listing{listings.length !== 1 ? "s" : ""}
-				</Badge>
-			</div>
-			<p className="text-xs text-muted-foreground mb-3">
-				{reRoot
-					? "These listings are being retired. Items listed from this wallet come back to it when cancelled, then move with its BSV, ordinals and tokens to your identity key's deposit address, where your migrated wallet picks them up. Items listed from your old addresses are swept straight into the migrated wallet."
-					: "These listings are being retired. Items listed from this wallet come back to it when cancelled; items listed from your old addresses are swept into it."}
-			</p>
-			<ul className="space-y-1">
-				{listings.map((item) => (
-					<li
-						key={item.outpoint}
-						className="truncate font-mono text-[11px] text-muted-foreground"
-					>
-						{item.outpoint}
-					</li>
-				))}
-			</ul>
-		</div>
+	useEffect(() => {
+		onStepChange?.(screen === "steps" ? step : null);
+	}, [onStepChange, screen, step]);
+
+	const go = (to: number) => {
+		setDirection(to < stepIndex ? "back" : "forward");
+		setIndex(Math.max(0, Math.min(to, steps.length - 1)));
+	};
+	const setType = (type: AssetType, on: boolean) => {
+		if (selectedTypes.has(type) !== on) onToggleType(type);
+	};
+
+	const selectedOrdinalCount = props.ordinals.filter((o) =>
+		props.selectedOrdinals.has(o.outpoint),
+	).length;
+	const rows = staysRows(summary);
+	const bsv20Line = bsv20StaysLine(summary.bsv20Unconfirmed.length);
+	const otherStays = staysCount(summary) - summary.bsv20Unconfirmed.length;
+	const stayNotes = [
+		otherStays > 0
+			? `${plural(otherStays, "other item")} ${otherStays === 1 ? "stays where it is" : "stay where they are"}`
+			: null,
+		bsv20Line,
+	].filter((line): line is string => line !== null);
+	const cancelListingsOnlyLabel = `Cancel listings only (${summary.listings})`;
+
+	const details = (
+		<SweepDetails
+			open={detailsOpen}
+			onOpenChange={setDetailsOpen}
+			addresses={props.addresses}
+			destination={props.destination}
+			result={props.sweepResult}
+			stays={rows.filter((r) => r.kind !== "listings")}
+			bsv20Groups={props.bsv20.groups}
+			errors={[props.error, props.scanError].filter((e): e is string => !!e)}
+		/>
 	);
-}
-
-export function FundingSection({
-	funding,
-	totalBsv,
-}: {
-	funding: IndexedOutput[];
-	totalBsv: number;
-}) {
-	if (funding.length === 0) return null;
-
-	return (
-		<div className="bg-gradient-to-br from-chart-2/5 to-transparent border border-chart-2/20 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-chart-2" />
-				<span className="text-sm font-semibold text-chart-2">BSV Funding</span>
-			</div>
-
-			<div className="flex items-baseline justify-between">
-				<div>
-					<div className="text-2xl font-bold text-chart-2">
-						{formatSats(totalBsv)} sats
-					</div>
-					<div className="text-xs text-muted-foreground">
-						{(totalBsv / 100_000_000).toFixed(8)} BSV
-					</div>
-				</div>
-				<Badge variant="secondary" className="text-xs">
-					{funding.length} UTXO{funding.length !== 1 ? "s" : ""}
-				</Badge>
-			</div>
-		</div>
-	);
-}
-
-export function OrdinalsSection({
-	ordinals,
-	selectedOrdinals,
-	onToggle,
-	onSelectAll,
-	onDeselectAll,
-	ordinalPage,
-	onPageChange,
-}: {
-	ordinals: EnrichedOrdinal[];
-	selectedOrdinals: Set<string>;
-	onToggle: (outpoint: string) => void;
-	onSelectAll: () => void;
-	onDeselectAll: () => void;
-	ordinalPage: number;
-	onPageChange: (page: number) => void;
-}) {
-	if (ordinals.length === 0) return null;
-
-	const totalPages = Math.ceil(ordinals.length / ORDINALS_PER_PAGE);
-	const start = ordinalPage * ORDINALS_PER_PAGE;
-	const pageItems = ordinals.slice(start, start + ORDINALS_PER_PAGE);
-	const selectedCount = selectedOrdinals.size;
-
-	return (
-		<div className="bg-gradient-to-br from-primary/5 to-transparent border border-primary/20 p-5">
-			<div className="flex items-start justify-between mb-4">
-				<div>
-					<div className="flex items-center gap-2 mb-1">
-						<span className="h-2 w-2 bg-primary" />
-						<span className="text-sm font-semibold text-primary">Ordinals</span>
-					</div>
-					<div className="text-xs text-muted-foreground">
-						{ordinals.length} inscription
-						{ordinals.length !== 1 ? "s" : ""} found
-						{selectedCount > 0 && (
-							<span className="text-primary ml-1">
-								({selectedCount} selected)
-							</span>
-						)}
-					</div>
-				</div>
-
-				<div className="flex gap-2">
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-7 text-[11px]"
-						onClick={onSelectAll}
-					>
-						Select All
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						className="h-7 text-[11px]"
-						onClick={onDeselectAll}
-						disabled={selectedCount === 0}
-					>
-						Deselect
-					</Button>
-				</div>
-			</div>
-
-			<div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 mb-4">
-				{pageItems.map((ordinal) => (
-					<MigrationOrdinalCard
-						key={ordinal.outpoint}
-						ordinal={ordinal}
-						isSelected={selectedOrdinals.has(ordinal.outpoint)}
-						onToggle={() => onToggle(ordinal.outpoint)}
-					/>
-				))}
-			</div>
-
-			{totalPages > 1 && (
-				<div className="flex items-center justify-center gap-4">
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="text-xs"
-						onClick={() => onPageChange(ordinalPage - 1)}
-						disabled={ordinalPage === 0}
-					>
-						Prev
-					</Button>
-					<span className="text-xs text-muted-foreground">
-						Page {ordinalPage + 1} of {totalPages}
-					</span>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="text-xs"
-						onClick={() => onPageChange(ordinalPage + 1)}
-						disabled={ordinalPage >= totalPages - 1}
-					>
-						Next
-					</Button>
-				</div>
-			)}
-		</div>
-	);
-}
-
-export function OpnsSection({ opnsNames }: { opnsNames: EnrichedOrdinal[] }) {
-	if (opnsNames.length === 0) return null;
-
-	return (
-		<div className="bg-gradient-to-br from-chart-3/5 to-transparent border border-chart-3/20 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-chart-3" />
-				<span className="text-sm font-semibold text-chart-3">OpNS Names</span>
-				<Badge variant="secondary" className="text-xs ml-auto">
-					{opnsNames.length} domain{opnsNames.length !== 1 ? "s" : ""}
-				</Badge>
-			</div>
-			<div className="flex flex-wrap gap-2">
-				{opnsNames.map((item) => (
-					<Badge key={item.outpoint} variant="outline" className="text-xs">
-						{item.name || item.outpoint.slice(0, 12)}
-					</Badge>
-				))}
-			</div>
-			<p className="text-xs text-muted-foreground mt-3">
-				OpNS domains are swept along with your ordinals.
-			</p>
-		</div>
-	);
-}
-
-export function TokensSection({ tokens }: { tokens: TokenBalance[] }) {
-	if (tokens.length === 0) return null;
-
-	return (
-		<div className="bg-gradient-to-br from-chart-4/5 to-transparent border border-chart-4/20 p-5">
-			<div className="flex items-center gap-2 mb-4">
-				<span className="h-2 w-2 bg-chart-4" />
-				<span className="text-sm font-semibold text-chart-4">
-					BSV-21 Tokens
-				</span>
-			</div>
-
-			<div className="space-y-3">
-				{tokens.map((tb) => (
-					<div
-						key={tb.tokenId}
-						className="flex items-center justify-between border border-chart-4/10 bg-black/10 p-3"
-					>
-						<div className="flex items-center gap-3">
-							{tb.icon ? (
-								<img
-									src={tb.icon}
-									alt={tb.symbol || "Token"}
-									className="h-8 w-8 object-cover"
-									onError={(e) => {
-										(e.target as HTMLImageElement).style.display = "none";
-									}}
-								/>
-							) : (
-								<div className="flex h-8 w-8 items-center justify-center bg-chart-4/20 text-chart-4 text-sm">
-									T
-								</div>
-							)}
-							<div>
-								<div className="font-medium text-foreground">
-									{tb.symbol || tb.tokenId.slice(0, 8)}
-								</div>
-								<div className="text-xs text-muted-foreground">
-									{formatTokenAmount(tb.totalAmount, tb.decimals)}{" "}
-									{tb.symbol || ""}
-									{!tb.isActive && (
-										<span className="text-destructive ml-1">
-											(not validated — will be skipped)
-										</span>
-									)}
-								</div>
-							</div>
-						</div>
-						<Badge variant="secondary" className="text-xs">
-							{tb.outputs.length} output
-							{tb.outputs.length !== 1 ? "s" : ""}
-						</Badge>
-					</div>
-				))}
-			</div>
-		</div>
-	);
-}
-
-export function Bsv20Section({
-	tokens,
-	unsweepable,
-}: {
-	tokens: Bsv20Balance[];
-	unsweepable: UnsweepableBsv20[];
-}) {
-	if (tokens.length === 0 && unsweepable.length === 0) return null;
-
-	return (
-		<div className="bg-gradient-to-br from-chart-4/5 to-transparent border border-chart-4/20 p-5">
-			<div className="flex items-center gap-2 mb-4">
-				<span className="h-2 w-2 bg-chart-4" />
-				<span className="text-sm font-semibold text-chart-4">
-					BSV-20 Tokens
-				</span>
-			</div>
-
-			<div className="space-y-3">
-				{tokens.map((token) => (
-					<div
-						key={token.tick}
-						className="flex items-center justify-between border border-chart-4/10 bg-black/10 p-3"
-					>
-						<div>
-							<div className="font-medium text-foreground">{token.tick}</div>
-							<div className="text-xs text-muted-foreground">
-								{formatTokenAmount(token.totalAmount, token.decimals)}{" "}
-								{token.tick}
-							</div>
-						</div>
-						<Badge variant="secondary" className="text-xs">
-							{token.outputs.length} output
-							{token.outputs.length !== 1 ? "s" : ""}
-						</Badge>
-					</div>
-				))}
-			</div>
-			{unsweepable.length > 0 && (
-				<div className="mt-3 space-y-1 text-xs text-muted-foreground">
-					<p>
-						{unsweepable.length} BSV-20 output
-						{unsweepable.length !== 1 ? "s" : ""} will stay at your legacy
-						address:
-					</p>
-					<ul className="space-y-1">
-						{unsweepable.map(({ output, reason }) => (
-							<li key={output.outpoint} className="break-all">
-								<span className="font-mono text-[11px]">{output.outpoint}</span>
-								: {reason}
-							</li>
-						))}
-					</ul>
-				</div>
-			)}
-		</div>
-	);
-}
-
-/** Receipts for a finished migration: one row per transaction. */
-export function SweepResultRows({
-	result,
-	rowClassName,
-}: {
-	result: SweepResult;
-	rowClassName: string;
-}) {
-	const rows: { label: string; txid: string }[] = [
-		...result.bsvTxids.map((txid) => ({ label: "BSV Sweep", txid })),
-		...result.ordinalTxids.map((txid) => ({ label: "Ordinal Sweep", txid })),
-		...result.bsv20Txids.map((txid) => ({ label: "BSV-20 Sweep", txid })),
-		...result.bsv21Txids.map((txid) => ({ label: "Token Sweep", txid })),
-		...(result.cancelTxids ?? []).map((txid) => ({
-			label: "Listing cancelled",
-			txid,
-		})),
-		...(result.transferTxids ?? []).map((txid) => ({
-			label: "Moved to identity wallet",
-			txid,
-		})),
-	];
-	const listingsCancelled = cancelledListingCount(result);
-	return (
+	const openDetails = () => setDetailsOpen(true);
+	const wizard = (
+		frame: Omit<
+			Parameters<typeof SweepWizard>[0],
+			"variant" | "onInfo" | "children"
+		>,
+		body: ReactNode,
+	) => (
 		<>
-			{rows.map((row) => (
-				<div key={`${row.label}:${row.txid}`} className={rowClassName}>
-					<span className="text-muted-foreground">{row.label}</span>
-					<code className="text-xs font-mono">{row.txid.slice(0, 16)}...</code>
-				</div>
-			))}
-			{listingsCancelled > 0 && (
-				<div className={rowClassName}>
-					<span className="text-muted-foreground">Listings cancelled</span>
-					<span className="text-xs">{listingsCancelled}</span>
-				</div>
-			)}
+			<SweepWizard variant={variant} onInfo={openDetails} {...frame}>
+				{body}
+			</SweepWizard>
+			{details}
+			<SweepOrdinalSheet
+				open={ordinalsOpen}
+				onOpenChange={setOrdinalsOpen}
+				ordinals={props.ordinals}
+				selected={props.selectedOrdinals}
+				onToggle={props.onToggleOrdinal}
+				onSelectAll={props.onSelectAllOrdinals}
+				onDeselectAll={props.onDeselectAllOrdinals}
+			/>
 		</>
 	);
-}
 
-export function sweepResultIsEmpty(result: SweepResult): boolean {
-	return (
-		result.bsvTxids.length === 0 &&
-		result.ordinalTxids.length === 0 &&
-		result.bsv20Txids.length === 0 &&
-		result.bsv21Txids.length === 0 &&
-		(result.transferTxids?.length ?? 0) === 0 &&
-		cancelledListingCount(result) === 0 &&
-		result.errors.length === 0
-	);
-}
+	// First run only: put the sweep off until the next unlock.
+	const laterButton = props.onLater ? (
+		<Button
+			variant="ghost"
+			size="sm"
+			className="text-muted-foreground"
+			onClick={props.onLater}
+		>
+			Migrate later
+		</Button>
+	) : null;
 
-export function LockedSection({ locked }: { locked: IndexedOutput[] }) {
-	if (locked.length === 0) return null;
-
-	return (
-		<div className="bg-gradient-to-br from-muted/20 to-transparent border border-muted/30 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-muted-foreground" />
-				<span className="text-sm font-semibold text-muted-foreground">
-					Time-Locked Outputs
-				</span>
-				<Badge variant="secondary" className="text-xs ml-auto">
-					{locked.length} output{locked.length !== 1 ? "s" : ""}
-				</Badge>
-			</div>
-			<p className="text-xs text-muted-foreground">
-				These coins are time-locked on chain and cannot be swept until they
-				unlock. Sweep them later once the lock height passes.
-			</p>
-		</div>
-	);
-}
-
-function StepIcon({ status }: { status: SweepStepState["status"] }) {
-	switch (status) {
-		case "done":
-			return <CheckCircle2 className="h-4 w-4 shrink-0 text-chart-2" />;
-		case "error":
-			return <XCircle className="h-4 w-4 shrink-0 text-destructive" />;
-		case "active":
-			return <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />;
-		default:
-			return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/40" />;
+	// -- Scan ----------------------------------------------------------------
+	if (screen === "scan") {
+		if (props.scanError) {
+			return wizard(
+				{
+					stepKey: "scan-error",
+					title: "Couldn't check your old addresses",
+					onEnter: props.onRetryScan,
+					footer: (
+						<>
+							<Button className="w-full" onClick={props.onRetryScan}>
+								<RefreshCw data-icon="inline-start" />
+								Retry scan
+							</Button>
+							{laterButton}
+						</>
+					),
+				},
+				<Notice tone="danger">{shortError(props.scanError)}</Notice>,
+			);
+		}
+		return wizard(
+			{
+				stepKey: "scan",
+				title: "Checking your old addresses",
+				description: (
+					<span className="motion-safe:animate-pulse">
+						{props.scanDetail ??
+							"Looking for BSV, ordinals and tokens at your old 1Sat addresses."}
+					</span>
+				),
+				footer: (
+					<Button className="w-full" disabled>
+						<Loader2
+							className="motion-safe:animate-spin"
+							data-icon="inline-start"
+						/>
+						Scanning…
+					</Button>
+				),
+			},
+			<div className="flex flex-col gap-2" aria-hidden="true">
+				{SCAN_ROWS.map((key) => (
+					<Skeleton key={key} className="h-14 w-full rounded-xl" />
+				))}
+			</div>,
+		);
 	}
-}
 
-/** Live per-stage sweep progress: one row per asset category / token. */
-export function SweepStepsList({ steps }: { steps: SweepStepState[] }) {
-	if (steps.length === 0) return null;
+	// -- Progress ------------------------------------------------------------
+	if (screen === "progress") {
+		return wizard(
+			{
+				stepKey: "progress",
+				title: "Moving your assets",
+				description: "Keep this page open.",
+				footer: (
+					<Button className="w-full" disabled>
+						<Loader2
+							className="motion-safe:animate-spin"
+							data-icon="inline-start"
+						/>
+						Sweeping…
+					</Button>
+				),
+			},
+			<>
+				<SweepRouteDiagram state="moving" />
+				<SweepStepLine
+					line={currentStepLine(props.sweepProgress, props.progressMessage)}
+					percent={props.progressPercent}
+				/>
+			</>,
+		);
+	}
 
-	return (
-		<div className="space-y-2 text-left">
-			{steps.map((step) => (
-				<div
-					key={step.id}
-					className="flex items-start gap-2.5 border border-border/40 bg-muted/10 px-3 py-2"
-				>
-					<div className="mt-0.5">
-						<StepIcon status={step.status} />
-					</div>
-					<div className="min-w-0 flex-1">
-						<div className="flex items-baseline justify-between gap-2">
-							<span
-								className={
-									step.status === "pending"
-										? "text-sm text-muted-foreground"
-										: "text-sm font-medium"
-								}
+	// -- Done and error ------------------------------------------------------
+	if (screen === "done" || screen === "error") {
+		const outcome = summarizeOutcome(
+			props.sweepResult,
+			props.remaining,
+			props.sweepProgress?.steps,
+		);
+		const stayLines = [
+			...rows
+				.filter((r) => r.kind !== "listings" && r.kind !== "bsv20")
+				.map((r) => r.label),
+			...(bsv20Line ? [bsv20Line] : []),
+		];
+		if (screen === "error") {
+			const secondary = props.errorSecondary ?? {
+				label: "Details",
+				onClick: openDetails,
+			};
+			return wizard(
+				{
+					stepKey: "error",
+					title: "The sweep didn't finish",
+					description:
+						"Anything already moved is safe in this wallet. You can try again.",
+					onEnter: props.onTryAgain,
+					footer: (
+						<SweepFooterRow>
+							<Button
+								variant="outline"
+								className="flex-1"
+								onClick={secondary.onClick}
 							>
-								{step.label}
-							</span>
-							{step.txids.length > 0 && (
-								<span className="text-[10px] text-muted-foreground shrink-0">
-									{step.txids.length} tx{step.txids.length !== 1 ? "s" : ""}
-								</span>
-							)}
-						</div>
-						{step.detail && (
-							<p className="truncate text-xs text-muted-foreground animate-pulse">
-								{step.detail}
-							</p>
+								{secondary.label}
+							</Button>
+							<Button className="flex-1" onClick={props.onTryAgain}>
+								Try again
+							</Button>
+						</SweepFooterRow>
+					),
+				},
+				<>
+					<Notice tone="danger">
+						{shortError(props.error ?? "")}{" "}
+						<button
+							type="button"
+							className="underline underline-offset-4"
+							onClick={openDetails}
+						>
+							Details
+						</button>
+					</Notice>
+					{props.sweepResult && outcome.rows.length > 0 && (
+						<SweepOutcome outcome={{ ...outcome, notes: [], remaining: 0 }} />
+					)}
+				</>,
+			);
+		}
+		const description =
+			outcome.kind === "all-moved"
+				? "Everything is in this wallet now."
+				: outcome.kind === "nothing"
+					? stayLines.length > 0
+						? "Nothing can be moved right now. These stay where they are, and they're still yours."
+						: "A fresh scan found nothing at your old addresses."
+					: undefined;
+		return wizard(
+			{
+				stepKey: "done",
+				title: outcome.headline,
+				description,
+				onEnter: props.onDone,
+				footer: (
+					<SweepFooterRow stack>
+						{props.doneSecondary && (
+							<Button variant="outline" onClick={props.doneSecondary.onClick}>
+								{props.doneSecondary.label}
+							</Button>
 						)}
-						{step.error && (
-							<p className="text-xs text-destructive/90">{step.error}</p>
-						)}
-						{step.txids.map((txid) => (
-							<code
-								key={txid}
-								className="block truncate font-mono text-[10px] text-muted-foreground"
-							>
-								{txid}
-							</code>
-						))}
-					</div>
-				</div>
-			))}
-		</div>
-	);
-}
+						<Button onClick={props.onDone}>
+							{props.doneLabel(props.remaining)}
+						</Button>
+					</SweepFooterRow>
+				),
+			},
+			<SweepOutcome outcome={outcome} stayLines={stayLines} />,
+		);
+	}
 
-export function RunSection({ run }: { run: IndexedOutput[] }) {
-	if (run.length === 0) return null;
+	// -- Choice steps --------------------------------------------------------
+	const isLast = stepIndex === steps.length - 1;
+	const next = () => go(stepIndex + 1);
+	const back = () => go(stepIndex - 1);
+	const sweepDisabled = !firstRun && props.plannedTotal === 0;
+	const sweepLabel = firstRun
+		? props.plannedTotal > 0
+			? "Upgrade wallet & sweep"
+			: "Upgrade wallet"
+		: `Sweep ${plural(props.plannedTotal, "item")}`;
 
-	return (
-		<div className="bg-gradient-to-br from-destructive/5 to-transparent border border-destructive/20 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-destructive" />
-				<span className="text-sm font-semibold text-destructive">
-					RUN Protocol Outputs
-				</span>
-				<Badge variant="secondary" className="text-xs ml-auto">
-					{run.length} output{run.length !== 1 ? "s" : ""}
-				</Badge>
-			</div>
-			<p className="text-xs text-muted-foreground">
-				These outputs belong to RUN protocol transactions and are quarantined
-				from the BSV sweep so token state is not destroyed as fees.
-			</p>
-		</div>
+	let primary: ReactNode;
+	let onEnter: (() => void) | undefined;
+	if (!canSweep) {
+		primary = (
+			<Button className="flex-1" onClick={props.onCancelListingsOnly}>
+				{cancelListingsOnlyLabel}
+			</Button>
+		);
+		onEnter = props.onCancelListingsOnly;
+	} else if (isLast) {
+		primary = (
+			<Button
+				className="flex-1"
+				onClick={props.onSweep}
+				disabled={sweepDisabled}
+			>
+				{sweepLabel}
+			</Button>
+		);
+		onEnter = sweepDisabled ? undefined : props.onSweep;
+	} else {
+		primary = (
+			<Button className="flex-1" onClick={next}>
+				Next
+			</Button>
+		);
+		onEnter = next;
+	}
+	const footer = (
+		<>
+			<SweepFooterRow>
+				{stepIndex > 0 && (
+					<Button variant="outline" onClick={back}>
+						<ArrowLeft data-icon="inline-start" />
+						Back
+					</Button>
+				)}
+				{primary}
+			</SweepFooterRow>
+			{(stepIndex === 0 || isLast) && laterButton}
+		</>
 	);
+
+	const indicator =
+		steps.length > 1 ? { index: stepIndex, total: steps.length } : undefined;
+	const frame = { stepKey: step, direction, indicator, onEnter, footer };
+
+	switch (step) {
+		case "bsv":
+			return wizard(
+				{
+					...frame,
+					title: "Move your BSV",
+					description: summary.bsv
+						? `${summary.bsv.bsv} BSV moves from your old 1Sat addresses into this wallet.`
+						: undefined,
+				},
+				summary.bsv && (
+					<SweepStepBsv
+						bsv={summary.bsv}
+						included={selectedTypes.has("bsv")}
+						onIncludedChange={(on) => setType("bsv", on)}
+					/>
+				),
+			);
+		case "collectibles": {
+			const { count } = summary.ordinals;
+			const names =
+				summary.names.count > 0 ? plural(summary.names.count, "name") : null;
+			const description =
+				count > 0 && selectedOrdinalCount < count
+					? `${selectedOrdinalCount} of ${plural(count, "ordinal")} selected${names ? `, plus ${names}` : ""}.`
+					: `${[count > 0 ? plural(count, "ordinal") : null, names]
+							.filter(Boolean)
+							.join(" and ")}, all selected.`;
+			return wizard(
+				{
+					...frame,
+					title: "Move your ordinals",
+					description,
+				},
+				<SweepStepCollectibles
+					ordinals={summary.ordinals}
+					names={summary.names}
+					selectedCount={selectedOrdinalCount}
+					included={selectedTypes.has("ordinals")}
+					onIncludedChange={(on) => setType("ordinals", on)}
+					onReview={() => setOrdinalsOpen(true)}
+				/>,
+			);
+		}
+		case "tokens": {
+			const n = summary.tokens.length;
+			return wizard(
+				{
+					...frame,
+					title: "Move your tokens",
+					description: `${plural(n, "token")} ${n === 1 ? "moves with its" : "move with their"} full balance.`,
+				},
+				<SweepStepTokens
+					tokens={summary.tokens}
+					includeBsv21={selectedTypes.has("bsv21")}
+					includeBsv20={selectedTypes.has("bsv20")}
+					onToggle={(kind, on) => setType(kind, on)}
+				/>,
+			);
+		}
+		case "stays": {
+			const onlyListings = rows.every((r) => r.kind === "listings");
+			return wizard(
+				{
+					...frame,
+					title: onlyListings ? "Open listings" : "Some items stay put",
+					description: onlyListings
+						? "These listings are being retired. Cancelling returns each ordinal to your wallet."
+						: "Still yours, at your old address. This wallet keeps the keys.",
+				},
+				<SweepStepStays
+					rows={rows}
+					bsv20={props.bsv20}
+					listingsIncluded={selectedTypes.has("listings")}
+					onListingsIncludedChange={
+						canSweep ? (on) => setType("listings", on) : undefined
+					}
+					onCancelListingsOnly={
+						canSweep ? props.onCancelListingsOnly : undefined
+					}
+					cancelListingsOnlyLabel={cancelListingsOnlyLabel}
+				/>,
+			);
+		}
+		default:
+			return wizard(
+				{
+					...frame,
+					title: "Ready to sweep",
+					description:
+						props.plannedTotal > 0
+							? "This moves everything below into this wallet."
+							: firstRun
+								? "Nothing to move. Upgrading still sets up your wallet's identity key."
+								: "Nothing is selected. Go back to include something.",
+				},
+				<SweepStepReview
+					lines={reviewLines(summary, selectedTypes, selectedOrdinalCount)}
+					itemCount={props.plannedTotal}
+					notes={stayNotes}
+					onJump={(target) => {
+						const to = steps.indexOf(target);
+						if (to >= 0) go(to);
+					}}
+				/>,
+			);
+	}
 }
