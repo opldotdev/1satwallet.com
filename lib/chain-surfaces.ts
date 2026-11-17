@@ -26,9 +26,14 @@ export function isRouteAvailableOn(chain: Chain, href: string): boolean {
 	return !MAINNET_ONLY_ROUTES.some(under);
 }
 
+/**
+ * The wallet's sections, in tab order. Tokens holds every fungible token
+ * standard the chain has: BSV-21 everywhere, 1Color where it has an overlay.
+ */
 export const WALLET_TABS = [
 	{ value: "overview", label: "Wallet", href: "/wallet" },
 	{ value: "ordinals", label: "Ordinals", href: "/wallet/ordinals" },
+	{ value: "tokens", label: "Tokens", href: "/wallet/tokens" },
 	{ value: "opns", label: "OpNS", href: "/wallet/opns" },
 	{ value: "identity", label: "Identity", href: "/wallet/identity" },
 	{
@@ -36,8 +41,6 @@ export const WALLET_TABS = [
 		label: "Certificates",
 		href: "/wallet/certificates",
 	},
-	{ value: "bsv21", label: "BSV21", href: "/wallet/bsv21" },
-	{ value: "1color", label: "1Color", href: "/wallet/1color" },
 	{ value: "history", label: "History", href: "/wallet/history" },
 ] as const;
 

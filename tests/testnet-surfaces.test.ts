@@ -26,24 +26,17 @@ describe("testnet surfaces", () => {
 			[
 				"overview",
 				"ordinals",
+				"tokens",
 				"opns",
 				"identity",
 				"certificates",
-				"bsv21",
 				"history",
 			],
 		);
+		// One Tokens tab holds both standards; testnet drops only OpNS.
 		assert.deepEqual(
 			walletTabsFor("test").map((tab) => tab.value),
-			[
-				"overview",
-				"ordinals",
-				"identity",
-				"certificates",
-				"bsv21",
-				"1color",
-				"history",
-			],
+			["overview", "ordinals", "tokens", "identity", "certificates", "history"],
 		);
 	});
 
@@ -55,6 +48,7 @@ describe("testnet surfaces", () => {
 		for (const href of [
 			"/",
 			"/wallet",
+			"/wallet/tokens",
 			"/wallet/bsv21",
 			"/wallet/history",
 			"/wallet/settings",
@@ -162,11 +156,19 @@ describe("testnet surfaces", () => {
 		assert.match(engine, /syncMessages\.execute\(ctx, \{ messageboxUrl \}\)/);
 	});
 
-	it("shows a testnet badge and faucet link in the wallet header", () => {
+	it("shows a testnet badge in the wallet header and the faucet under the balance", () => {
 		const header = read("components/wallet/wallet-header.tsx");
 		assert.match(header, /chain === "test"/);
 		assert.match(header, /<TestnetBadge \/>/);
-		assert.match(header, /href=\{faucet\}/);
+		assert.doesNotMatch(header, /faucet/);
+		const status = read("components/wallet/wallet-home-status.tsx");
+		assert.match(status, /if \(chain !== "test" \|\| !faucet\) return null;/);
+		assert.match(status, /href=\{faucet\}/);
+		const home = read("components/wallet/wallet-home.tsx");
+		const balance = home.indexOf('data-testid="wallet-balance"');
+		const faucet = home.indexOf("<TestnetFaucetLink />");
+		assert.ok(balance > 0 && faucet > balance);
+		assert.ok(faucet < home.indexOf("<WalletHomeActions />"));
 		assert.match(
 			read("components/wallet/testnet-badge.tsx"),
 			/Testnet account\. Coins have no real value\./,

@@ -121,7 +121,8 @@ describe("walletSectionFor", () => {
 				"Wallet settings",
 			],
 			["/wallet/migrate", "Wallet migration", "/wallet", "Wallet"],
-			["/wallet/bsv21/abc_0", "BSV21 token", "/wallet/bsv21", "BSV21"],
+			["/wallet/bsv21/abc_0", "BSV-21 token", "/wallet/tokens", "Tokens"],
+			["/wallet/1color/abc_0", "1Color token", "/wallet/tokens", "Tokens"],
 		];
 		for (const [path, title, parentHref, parentTitle] of cases) {
 			for (const chain of ["main", "test"] as const) {
@@ -143,17 +144,31 @@ describe("walletSectionFor", () => {
 		});
 	});
 
-	it("keeps the 1Color list and its token pages in the 1Color section for now", () => {
-		// The token page has its own heading and back link until D6 moves it
-		// onto the shared detail layout.
-		assert.equal(walletSubPageFor("/wallet/1color"), null);
-		assert.equal(walletSubPageFor("/wallet/1color/abc_0"), null);
-		assert.equal(walletSubPageFor("/wallet/bsv21"), null);
-		assert.deepEqual(walletSectionFor("/wallet/1color/abc_0", "test"), {
-			title: "1Color",
+	it("puts every token page under Tokens, whose old lists redirect there", () => {
+		assert.deepEqual(walletSectionFor("/wallet/tokens", "test"), {
+			title: "Tokens",
 			showTabs: true,
-			tab: "1color",
+			tab: "tokens",
 		});
+		// The old list routes are not sub-pages: they only redirect.
+		assert.equal(walletSubPageFor("/wallet/1color"), null);
+		assert.equal(walletSubPageFor("/wallet/bsv21"), null);
+		for (const list of ["bsv21", "1color"]) {
+			assert.match(
+				read(`app/(main)/wallet/${list}/page.tsx`),
+				/redirect\("\/wallet\/tokens"\)/,
+				list,
+			);
+		}
+		// The token pages draw no h1 or back link of their own.
+		for (const file of [
+			"components/wallet/one-color-detail.tsx",
+			"components/wallet/bsv21-detail.tsx",
+			"components/wallet/token-detail-layout.tsx",
+		]) {
+			const source = read(file);
+			assert.doesNotMatch(source, /<h1|ArrowLeft|Back to/, file);
+		}
 	});
 
 	it("titles each section's document with its tab label", () => {
@@ -245,7 +260,7 @@ describe("wallet chrome", () => {
 			["opns/page.tsx", "opns"],
 			["identity/page.tsx", "identity"],
 			["certificates/page.tsx", "certificates"],
-			["bsv21/page.tsx", "bsv21"],
+			["tokens/page.tsx", "tokens"],
 			["history/page.tsx", "history"],
 		];
 		for (const [file, value] of pages) {
