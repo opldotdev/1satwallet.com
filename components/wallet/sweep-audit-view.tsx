@@ -25,6 +25,7 @@ import {
 	sweepAuditFileName,
 	sweepAuditJson,
 	sweepAuditReportText,
+	sweepAuditRequestLine,
 	sweepAuditSummary,
 	sweepAuditTransactions,
 } from "@/lib/sweep-audit/record";
@@ -348,6 +349,25 @@ export function SweepAuditView({
 											.join(" · ")}
 									</span>
 								)}
+							</li>
+						))}
+					</ul>
+				</Section>
+			)}
+
+			{(record.requests ?? []).length > 0 && (
+				<Section
+					title={`Wallet server requests (${(record.requests ?? []).length})`}
+				>
+					<ul className="flex max-h-72 flex-col gap-1.5 overflow-y-auto rounded-md bg-muted/50 p-2">
+						{(record.requests ?? []).map((request, index) => (
+							<li
+								// Requests have no id; their order is the record.
+								// biome-ignore lint/suspicious/noArrayIndexKey: append-only list
+								key={index}
+								className={`wrap-anywhere font-mono text-[11px] ${request.outcome === "sent" ? "text-muted-foreground" : "text-destructive"}`}
+							>
+								{sweepAuditRequestLine(request)}
 							</li>
 						))}
 					</ul>

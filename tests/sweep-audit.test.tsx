@@ -180,6 +180,75 @@ describe("sweep audit record", () => {
 		);
 	});
 
+	it("keeps every wallet server request, a split batch included", () => {
+		const refused = {
+			stepId: "ordinals",
+			batch: 1,
+			inputs: 8,
+			sourceTxs: 8,
+			beefBytes: 1_781_610,
+			estimatedBytes: 2_400_000,
+			measuredBytes: 2_391_204,
+			encoding: "base64" as const,
+			status: 413,
+			outcome: "too-large" as const,
+			splitInto: [4, 4] as [number, number],
+			budgetBytes: 8_000_000,
+		};
+		const sent = {
+			...refused,
+			inputs: 4,
+			beefBytes: 1_636_299,
+			measuredBytes: 2_196_002,
+			status: 200,
+			outcome: "sent" as const,
+			splitInto: undefined,
+		};
+		let record = createSweepAuditRecord(init(), "run-1", at(0));
+		record = withSweepProgress(record, {
+			...progress(),
+			requests: [refused],
+		});
+		assert.equal(record.requests?.length, 1);
+		record = finishSweepAudit(
+			record,
+			{
+				result: {
+					bsvTxids: [],
+					ordinalTxids: [txid(101)],
+					bsv20Txids: [],
+					bsv21Txids: [],
+					cancelledListings: [],
+					errors: [],
+					requests: [refused, sent],
+				},
+			},
+			at(5),
+		);
+		assert.equal(record.requests?.length, 2);
+		const report = sweepAuditReportText(record);
+		assert.match(report, /## Wallet server requests \(2\)/);
+		assert.match(
+			report,
+			/ordinals batch 1; 8 inputs from 8 source txs; BEEF 1781610 bytes; 2391204 bytes sent \(base64\); budget 8000000; refused as too large \(413\) \[HTTP 413\]; split into 4 \+ 4/,
+		);
+		assert.match(report, /2196002 bytes sent \(base64\);.*sent \[HTTP 200\]/);
+		const html = renderToStaticMarkup(<SweepAuditView record={record} />);
+		assert.match(html, /split into 4 \+ 4/);
+	});
+
+	it("reads records saved before requests were kept", () => {
+		const { requests: _dropped, ...old } = createSweepAuditRecord(
+			init(),
+			"run-1",
+			at(0),
+		);
+		assert.doesNotMatch(
+			sweepAuditReportText(old as SweepAuditRecord),
+			/Wallet server requests/,
+		);
+	});
+
 	it("finishes with every txid, error and listing cancel verbatim", () => {
 		const record = finishSweepAudit(
 			createSweepAuditRecord(init(), "run-1", at(0)),

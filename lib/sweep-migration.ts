@@ -14,6 +14,12 @@ import { type IndexedOutput, normalizeOutpoint } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { Beef, PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
+	type MeteredStorageRequest,
+	meterStorageRequests,
+	type StorageRequestEncoding,
+	type StorageRequestMeter,
+} from "@/lib/sweep/storage-request-meter";
+import {
 	BSV20_UNCONFIRMED_REASON,
 	excludeUnsweepableTokens,
 	hasIndexedBsv20Amount,
@@ -22,15 +28,29 @@ import {
 } from "@/lib/wallet/migration-listings";
 
 /**
- * wallet.1sat.app's request body limit: 8 MiB. Measured 2026-11-17 against
- * the live server: a request of 8,323,134 bytes reached auth (401); 8 MiB
- * (8,388,608 bytes) and above got 413 ERR_BODY_TOO_LARGE. Matches the
- * 8 << 20 BEEF bound in opldotdev/swift-wallet-toolbox StorageLimits.swift.
+ * wallet.1sat.app's limit on any request body, before sign-in: 8 MiB.
+ * Measured 2026-11-17 against the live server with unsigned requests: 8,323,134
+ * bytes reached auth (401); 8 MiB (8,388,608 bytes) and above got 413
+ * ERR_BODY_TOO_LARGE. Signed createAction requests have a lower limit; see
+ * CREATE_ACTION_START_BUDGET_BYTES.
  */
 export const WALLET_SERVER_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
-/** The largest request measured to pass that limit (it reached auth). */
+/** The largest unsigned request measured to pass that limit (it reached auth). */
 export const WALLET_SERVER_PROVEN_REQUEST_BYTES = 8_323_134;
+
+/**
+ * The request size batches are packed under at the start of a run. A live
+ * migration on 2026-11-17 had a signed createAction refused with 413 at
+ * 1,781,610 BEEF bytes (8 inputs, about 2.38 MB of request as base64), and the
+ * 1,636,299-byte half (4 inputs, about 2.19 MB) went through: the server's
+ * limit for signed createAction requests sits far under the 8 MiB it takes
+ * before sign-in, and isn't published. This start is under the largest
+ * request seen to pass whichever way the client encoded it. Every request's
+ * measured body size and answer goes in the run's audit record, and a
+ * refusal lowers the budget for the rest of the run.
+ */
+export const CREATE_ACTION_START_BUDGET_BYTES = 2_100_000;
 
 /**
  * Room left in each request for what the packer doesn't measure: per input,
@@ -68,6 +88,43 @@ const BINARY_FIELD_WRAPPER_BYTES = JSON.stringify({
 }).length;
 export const encodedBinaryBytes = (bytes: number): number =>
 	BINARY_FIELD_WRAPPER_BYTES + 4 * Math.ceil(bytes / 3);
+
+/**
+ * The packing budget from what the server has shown it takes: the largest
+ * createAction body it accepted and the smallest it refused as too large,
+ * both measured. Before any refusal, the start budget (or a larger request
+ * already taken). After one, halfway between the two, so a limit far under
+ * the first refusal is found in a few requests rather than one refusal per
+ * batch. Once the two are within 5% of each other, the largest accepted.
+ */
+export function nextRequestBudget(
+	largestPassed: number,
+	smallestRefused: number,
+): number {
+	if (!Number.isFinite(smallestRefused)) {
+		return Math.max(CREATE_ACTION_START_BUDGET_BYTES, largestPassed);
+	}
+	const ceiling = smallestRefused - 1;
+	if (largestPassed >= ceiling) return ceiling;
+	if (smallestRefused - largestPassed <= smallestRefused * 0.05) {
+		return largestPassed;
+	}
+	return Math.floor((largestPassed + smallestRefused) / 2);
+}
+
+/**
+ * Bytes a binary field takes when the client doesn't send binary
+ * (legacyBinaryJsonReplacer: Array.from(bytes)), as JSON.stringify writes
+ * it: each byte's decimal digits, commas between, and the brackets.
+ */
+export const encodedArrayBytes = (bytes: ArrayLike<number>): number => {
+	let total = 2 + Math.max(0, bytes.length - 1);
+	for (let i = 0; i < bytes.length; i++) {
+		const b = bytes[i];
+		total += b < 10 ? 1 : b < 100 ? 2 : 3;
+	}
+	return total;
+};
 
 /**
  * Bytes one input descriptor takes in the request body, measured from the
@@ -117,6 +174,34 @@ export interface SweepLeftBehind {
 	detail?: string;
 }
 
+/**
+ * One createAction request the sweep sent for a batch: its size as packed and
+ * as measured on the way out, and what the wallet server said. Reporting
+ * only (the run's audit record).
+ */
+export interface SweepRequest {
+	stepId: string;
+	/** The batch number within its step; halves of a split share it */
+	batch: number;
+	inputs: number;
+	sourceTxs: number;
+	/** Sum of the batch's source BEEFs */
+	beefBytes: number;
+	/** The packer's estimate of the request body */
+	estimatedBytes: number;
+	/** The request body as sent, when the wallet's storage client was metered */
+	measuredBytes?: number;
+	encoding?: StorageRequestEncoding;
+	/** HTTP status of the createAction request, when metered */
+	status?: number | null;
+	/** sent: a txid came back; too-large: refused before signing; failed: any other error */
+	outcome: "sent" | "too-large" | "failed";
+	/** Inputs in each half, when a too-large batch was split and retried */
+	splitInto?: [number, number];
+	/** The run's request budget when this batch was packed */
+	budgetBytes: number;
+}
+
 export interface SweepProgress {
 	message: string;
 	/** 0-100, derived from completed work units — never fabricated */
@@ -126,6 +211,8 @@ export interface SweepProgress {
 	errors?: string[];
 	/** Outputs left behind so far (SweepResult.leftBehind as it stands) */
 	leftBehind?: SweepLeftBehind[];
+	/** Requests sent so far (SweepResult.requests as it stands) */
+	requests?: SweepRequest[];
 }
 
 export interface SweepResult {
@@ -142,6 +229,8 @@ export interface SweepResult {
 	errors: string[];
 	/** Outputs this run left at their address, each with its exact reason */
 	leftBehind?: SweepLeftBehind[];
+	/** Every createAction request the batched steps sent, in order */
+	requests?: SweepRequest[];
 }
 
 export function emptySweepResult(
@@ -155,6 +244,7 @@ export function emptySweepResult(
 		cancelledListings: [],
 		errors: [],
 		leftBehind: [],
+		requests: [],
 		...extra,
 	};
 }
@@ -293,6 +383,8 @@ interface SweepSource {
 	outputs: IndexedOutput[];
 	/** Serialized BEEF of the source tx, as the indexer served it */
 	beefBytes: number;
+	/** That BEEF as a JSON array of byte values (the non-binary encoding) */
+	arrayBytes: number;
 	/** The source tx alone */
 	txBytes: number;
 	txCount: number;
@@ -468,6 +560,19 @@ export async function executeMigrationSweep(
 export async function executeKeySweep(
 	params: KeySweepParams,
 ): Promise<SweepResult> {
+	// Measure each request the wallet sends, for sizing and the audit record.
+	const meter = meterStorageRequests(params.wallet);
+	try {
+		return await runKeySweep(params, meter);
+	} finally {
+		meter?.restore();
+	}
+}
+
+async function runKeySweep(
+	params: KeySweepParams,
+	meter: StorageRequestMeter | null,
+): Promise<SweepResult> {
 	const {
 		wallet,
 		services,
@@ -494,6 +599,38 @@ export async function executeKeySweep(
 	const result = emptySweepResult();
 	const leftBehind: SweepLeftBehind[] = [];
 	result.leftBehind = leftBehind;
+	const requests: SweepRequest[] = [];
+	result.requests = requests;
+	// What the server has shown it takes: the largest createAction body it
+	// accepted and the smallest it refused as too large, both as measured.
+	let largestPassed = 0;
+	let smallestRefused = Number.POSITIVE_INFINITY;
+	const budgetFromEvidence = () =>
+		nextRequestBudget(largestPassed, smallestRefused);
+	let requestBudget = budgetFromEvidence();
+	// Until the client says otherwise, size for the larger encoding.
+	const encoding = (): StorageRequestEncoding =>
+		meter?.encoding() ?? "number-array";
+	/** The request body a batch makes, as packed */
+	const estimateRequestBytes = (
+		sources: readonly SweepSource[],
+		extraBytes: number,
+	): number => {
+		const beef = sources.reduce((sum, s) => sum + s.beefBytes, 0);
+		const array = sources.reduce((sum, s) => sum + s.arrayBytes, 0);
+		return (
+			(encoding() === "base64" ? encodedBinaryBytes(beef) : array) +
+			extraBytes +
+			ENVELOPE_ALLOWANCE_BYTES
+		);
+	};
+	/** Request bytes per input besides its BEEF: descriptor and output */
+	const inputExtraBytes = (outputs: readonly IndexedOutput[]): number =>
+		outputs.reduce(
+			(sum, o) =>
+				sum + inputDescriptorBytes(o.outpoint) + OUTPUT_ALLOWANCE_BYTES,
+			0,
+		);
 
 	const keyMap = new Map<string, PrivateKey>();
 	for (const { label, wif } of keys) {
@@ -603,6 +740,7 @@ export async function executeKeySweep(
 			})),
 			errors: [...result.errors],
 			leftBehind: [...leftBehind],
+			requests: [...requests],
 		});
 	};
 
@@ -683,6 +821,7 @@ export async function executeKeySweep(
 				txid,
 				outputs: sourceOutputs,
 				beefBytes: binary.length,
+				arrayBytes: encodedArrayBytes(binary),
 				txBytes: tx ? tx.toBinary().length : binary.length,
 				txCount: beef.txs.length,
 				bumpCount: beef.bumps.length,
@@ -766,6 +905,7 @@ export async function executeKeySweep(
 			}
 
 			trace = { signActionCalls: 0 };
+			const meteredBefore = meter?.requests.length ?? 0;
 			let txResult: Awaited<ReturnType<typeof execute>>;
 			try {
 				txResult = await execute(prepared, keysForInputs);
@@ -773,6 +913,79 @@ export async function executeKeySweep(
 				txResult = { error: errorMessage(error) };
 			}
 			const attempt = trace;
+
+			// Too large for the wallet server. Retried only when createAction
+			// itself was refused and signAction was never called: nothing was
+			// signed or broadcast, so the same inputs can go again in halves.
+			const refusedBeforeSigning =
+				!txResult.txid &&
+				attempt.createActionError !== undefined &&
+				isRequestTooLarge(attempt.createActionError) &&
+				attempt.signActionCalls === 0;
+			const sentSources = [
+				...new Set(prepared.map((p) => txidOf(p.output.outpoint))),
+			]
+				.map((txid) => sources.get(txid))
+				.filter((source): source is SweepSource => source !== undefined);
+			// The meter sees every createAction on this wallet, so another
+			// caller's request can land in this window. A refusal is the 413
+			// one; otherwise the batch's is the largest.
+			const meteredCreates = (meter?.requests ?? [])
+				.slice(meteredBefore)
+				.filter((r) => r.method === "createAction");
+			const largestOf = (list: readonly MeteredStorageRequest[]) =>
+				list.reduce<MeteredStorageRequest | undefined>(
+					(max, r) => (!max || r.bytes > max.bytes ? r : max),
+					undefined,
+				);
+			const metered = refusedBeforeSigning
+				? (largestOf(meteredCreates.filter((r) => r.status === 413)) ??
+					largestOf(meteredCreates))
+				: (largestOf(
+						meteredCreates.filter(
+							(r) => r.status !== null && r.status >= 200 && r.status < 300,
+						),
+					) ?? largestOf(meteredCreates));
+			const request: SweepRequest = {
+				stepId,
+				batch: batchCount,
+				inputs: prepared.length,
+				sourceTxs: sentSources.length,
+				beefBytes: sentSources.reduce((sum, s) => sum + s.beefBytes, 0),
+				estimatedBytes: estimateRequestBytes(
+					sentSources,
+					inputExtraBytes(prepared.map((p) => p.output)),
+				),
+				...(metered
+					? {
+							measuredBytes: metered.bytes,
+							encoding: metered.encoding,
+							status: metered.status,
+						}
+					: {}),
+				outcome: txResult.txid
+					? "sent"
+					: refusedBeforeSigning
+						? "too-large"
+						: "failed",
+				budgetBytes: requestBudget,
+			};
+			requests.push(request);
+			if (refusedBeforeSigning) {
+				// The server's limit is under this request: pack the rest of
+				// the run below it.
+				const refusedAt = metered?.bytes ?? request.estimatedBytes;
+				smallestRefused = Math.min(smallestRefused, refusedAt);
+				requestBudget = budgetFromEvidence();
+				console.error(
+					`${logPrefix} ${errorLabel}${batchLabel}: createAction refused as too large at ${refusedAt} request bytes (${metered ? `measured, ${metered.encoding}` : "estimated"}); largest accepted so far ${largestPassed} bytes; request budget now ${requestBudget} bytes`,
+				);
+			} else if (txResult.txid && metered && metered.status !== null) {
+				if (metered.status >= 200 && metered.status < 300) {
+					largestPassed = Math.max(largestPassed, metered.bytes);
+					requestBudget = budgetFromEvidence();
+				}
+			}
 
 			if (txResult.txid) {
 				collect(txResult.txid);
@@ -807,13 +1020,6 @@ export async function executeKeySweep(
 				return left.length === 0;
 			}
 
-			// Too large for the wallet server. Retried only when createAction
-			// itself was refused and signAction was never called: nothing was
-			// signed or broadcast, so the same inputs can go again in halves.
-			const refusedBeforeSigning =
-				attempt.createActionError !== undefined &&
-				isRequestTooLarge(attempt.createActionError) &&
-				attempt.signActionCalls === 0;
 			const txidsOf = (items: PreparedInput[]) => [
 				...new Set(items.map((p) => txidOf(p.output.outpoint))),
 			];
@@ -828,6 +1034,7 @@ export async function executeKeySweep(
 			if (refusedBeforeSigning && prepared.length > 1 && splitShrinks) {
 				const half = Math.ceil(prepared.length / 2);
 				const halves = [prepared.slice(0, half), prepared.slice(half)];
+				request.splitInto = [halves[0].length, halves[1].length];
 				console.error(
 					`${logPrefix} ${errorLabel}${batchLabel}: the wallet server refused the request as too large (${prepared.length} inputs, ${txidsOf(prepared).length} source txs, ${beefBytesOf(prepared)} BEEF bytes); splitting into ${halves[0].length} + ${halves[1].length} inputs (${beefBytesOf(halves[0])} + ${beefBytesOf(halves[1])} BEEF bytes)`,
 					attempt.createActionError,
@@ -895,19 +1102,16 @@ export async function executeKeySweep(
 			emit(`${errorLabel}: batch ${batchCount} complete`);
 		};
 
-		const budget =
-			WALLET_SERVER_PROVEN_REQUEST_BYTES - ENVELOPE_ALLOWANCE_BYTES;
 		const maxInputs = maxInputsFor(stepId);
-		// Listed outputs alone, one per transaction; the rest packed by size
-		// and by input count.
+		// Listed outputs alone, one per transaction; the rest packed by
+		// request size (under the run's budget) and by input count.
 		for (const group of isolateListedBatches(
 			outputs,
 			Number.POSITIVE_INFINITY,
 		)) {
 			const sourceGroups = groupBySourceTx(group);
 			let batch: SweepSource[] = [];
-			let batchBeefBytes = 0;
-			let batchInputBytes = 0;
+			let batchExtraBytes = 0;
 			let batchInputs = 0;
 			let fetchFailed = false;
 			for (let i = 0; i < sourceGroups.length; i += PREPARE_CONCURRENCY) {
@@ -928,31 +1132,26 @@ export async function executeKeySweep(
 					}
 					// The merged BEEF is at most the sum of its parts (shared
 					// proofs and ancestors are stored once), so this bound keeps
-					// the batch's encoded BEEF under the budget.
-					const inputBytes = source.outputs.reduce(
-						(sum, o) =>
-							sum + inputDescriptorBytes(o.outpoint) + OUTPUT_ALLOWANCE_BYTES,
-						0,
+					// the batch's request under the budget.
+					const extraBytes = inputExtraBytes(source.outputs);
+					const nextSize = estimateRequestBytes(
+						[...batch, source],
+						batchExtraBytes + extraBytes,
 					);
-					const nextBeefBytes = batchBeefBytes + source.beefBytes;
-					const nextSize =
-						encodedBinaryBytes(nextBeefBytes) + batchInputBytes + inputBytes;
 					const nextInputs = batchInputs + source.outputs.length;
 					if (
 						batch.length > 0 &&
-						(nextSize > budget || nextInputs > maxInputs)
+						(nextSize > requestBudget || nextInputs > maxInputs)
 					) {
 						await flush(batch);
 						batch = [];
-						batchBeefBytes = 0;
-						batchInputBytes = 0;
+						batchExtraBytes = 0;
 						batchInputs = 0;
 					}
 					// A source over the budget on its own goes alone; if the
 					// server refuses it, it is reported with its size.
 					batch.push(source);
-					batchBeefBytes += source.beefBytes;
-					batchInputBytes += inputBytes;
+					batchExtraBytes += extraBytes;
 					batchInputs += source.outputs.length;
 				}
 			}

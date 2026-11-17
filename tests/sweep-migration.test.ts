@@ -3,14 +3,18 @@ import { describe, it } from "node:test";
 import type { Bsv20Balance, TokenBalance } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
+import { meterStorageRequests } from "@/lib/sweep/storage-request-meter";
 import {
 	buildKeys,
+	CREATE_ACTION_START_BUDGET_BYTES,
 	cancelledListingCount,
+	encodedArrayBytes,
 	encodedBinaryBytes,
 	executeKeySweep,
 	executeMigrationSweep,
 	maxInputsFor,
 	migrationSweepKeys,
+	nextRequestBudget,
 	type SweepActions,
 	type SweepProgress,
 	WALLET_SERVER_MAX_REQUEST_BYTES,
@@ -603,6 +607,78 @@ function sizeLimitedWallet(
 	return { wallet: wallet as unknown as WalletInterface, log };
 }
 
+/**
+ * A toolbox-shaped wallet whose active remote store posts each createAction
+ * through authenticatedFetch, as StorageClient does: the body grows 1,000
+ * bytes per input, and the server answers 413 over `refuseOver` bytes.
+ */
+function meteredWallet({
+	binary,
+	refuseOver,
+}: {
+	binary: boolean;
+	refuseOver: number;
+}) {
+	const log = {
+		signed: [] as string[][],
+		bodies: [] as number[],
+	};
+	class FakeStorageClient {
+		requestUsesBinary() {
+			return binary;
+		}
+		async authenticatedFetch(_url: string, init: RequestInit) {
+			const bytes = new TextEncoder().encode(String(init.body)).length;
+			log.bodies.push(bytes);
+			return new Response("{}", { status: bytes > refuseOver ? 413 : 200 });
+		}
+		async createAction(args: { inputs: { outpoint: string }[] }) {
+			const body = JSON.stringify({
+				jsonrpc: "2.0",
+				method: "createAction",
+				params: [{}, { pad: "x".repeat(args.inputs.length * 1_000) }],
+				id: 1,
+			});
+			const response = await this.authenticatedFetch("https://wallet", {
+				method: "POST",
+				headers: binary ? { "X-BSV-Binary-Request-Encoding": "base64" } : {},
+				body,
+			});
+			if (!response.ok) throw new Error(TOO_LARGE);
+			return { signableTransaction: { reference: "ref", tx: [] } };
+		}
+	}
+	const client = new FakeStorageClient();
+	const wallet = {
+		storage: { getActive: () => client },
+		createAction: (args: { inputs: { outpoint: string }[] }) =>
+			client.createAction(args),
+		signAction: async () => ({ txid: `tx-${log.signed.length + 1}` }),
+	};
+	return { wallet: wallet as unknown as WalletInterface, client, log };
+}
+
+/** An ordinal sweep action that goes through the wallet like the real one. */
+const rpcOrdinals =
+	(log: { signed: string[][] }): SweepActions["sweepOrdinals"] =>
+	async (ctx, request) => {
+		const inputs = request.inputs.map((i) => ({
+			outpoint: i.outpoint,
+			inputDescription: `Ordinal ${i.outpoint}`,
+		}));
+		try {
+			await ctx.wallet.createAction({ description: "sweep", inputs });
+			const signed = await ctx.wallet.signAction({
+				reference: "ref",
+				spends: {},
+			});
+			log.signed.push(inputs.map((i) => i.outpoint));
+			return { txid: signed.txid };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	};
+
 /** An ordinal sweep action shaped like @1sat/actions': createAction, then signAction. */
 const twoPhaseOrdinals =
 	(log: { signed: string[][] }): SweepActions["sweepOrdinals"] =>
@@ -726,17 +802,189 @@ describe("legacy sweep: requests too large for the wallet server", () => {
 		assert.deepEqual(attempts, [2]);
 	});
 
-	it("packs batches by the size of their source BEEFs", async () => {
-		// 2.5 MB each: two fit one request (base64 ~6.7 MB), three don't.
-		const big = provenBeef(2_500_000);
+	it("packs batches by the request the client will send, in its encoding", async () => {
+		// 700 KB of byte 200 each: about 933 KB as base64, so two fit the
+		// 2.1 MB start budget; about 2.8 MB as a JSON byte array, so each
+		// goes alone.
+		const big = provenBeef(700_000, 200);
 		const services = beefServices(() => big);
-		const { actions, calls } = fakeActions();
 		const ordinals = [1, 2, 3, 4].map((n) => out(n));
-		await sweep({ services, ordinals }, actions);
+		const batches = async (binary: boolean | null) => {
+			const { actions, calls } = fakeActions();
+			const wallet =
+				binary === null
+					? ({} as WalletInterface)
+					: meteredWallet({ binary, refuseOver: Infinity }).wallet;
+			await sweep({ services, ordinals, wallet }, actions);
+			return calls.map((c) => c.inputs.length);
+		};
+		assert.deepEqual(await batches(true), [2, 2]);
+		assert.deepEqual(await batches(false), [1, 1, 1, 1]);
+		// No storage client to ask: sized for the larger encoding.
+		assert.deepEqual(await batches(null), [1, 1, 1, 1]);
+	});
+
+	it("measures each createAction request, records it, and packs the rest of the run under a refusal", async () => {
+		// The server refuses bodies over 5,000 bytes; each input adds 1,000.
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: 5_000,
+		});
+		const ordinals = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result, progress } = await sweep({ wallet, ordinals }, actions);
+
 		assert.deepEqual(
-			calls.map((c) => c.inputs.length),
-			[2, 2],
+			log.signed.map((batch) => batch.length),
+			[4, 4],
 		);
+		const requests = result.requests ?? [];
+		assert.equal(requests.length, 3);
+		const [refused, first, second] = requests;
+		assert.equal(refused.outcome, "too-large");
+		assert.equal(refused.inputs, 8);
+		assert.equal(refused.status, 413);
+		assert.equal(refused.encoding, "base64");
+		assert.ok((refused.measuredBytes ?? 0) > 8_000);
+		assert.deepEqual(refused.splitInto, [4, 4]);
+		assert.equal(refused.budgetBytes, CREATE_ACTION_START_BUDGET_BYTES);
+		for (const half of [first, second]) {
+			assert.equal(half.outcome, "sent");
+			assert.equal(half.status, 200);
+			assert.equal(half.batch, refused.batch);
+		}
+		// The measured body is what went on the wire.
+		assert.equal(refused.measuredBytes, log.bodies[0]);
+		// Progress carries the requests for the audit record as they happen.
+		assert.equal(progress.at(-1)?.requests?.length, 3);
+		// The client is left as it was.
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+	});
+
+	it("lowers the budget after a refusal, halfway to the largest request accepted", async () => {
+		const { wallet, log } = meteredWallet({ binary: true, refuseOver: 3_000 });
+		const ordinals = [1, 2, 3, 4].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		const [refused, firstHalf, secondHalf] = result.requests ?? [];
+		const refusedAt = refused.measuredBytes ?? 0;
+		const passedAt = firstHalf.measuredBytes ?? 0;
+		assert.equal(refused.outcome, "too-large");
+		assert.equal(firstHalf.outcome, "sent");
+		// Nothing accepted yet: half the refused size.
+		assert.equal(firstHalf.budgetBytes, Math.floor(refusedAt / 2));
+		// Then halfway between what passed and what was refused.
+		assert.equal(
+			secondHalf.budgetBytes,
+			Math.max(passedAt, Math.floor((passedAt + refusedAt) / 2)),
+		);
+	});
+
+	it("finds a limit far under the first refusal in a few requests", () => {
+		// The server takes 1.5 MB; every batch is packed right up to the
+		// budget, the worst case for refusals.
+		const limit = 1_500_000;
+		let passed = 0;
+		let refused = 2_400_000;
+		let refusals = 1;
+		for (let i = 0; i < 100; i++) {
+			const size = nextRequestBudget(passed, refused);
+			if (size > limit) {
+				refused = Math.min(refused, size);
+				refusals++;
+			} else passed = Math.max(passed, size);
+		}
+		assert.ok(refusals <= 6, `${refusals} refusals`);
+		const settled = nextRequestBudget(passed, refused);
+		assert.ok(settled <= limit && settled >= limit * 0.9, String(settled));
+		// Before any refusal: the start budget, or a larger body already taken.
+		assert.equal(
+			nextRequestBudget(0, Number.POSITIVE_INFINITY),
+			CREATE_ACTION_START_BUDGET_BYTES,
+		);
+		assert.equal(
+			nextRequestBudget(2_500_000, Number.POSITIVE_INFINITY),
+			2_500_000,
+		);
+		// Never at or over a refused size.
+		assert.equal(nextRequestBudget(3_000_000, 2_000_000), 1_999_999);
+	});
+
+	it("takes the refused request's size, not another createAction in the same window", async () => {
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: 5_000,
+		});
+		// Another caller's small createAction lands while each batch is out.
+		const original = client.createAction.bind(client);
+		client.createAction = async (args) => {
+			try {
+				return await original(args);
+			} finally {
+				await client.authenticatedFetch("https://wallet", {
+					method: "POST",
+					body: JSON.stringify({ method: "createAction", params: [] }),
+				});
+			}
+		};
+		const ordinals = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		const [refused, firstHalf] = result.requests ?? [];
+		assert.equal(refused.status, 413);
+		assert.ok((refused.measuredBytes ?? 0) > 8_000);
+		assert.equal(firstHalf.status, 200);
+		assert.ok((firstHalf.measuredBytes ?? 0) > 4_000);
+	});
+
+	it("meters overlapping runs on one wallet and puts the client back once both end", async () => {
+		const { wallet, client } = meteredWallet({
+			binary: true,
+			refuseOver: Infinity,
+		});
+		const a = meterStorageRequests(wallet);
+		const b = meterStorageRequests(wallet);
+		assert.ok(a && b);
+		await client.createAction({ inputs: [{ outpoint: "x_0" }] });
+		assert.equal(a.requests.length, 1);
+		assert.equal(b.requests.length, 1);
+		a.restore();
+		await client.createAction({ inputs: [{ outpoint: "x_0" }] });
+		assert.equal(a.requests.length, 1);
+		assert.equal(b.requests.length, 2);
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), true);
+		b.restore();
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+		// restore() twice is harmless.
+		a.restore();
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+	});
+
+	it("counts body bytes as UTF-8", async () => {
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: Infinity,
+		});
+		const meter = meterStorageRequests(wallet);
+		assert.ok(meter);
+		const body = JSON.stringify({ method: "createAction", note: "é€😀a" });
+		await client.authenticatedFetch("https://wallet", { method: "POST", body });
+		assert.equal(
+			meter.requests[0].bytes,
+			new TextEncoder().encode(body).length,
+		);
+		assert.equal(meter.requests[0].bytes, log.bodies[0]);
+		meter.restore();
+	});
+
+	it("budgets binary fields exactly as the client writes them", () => {
+		const bytes = [0, 9, 10, 99, 100, 255, 7];
+		assert.equal(
+			encodedArrayBytes(bytes),
+			JSON.stringify(Array.from(bytes)).length,
+		);
+		assert.equal(encodedArrayBytes([]), 2);
+		assert.equal(CREATE_ACTION_START_BUDGET_BYTES, 2_100_000);
 	});
 
 	it("sends a source BEEF larger than a request on its own", async () => {

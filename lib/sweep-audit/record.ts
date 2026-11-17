@@ -2,6 +2,7 @@ import type { BuildInfo } from "@/lib/build-info";
 import type {
 	SweepLeftBehind,
 	SweepProgress,
+	SweepRequest,
 	SweepResult,
 	SweepStepState,
 } from "@/lib/sweep-migration";
@@ -99,6 +100,12 @@ export interface SweepAuditRecord {
 	leftBehind: SweepAuditLeftBehind[];
 	/** SweepResult.errors, verbatim */
 	errors: string[];
+	/**
+	 * Every createAction request the batched steps sent: inputs, BEEF bytes,
+	 * the request size as packed and as measured, the server's answer, and
+	 * any split. Absent on records saved before it existed.
+	 */
+	requests?: SweepRequest[];
 	/** Listed legacy outputs whose listing was cancelled inside a sweep spend */
 	cancelledListings: string[];
 	/** Why the run stopped, when it threw */
@@ -186,6 +193,7 @@ export function createSweepAuditRecord(
 			stage: "plan" as const,
 		})),
 		errors: [],
+		requests: [],
 		cancelledListings: [],
 		failure: null,
 	});
@@ -243,6 +251,9 @@ export function withSweepProgress(
 		...record,
 		steps: auditSteps(progress.steps),
 		errors: [...(progress.errors ?? record.errors)],
+		requests: progress.requests
+			? progress.requests.map((r) => ({ ...r }))
+			: record.requests,
 		leftBehind: progress.leftBehind
 			? withSweepLeftBehind(record, progress.leftBehind)
 			: record.leftBehind,
@@ -278,6 +289,9 @@ export function finishSweepAudit(
 				}
 			: record.txids,
 		errors: result ? [...result.errors] : record.errors,
+		requests: result?.requests
+			? result.requests.map((r) => ({ ...r }))
+			: record.requests,
 		leftBehind: result?.leftBehind
 			? withSweepLeftBehind(record, result.leftBehind)
 			: record.leftBehind,
@@ -286,6 +300,33 @@ export function finishSweepAudit(
 			: record.cancelledListings,
 		failure: outcome.failure ?? null,
 	});
+}
+
+const REQUEST_OUTCOME_LABEL: Record<SweepRequest["outcome"], string> = {
+	sent: "sent",
+	"too-large": "refused as too large (413)",
+	failed: "failed",
+};
+
+/** One request as a report line: batch, sizes, answer, split. */
+export function sweepAuditRequestLine(r: SweepRequest): string {
+	const size =
+		r.measuredBytes !== undefined
+			? `${r.measuredBytes} bytes sent (${r.encoding})`
+			: `about ${r.estimatedBytes} bytes (not measured)`;
+	const facts = [
+		`${r.stepId} batch ${r.batch}`,
+		`${r.inputs} input${r.inputs !== 1 ? "s" : ""} from ${r.sourceTxs} source tx${r.sourceTxs !== 1 ? "s" : ""}`,
+		`BEEF ${r.beefBytes} bytes`,
+		size,
+		`budget ${r.budgetBytes}`,
+		REQUEST_OUTCOME_LABEL[r.outcome] +
+			(r.status !== undefined && r.status !== null
+				? ` [HTTP ${r.status}]`
+				: ""),
+		r.splitInto ? `split into ${r.splitInto[0]} + ${r.splitInto[1]}` : null,
+	].filter((fact): fact is string => fact !== null);
+	return facts.join("; ");
 }
 
 /** A record still "running" that no open page is running reads as interrupted. */
@@ -449,6 +490,14 @@ export function sweepAuditReportText(
 			item.detail ? `error: ${item.detail}` : null,
 		].filter((fact): fact is string => fact !== null);
 		if (facts.length > 0) lines.push(`  (${facts.join("; ")})`);
+	}
+
+	const requests = record.requests ?? [];
+	if (requests.length > 0) {
+		section(`Wallet server requests (${requests.length})`);
+		for (const r of requests) {
+			lines.push(`- ${sweepAuditRequestLine(r)}`);
+		}
 	}
 
 	section(`Errors (${record.errors.length})`);
