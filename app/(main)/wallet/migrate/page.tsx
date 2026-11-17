@@ -45,6 +45,10 @@ import {
 	runMigrationOnTarget,
 } from "@/lib/wallet/first-run-migration";
 import {
+	countSweepableLegacyAssets,
+	decideScanPhase,
+} from "@/lib/wallet/legacy-scan-state";
+import {
 	type AssetType,
 	cancelListedAssets,
 	defaultAssetTypes,
@@ -144,14 +148,21 @@ function MigrationProgress({
 
 function CompletionState({
 	sweepResult,
+	remaining,
 	onBackToWallet,
 	onRetryFailed,
 }: {
 	sweepResult: SweepResult | null;
+	remaining: number;
 	onBackToWallet: () => void;
 	onRetryFailed: () => void;
 }) {
 	const hadErrors = (sweepResult?.errors.length ?? 0) > 0;
+	const rescanLabel = hadErrors
+		? "Rescan & Retry Failed Sweeps"
+		: remaining > 0
+			? `Sweep Remaining ${remaining} ${remaining === 1 ? "Item" : "Items"}`
+			: "Scan Legacy Addresses Again";
 	return (
 		<Card>
 			<CardHeader>
@@ -160,14 +171,14 @@ function CompletionState({
 						? hadErrors
 							? "Sweep Finished With Errors"
 							: "Migration Complete"
-						: "Already Migrated"}
+						: "Nothing Left to Sweep"}
 				</CardTitle>
 				<CardDescription>
 					{sweepResult
 						? hadErrors
 							? "Some assets could not be swept. You can rescan and retry the remainder — successfully swept assets are already safe in your wallet."
 							: "Your wallet has been migrated to the identity key system."
-						: "Your wallet is already using the identity key system and no sweepable assets remain at your legacy addresses."}
+						: "A fresh scan found nothing left to sweep at your legacy addresses. You can scan again at any time."}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -196,11 +207,15 @@ function CompletionState({
 						)}
 					</div>
 				)}
-				{hadErrors && (
-					<Button className="w-full" onClick={onRetryFailed}>
-						Rescan &amp; Retry Failed Sweeps
-					</Button>
+				{sweepResult && remaining > 0 && (
+					<p className="text-sm text-muted-foreground">
+						{remaining} {remaining === 1 ? "item is" : "items are"} still at
+						your legacy addresses.
+					</p>
 				)}
+				<Button className="w-full" onClick={onRetryFailed}>
+					{rescanLabel}
+				</Button>
 				<Button variant="outline" className="w-full" onClick={onBackToWallet}>
 					Back to Wallet
 				</Button>
@@ -421,52 +436,57 @@ export default function MigratePage() {
 	// Sweepable asset counts (opns names sweep together with ordinals)
 	const totalAssets = plannedCount(plan);
 
-	// Transition from scan to preview when scan completes
+	// Same count as the sidebar banner: being migrated never hides assets the
+	// scan still finds at the legacy addresses.
+	const sweepableLegacy = countSweepableLegacyAssets(assets);
+
+	// Transition from scan once the scan of the current legacy addresses has
+	// finished. Nothing is ever shown as "already migrated" before that.
 	useEffect(() => {
 		if (!migrationStatus) return;
-
 		if (phase !== "scan") return;
+		if (assets.error) return;
 
-		if (assets.loading || assets.error || toolbox.isBalanceLoading) return;
-
-		if (!legacy) {
-			if (migrationStatus.status === "migrated") {
-				setPhase(listings.length > 0 ? "preview" : "complete");
-			} else {
-				setError("Wallet cannot be migrated (missing pay or ord key)");
-				setPhase("error");
-			}
+		const decision = decideScanPhase({
+			hasLegacyKeys: legacy !== null,
+			migrated: migrationStatus.status === "migrated",
+			scanned: assets.scanned,
+			loading: assets.loading,
+			balanceLoading: toolbox.isBalanceLoading,
+			sweepable: sweepableLegacy,
+			listings: listings.length,
+		});
+		if (decision === "wait") return;
+		if (decision === "missing-keys") {
+			setError("Wallet cannot be migrated (missing pay or ord key)");
+			setPhase("error");
 			return;
 		}
-
-		if (
-			legacy.sweepOnly &&
-			assets.funding.length +
-				assets.ordinals.length +
-				assets.opnsNames.length +
-				tokenOutputCount(assets.bsv21Tokens) +
-				tokenOutputCount(assets.bsv20Balances) ===
-				0 &&
-			listings.length === 0
-		) {
-			// Already migrated and legacy addresses are empty
-			setPhase("complete");
-		} else {
-			setPhase("preview");
-		}
+		setPhase(decision === "preview" ? "preview" : "complete");
 	}, [
 		migrationStatus,
 		legacy,
 		phase,
+		assets.scanned,
 		assets.loading,
 		assets.error,
-		assets.funding.length,
-		assets.ordinals.length,
-		assets.opnsNames.length,
-		assets.bsv21Tokens,
-		assets.bsv20Balances,
+		sweepableLegacy,
 		listings.length,
 		toolbox.isBalanceLoading,
+	]);
+
+	// A finished page that swept nothing reopens if a rescan finds assets.
+	useEffect(() => {
+		if (phase !== "complete" || sweepResult) return;
+		if (assets.loading || !assets.scanned) return;
+		if (sweepableLegacy > 0 || listings.length > 0) setPhase("preview");
+	}, [
+		phase,
+		sweepResult,
+		assets.loading,
+		assets.scanned,
+		sweepableLegacy,
+		listings.length,
 	]);
 
 	// Select all unlisted ordinals by default when assets load
@@ -958,6 +978,7 @@ export default function MigratePage() {
 				{phase === "complete" && (
 					<CompletionState
 						sweepResult={sweepResult}
+						remaining={assets.scanned && !assets.loading ? sweepableLegacy : 0}
 						onBackToWallet={() => router.push("/wallet")}
 						onRetryFailed={() => {
 							setSweepResult(null);

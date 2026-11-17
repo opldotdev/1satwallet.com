@@ -10,6 +10,7 @@ import {
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
+import { legacyAddressKey } from "@/lib/wallet/legacy-scan-state";
 import {
 	excludeUnsweepableTokens,
 	splitBsv20Outputs,
@@ -28,6 +29,11 @@ export interface EnrichedOrdinal extends IndexedOutput {
 
 export interface LegacyAssets {
 	loading: boolean;
+	/**
+	 * A scan of the current legacy addresses has finished (with a result or an
+	 * error). False before the first scan starts and after the addresses change.
+	 */
+	scanned: boolean;
 	error: string | null;
 	funding: IndexedOutput[];
 	ordinals: EnrichedOrdinal[];
@@ -89,6 +95,12 @@ export function useLegacyAssets(
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [result, setResult] = useState<ScanResult | null>(null);
+	const [scannedKey, setScannedKey] = useState<string | null>(null);
+	const addressKey = legacyAddressKey([
+		legacyPayAddress,
+		legacyOrdAddress,
+		legacyIdentityAddress,
+	]);
 
 	// Scanning needs services only (no wallet) — a standalone instance so the
 	// banner works even when the BRC-100 wallet failed to initialize
@@ -96,6 +108,8 @@ export function useLegacyAssets(
 
 	const [scanTrigger, setScanTrigger] = useState(0);
 	const rescan = useCallback(() => {
+		// Clear in the same render so callers never decide from the old scan
+		setScannedKey(null);
 		setScanTrigger((prev) => prev + 1);
 	}, []);
 
@@ -111,10 +125,16 @@ export function useLegacyAssets(
 		}
 
 		let cancelled = false;
+		const scanKey = legacyAddressKey([
+			legacyPayAddress,
+			legacyOrdAddress,
+			legacyIdentityAddress,
+		]);
 
 		async function scan() {
 			setLoading(true);
 			setError(null);
+			setScannedKey(null);
 			try {
 				const addresses = [
 					...new Set(
@@ -128,13 +148,16 @@ export function useLegacyAssets(
 				);
 				if (cancelled) return;
 				setResult(scanResult);
+				setScannedKey(scanKey);
 			} catch (err) {
 				if (cancelled) return;
+				console.error("Legacy address scan failed", err);
 				setError(
 					err instanceof Error
 						? err.message
 						: "Failed to scan legacy addresses",
 				);
+				setScannedKey(scanKey);
 			} finally {
 				if (!cancelled) setLoading(false);
 			}
@@ -151,8 +174,13 @@ export function useLegacyAssets(
 		[result],
 	);
 
+	const scanned = addressKey !== null && scannedKey === addressKey;
+
 	return {
-		loading,
+		// Before the scan effect has started, an address set with no finished
+		// scan still counts as loading, so nothing reads "no assets" too early.
+		loading: loading || (addressKey !== null && !scanned),
+		scanned,
 		error,
 		funding: result?.funding ?? [],
 		ordinals: (result?.ordinals ?? []).map(enrichOrdinal),
