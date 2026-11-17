@@ -9,11 +9,11 @@ import {
 	actionExplorerUrl,
 	actionHistoryForIdentity,
 	actionReferenceLabel,
+	actionStatusLabel,
 	actionTimeLabel,
 	isPendingAction,
 	listActionHistoryPage,
 	orderActionsNewestFirst,
-	ordinaryActionLabels,
 } from "../lib/wallet/action-history";
 
 const action = {
@@ -201,9 +201,8 @@ describe("action history", () => {
 		assert.equal(actionHistoryForIdentity(previous, "previous"), previous);
 	});
 
-	test("separates the valid BRC-153 reference from ordinary labels", () => {
+	test("finds only a valid BRC-153 reference among the labels", () => {
 		assert.equal(actionReferenceLabel(action), "reference 010203");
-		assert.deepEqual(ordinaryActionLabels(action), ["payment", "personal"]);
 		assert.equal(
 			actionReferenceLabel({
 				...action,
@@ -211,9 +210,9 @@ describe("action history", () => {
 			}),
 			undefined,
 		);
-		assert.deepEqual(
-			ordinaryActionLabels({ ...action, labels: ["reference invalid"] }),
-			[],
+		assert.equal(
+			actionReferenceLabel({ ...action, labels: undefined }),
+			undefined,
 		);
 	});
 
@@ -227,5 +226,17 @@ describe("action history", () => {
 			`https://test.whatsonchain.com/tx/${action.txid}`,
 		);
 		assert.equal(actionExplorerUrl("not-a-txid", "main"), undefined);
+	});
+	test("gives a row one plain status badge, and none once it is mined", () => {
+		const label = (status: WalletAction["status"]) =>
+			actionStatusLabel({ status });
+		assert.equal(label("completed"), undefined);
+		assert.equal(label("unproven"), "Unconfirmed");
+		assert.equal(label("sending"), "Sending");
+		assert.equal(label("unprocessed"), "Queued");
+		assert.equal(label("unsigned"), "Unsigned");
+		assert.equal(label("nosend"), "Not sent");
+		assert.equal(label("nonfinal"), "Not final");
+		assert.equal(label("failed"), "Failed");
 	});
 });
