@@ -53,6 +53,58 @@ interface ActionWidth {
 	available: number;
 }
 
+/**
+ * Clicks the button named `label`. If agent-browser refuses, the error adds
+ * where the button sits against the viewport and every scrolling or clipping
+ * box around it, so a refusal names its cause.
+ */
+async function clickExplained(browser: Browser, label: string) {
+	try {
+		await browser.click({ role: "button", name: label });
+	} catch (error) {
+		const layout = await browser
+			.evaluate((name: string) => {
+				const button = Array.from(
+					document.querySelectorAll<HTMLElement>('[data-slot="button"]'),
+				).find(
+					(el) => (el.textContent ?? "").replace(/\s+/g, " ").trim() === name,
+				);
+				if (!button) return "button not found";
+				const box = (el: Element) => {
+					const r = el.getBoundingClientRect();
+					return `${Math.round(r.top)}..${Math.round(r.bottom)} x ${Math.round(r.left)}..${Math.round(r.right)}`;
+				};
+				const lines = [
+					`viewport ${window.innerWidth}x${window.innerHeight}, visual ${Math.round(window.visualViewport?.width ?? 0)}x${Math.round(window.visualViewport?.height ?? 0)}, scrollY ${Math.round(window.scrollY)}, page height ${document.scrollingElement?.scrollHeight}`,
+					`button ${box(button)}`,
+				];
+				for (
+					let el = button.parentElement;
+					el && el !== document.documentElement;
+					el = el.parentElement
+				) {
+					const style = getComputedStyle(el);
+					if (
+						style.overflowX !== "visible" ||
+						style.overflowY !== "visible" ||
+						style.position === "fixed" ||
+						style.position === "sticky" ||
+						style.transform !== "none"
+					) {
+						lines.push(
+							`${el.tagName.toLowerCase()}${el.getAttribute("data-slot") ? `[${el.getAttribute("data-slot")}]` : ""} ${box(el)} overflow ${style.overflowX}/${style.overflowY} position ${style.position} transform ${style.transform} scrollTop ${Math.round(el.scrollTop)}/${el.scrollHeight - el.clientHeight}`,
+						);
+					}
+				}
+				return lines.join("; ");
+			}, label)
+			.catch((readError: unknown) => `layout unreadable: ${String(readError)}`);
+		throw new Error(`Could not click "${label}". ${layout}`, {
+			cause: error,
+		});
+	}
+}
+
 /** Measures the visible button named `name` against its card's content box. */
 function measureAction(browser: Browser, name: string) {
 	return browser.evaluate((label: string): ActionWidth | null => {
@@ -173,10 +225,7 @@ e2eTest(
 		// On to the check, which asks for three words. None is filled in.
 		await setViewport(browser, PHONE);
 		await waitForSettledPage(browser, "/wallet/create", seedReady);
-		await browser.click({
-			role: "button",
-			name: "I have saved my seed phrase",
-		});
+		await clickExplained(browser, "I have saved my seed phrase");
 		await waitForSettledPage(
 			browser,
 			"/wallet/create/confirm",
