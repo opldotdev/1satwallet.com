@@ -5,7 +5,9 @@ import type { IndexedOutput } from "@1sat/types";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
 import {
 	buildKeys,
+	CREATE_ACTION_START_BUDGET_BYTES,
 	cancelledListingCount,
+	encodedArrayBytes,
 	encodedBinaryBytes,
 	executeKeySweep,
 	executeMigrationSweep,
@@ -603,6 +605,78 @@ function sizeLimitedWallet(
 	return { wallet: wallet as unknown as WalletInterface, log };
 }
 
+/**
+ * A toolbox-shaped wallet whose active remote store posts each createAction
+ * through authenticatedFetch, as StorageClient does: the body grows 1,000
+ * bytes per input, and the server answers 413 over `refuseOver` bytes.
+ */
+function meteredWallet({
+	binary,
+	refuseOver,
+}: {
+	binary: boolean;
+	refuseOver: number;
+}) {
+	const log = {
+		signed: [] as string[][],
+		bodies: [] as number[],
+	};
+	class FakeStorageClient {
+		requestUsesBinary() {
+			return binary;
+		}
+		async authenticatedFetch(_url: string, init: RequestInit) {
+			const bytes = new TextEncoder().encode(String(init.body)).length;
+			log.bodies.push(bytes);
+			return new Response("{}", { status: bytes > refuseOver ? 413 : 200 });
+		}
+		async createAction(args: { inputs: { outpoint: string }[] }) {
+			const body = JSON.stringify({
+				jsonrpc: "2.0",
+				method: "createAction",
+				params: [{}, { pad: "x".repeat(args.inputs.length * 1_000) }],
+				id: 1,
+			});
+			const response = await this.authenticatedFetch("https://wallet", {
+				method: "POST",
+				headers: binary ? { "X-BSV-Binary-Request-Encoding": "base64" } : {},
+				body,
+			});
+			if (!response.ok) throw new Error(TOO_LARGE);
+			return { signableTransaction: { reference: "ref", tx: [] } };
+		}
+	}
+	const client = new FakeStorageClient();
+	const wallet = {
+		storage: { getActive: () => client },
+		createAction: (args: { inputs: { outpoint: string }[] }) =>
+			client.createAction(args),
+		signAction: async () => ({ txid: `tx-${log.signed.length + 1}` }),
+	};
+	return { wallet: wallet as unknown as WalletInterface, client, log };
+}
+
+/** An ordinal sweep action that goes through the wallet like the real one. */
+const rpcOrdinals =
+	(log: { signed: string[][] }): SweepActions["sweepOrdinals"] =>
+	async (ctx, request) => {
+		const inputs = request.inputs.map((i) => ({
+			outpoint: i.outpoint,
+			inputDescription: `Ordinal ${i.outpoint}`,
+		}));
+		try {
+			await ctx.wallet.createAction({ description: "sweep", inputs });
+			const signed = await ctx.wallet.signAction({
+				reference: "ref",
+				spends: {},
+			});
+			log.signed.push(inputs.map((i) => i.outpoint));
+			return { txid: signed.txid };
+		} catch (error) {
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	};
+
 /** An ordinal sweep action shaped like @1sat/actions': createAction, then signAction. */
 const twoPhaseOrdinals =
 	(log: { signed: string[][] }): SweepActions["sweepOrdinals"] =>
@@ -726,17 +800,86 @@ describe("legacy sweep: requests too large for the wallet server", () => {
 		assert.deepEqual(attempts, [2]);
 	});
 
-	it("packs batches by the size of their source BEEFs", async () => {
-		// 2.5 MB each: two fit one request (base64 ~6.7 MB), three don't.
-		const big = provenBeef(2_500_000);
+	it("packs batches by the request the client will send, in its encoding", async () => {
+		// 700 KB of byte 200 each: about 933 KB as base64, so two fit the
+		// 2.1 MB start budget; about 2.8 MB as a JSON byte array, so each
+		// goes alone.
+		const big = provenBeef(700_000, 200);
 		const services = beefServices(() => big);
-		const { actions, calls } = fakeActions();
 		const ordinals = [1, 2, 3, 4].map((n) => out(n));
-		await sweep({ services, ordinals }, actions);
+		const batches = async (binary: boolean | null) => {
+			const { actions, calls } = fakeActions();
+			const wallet =
+				binary === null
+					? ({} as WalletInterface)
+					: meteredWallet({ binary, refuseOver: Infinity }).wallet;
+			await sweep({ services, ordinals, wallet }, actions);
+			return calls.map((c) => c.inputs.length);
+		};
+		assert.deepEqual(await batches(true), [2, 2]);
+		assert.deepEqual(await batches(false), [1, 1, 1, 1]);
+		// No storage client to ask: sized for the larger encoding.
+		assert.deepEqual(await batches(null), [1, 1, 1, 1]);
+	});
+
+	it("measures each createAction request, records it, and packs the rest of the run under a refusal", async () => {
+		// The server refuses bodies over 5,000 bytes; each input adds 1,000.
+		const { wallet, client, log } = meteredWallet({
+			binary: true,
+			refuseOver: 5_000,
+		});
+		const ordinals = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result, progress } = await sweep({ wallet, ordinals }, actions);
+
 		assert.deepEqual(
-			calls.map((c) => c.inputs.length),
-			[2, 2],
+			log.signed.map((batch) => batch.length),
+			[4, 4],
 		);
+		const requests = result.requests ?? [];
+		assert.equal(requests.length, 3);
+		const [refused, first, second] = requests;
+		assert.equal(refused.outcome, "too-large");
+		assert.equal(refused.inputs, 8);
+		assert.equal(refused.status, 413);
+		assert.equal(refused.encoding, "base64");
+		assert.ok((refused.measuredBytes ?? 0) > 8_000);
+		assert.deepEqual(refused.splitInto, [4, 4]);
+		assert.equal(refused.budgetBytes, CREATE_ACTION_START_BUDGET_BYTES);
+		for (const half of [first, second]) {
+			assert.equal(half.outcome, "sent");
+			assert.equal(half.status, 200);
+			assert.equal(half.batch, refused.batch);
+		}
+		// The measured body is what went on the wire.
+		assert.equal(refused.measuredBytes, log.bodies[0]);
+		// Progress carries the requests for the audit record as they happen.
+		assert.equal(progress.at(-1)?.requests?.length, 3);
+		// The client is left as it was.
+		assert.equal(Object.hasOwn(client, "authenticatedFetch"), false);
+	});
+
+	it("lowers the budget for later batches to under the refused request", async () => {
+		// Two steps: ordinals refused at a measured size, then funding packs
+		// under it.
+		const { wallet, log } = meteredWallet({ binary: true, refuseOver: 3_000 });
+		const ordinals = [1, 2, 3, 4].map((n) => out(n));
+		const { actions } = fakeActions({ sweepOrdinals: rpcOrdinals(log) });
+		const { result } = await sweep({ wallet, ordinals }, actions);
+		const requests = result.requests ?? [];
+		const refusedAt = requests[0].measuredBytes ?? 0;
+		assert.equal(requests[0].outcome, "too-large");
+		assert.ok(requests.slice(1).every((r) => r.budgetBytes === refusedAt - 1));
+	});
+
+	it("budgets binary fields exactly as the client writes them", () => {
+		const bytes = [0, 9, 10, 99, 100, 255, 7];
+		assert.equal(
+			encodedArrayBytes(bytes),
+			JSON.stringify(Array.from(bytes)).length,
+		);
+		assert.equal(encodedArrayBytes([]), 2);
+		assert.equal(CREATE_ACTION_START_BUDGET_BYTES, 2_100_000);
 	});
 
 	it("sends a source BEEF larger than a request on its own", async () => {
