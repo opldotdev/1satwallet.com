@@ -65,6 +65,8 @@ describe("ordinal action inputs", () => {
 		};
 		assert.equal(ordinalAssetId(output), "asset-1");
 		assert.equal(isOrdinalListed(output), true);
+		assert.equal(isOrdinalListed({ ...output, tags: ["ordlock2"] }), true);
+		assert.equal(isOrdinalListed({ ...output, tags: ["id:asset-1"] }), false);
 		assert.equal(ordinalAssetId({ ...output, tags: ["origin:legacy"] }), null);
 	});
 });

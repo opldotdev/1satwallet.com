@@ -6,10 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { MigrationOrdinalCard } from "@/components/wallet/migration-ordinal-card";
 import type {
+	Bsv20Balance,
 	EnrichedOrdinal,
 	TokenBalance,
 } from "@/lib/hooks/use-legacy-assets";
-import type { SweepStepState } from "@/lib/sweep-migration";
+import {
+	cancelledListingCount,
+	type SweepResult,
+	type SweepStepState,
+} from "@/lib/sweep-migration";
 import type { AssetType, ListedAsset } from "@/lib/wallet/migration-listings";
 
 const ORDINALS_PER_PAGE = 20;
@@ -34,6 +39,7 @@ const TYPE_ROWS: { id: AssetType; label: string }[] = [
 	{ id: "listings", label: "Open listings" },
 	{ id: "ordinals", label: "Ordinals" },
 	{ id: "bsv21", label: "BSV21" },
+	{ id: "bsv20", label: "BSV20" },
 	{ id: "bsv", label: "BSV" },
 ];
 
@@ -95,7 +101,7 @@ export function ListingsSection({ listings }: { listings: ListedAsset[] }) {
 				</Badge>
 			</div>
 			<p className="text-xs text-muted-foreground mb-3">
-				These listings are being retired. Cancel them to return each ordinal to
+				These listings are being retired. Cancelling returns each listed item to
 				your wallet.
 			</p>
 			<ul className="space-y-1">
@@ -338,25 +344,100 @@ export function TokensSection({ tokens }: { tokens: TokenBalance[] }) {
 	);
 }
 
-export function Bsv20Section({ tokens }: { tokens: IndexedOutput[] }) {
-	if (tokens.length === 0) return null;
+export function Bsv20Section({
+	tokens,
+	unsweepable,
+}: {
+	tokens: Bsv20Balance[];
+	unsweepable: IndexedOutput[];
+}) {
+	if (tokens.length === 0 && unsweepable.length === 0) return null;
 
 	return (
-		<div className="bg-gradient-to-br from-muted/20 to-transparent border border-muted/30 p-5">
-			<div className="flex items-center gap-2 mb-3">
-				<span className="h-2 w-2 bg-muted-foreground" />
-				<span className="text-sm font-semibold text-muted-foreground">
+		<div className="bg-gradient-to-br from-chart-4/5 to-transparent border border-chart-4/20 p-5">
+			<div className="flex items-center gap-2 mb-4">
+				<span className="h-2 w-2 bg-chart-4" />
+				<span className="text-sm font-semibold text-chart-4">
 					BSV-20 Tokens
 				</span>
-				<Badge variant="secondary" className="text-xs ml-auto">
-					{tokens.length} output{tokens.length !== 1 ? "s" : ""}
-				</Badge>
 			</div>
-			<p className="text-xs text-muted-foreground">
-				BSV-20 is deprecated and cannot be swept. These outputs will remain at
-				your legacy address.
-			</p>
+
+			<div className="space-y-3">
+				{tokens.map((token) => (
+					<div
+						key={token.tick}
+						className="flex items-center justify-between border border-chart-4/10 bg-black/10 p-3"
+					>
+						<div>
+							<div className="font-medium text-foreground">{token.tick}</div>
+							<div className="text-xs text-muted-foreground">
+								{formatTokenAmount(token.totalAmount, token.decimals)}{" "}
+								{token.tick}
+							</div>
+						</div>
+						<Badge variant="secondary" className="text-xs">
+							{token.outputs.length} output
+							{token.outputs.length !== 1 ? "s" : ""}
+						</Badge>
+					</div>
+				))}
+			</div>
+			{unsweepable.length > 0 && (
+				<p className="mt-3 text-xs text-muted-foreground">
+					{unsweepable.length} BSV-20 output
+					{unsweepable.length !== 1 ? "s have" : " has"} no readable ticker or
+					amount and will stay at your legacy address.
+				</p>
+			)}
 		</div>
+	);
+}
+
+/** Receipts for a finished migration: one row per transaction. */
+export function SweepResultRows({
+	result,
+	rowClassName,
+}: {
+	result: SweepResult;
+	rowClassName: string;
+}) {
+	const rows: { label: string; txid: string }[] = [
+		...result.bsvTxids.map((txid) => ({ label: "BSV Sweep", txid })),
+		...result.ordinalTxids.map((txid) => ({ label: "Ordinal Sweep", txid })),
+		...result.bsv20Txids.map((txid) => ({ label: "BSV-20 Sweep", txid })),
+		...result.bsv21Txids.map((txid) => ({ label: "Token Sweep", txid })),
+		...(result.cancelTxids ?? []).map((txid) => ({
+			label: "Listing cancelled",
+			txid,
+		})),
+	];
+	const listingsCancelled = cancelledListingCount(result);
+	return (
+		<>
+			{rows.map((row) => (
+				<div key={`${row.label}:${row.txid}`} className={rowClassName}>
+					<span className="text-muted-foreground">{row.label}</span>
+					<code className="text-xs font-mono">{row.txid.slice(0, 16)}...</code>
+				</div>
+			))}
+			{listingsCancelled > 0 && (
+				<div className={rowClassName}>
+					<span className="text-muted-foreground">Listings cancelled</span>
+					<span className="text-xs">{listingsCancelled}</span>
+				</div>
+			)}
+		</>
+	);
+}
+
+export function sweepResultIsEmpty(result: SweepResult): boolean {
+	return (
+		result.bsvTxids.length === 0 &&
+		result.ordinalTxids.length === 0 &&
+		result.bsv20Txids.length === 0 &&
+		result.bsv21Txids.length === 0 &&
+		cancelledListingCount(result) === 0 &&
+		result.errors.length === 0
 	);
 }
 

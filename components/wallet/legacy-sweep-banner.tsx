@@ -10,6 +10,7 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { useLegacyAssets } from "@/lib/hooks/use-legacy-assets";
+import { tokenOutputCount } from "@/lib/wallet/migration-listings";
 import { isOrdinalListed } from "@/lib/wallet/ordinal-actions";
 import { detectMigrationStatus } from "@/lib/wallet-migration";
 import { useWallet } from "@/providers/wallet-provider";
@@ -58,7 +59,7 @@ export function LegacySweepBanner() {
 			? (migrationStatus.legacyIdentityAddress ?? null)
 			: null;
 
-	const { funding, ordinals, opnsNames, bsv21Tokens, loading } =
+	const { funding, ordinals, opnsNames, bsv21Tokens, bsv20Balances, loading } =
 		useLegacyAssets(legacyPayAddress, legacyOrdAddress, legacyIdentityAddress);
 
 	const sweepableAssetCount = useMemo(() => {
@@ -66,9 +67,16 @@ export function LegacySweepBanner() {
 			funding.length +
 			ordinals.length +
 			opnsNames.length +
-			bsv21Tokens.reduce((sum, token) => sum + token.outputs.length, 0)
+			tokenOutputCount(bsv21Tokens) +
+			tokenOutputCount(bsv20Balances)
 		);
-	}, [funding.length, ordinals.length, opnsNames.length, bsv21Tokens]);
+	}, [
+		funding.length,
+		ordinals.length,
+		opnsNames.length,
+		bsv21Tokens,
+		bsv20Balances,
+	]);
 
 	const leftoverAfterMigrate =
 		!loading &&

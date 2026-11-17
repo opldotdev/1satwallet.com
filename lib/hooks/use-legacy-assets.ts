@@ -1,17 +1,19 @@
 "use client";
 
 import {
+	type Bsv20Balance,
+	groupBsv20Tokens,
 	type ScanProgress,
 	type ScanResult,
 	scanAddresses,
 	type TokenBalance,
 } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
 import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
 
-export type { TokenBalance };
+export type { Bsv20Balance, TokenBalance };
 
 // IndexedOutput enriched with display metadata resolved from its events
 export interface EnrichedOrdinal extends IndexedOutput {
@@ -28,7 +30,14 @@ export interface LegacyAssets {
 	ordinals: EnrichedOrdinal[];
 	opnsNames: EnrichedOrdinal[];
 	bsv21Tokens: TokenBalance[];
+	/** Every BSV-20 output the scan found */
 	bsv20Tokens: IndexedOutput[];
+	/** BSV-20 outputs grouped by ticker: the ones the sweep can move */
+	bsv20Balances: Bsv20Balance[];
+	/** BSV-20 outputs with no readable tick or amount: left in place */
+	bsv20Unsweepable: IndexedOutput[];
+	/** OrdLock v2 listings at the scanned addresses, in every class */
+	listings: IndexedOutput[];
 	locked: IndexedOutput[];
 	run: IndexedOutput[];
 	totalBsv: number;
@@ -133,6 +142,18 @@ export function useLegacyAssets(
 		};
 	}, [legacyPayAddress, legacyOrdAddress, legacyIdentityAddress, scanTrigger]);
 
+	const bsv20 = useMemo(() => {
+		const outputs = result?.bsv20Tokens ?? [];
+		const balances = groupBsv20Tokens(outputs);
+		const grouped = new Set(
+			balances.flatMap((balance) => balance.outputs.map((o) => o.outpoint)),
+		);
+		return {
+			balances,
+			unsweepable: outputs.filter((o) => !grouped.has(o.outpoint)),
+		};
+	}, [result]);
+
 	return {
 		loading,
 		error,
@@ -146,6 +167,9 @@ export function useLegacyAssets(
 			}),
 		),
 		bsv20Tokens: result?.bsv20Tokens ?? [],
+		bsv20Balances: bsv20.balances,
+		bsv20Unsweepable: bsv20.unsweepable,
+		listings: result?.listings ?? [],
 		locked: result?.locked ?? [],
 		run: result?.run ?? [],
 		totalBsv: result?.totalFundingSats ?? 0,

@@ -1,17 +1,23 @@
 "use client";
 
 import {
+	type Bsv20Balance,
 	createContext,
 	prepareSweepInputs,
 	sweepBsv,
+	sweepBsv20,
 	sweepBsv21,
 	sweepOrdinals,
 	type TokenBalance,
 } from "@1sat/actions";
-import type { IndexedOutput } from "@1sat/types";
+import { type IndexedOutput, normalizeOutpoint } from "@1sat/types";
 import type { OneSatServices } from "@1sat/wallet-browser";
 import { PrivateKey, type WalletInterface } from "@bsv/sdk";
-import { excludeUnsweepableTokens } from "@/lib/wallet/migration-listings";
+import {
+	excludeUnsweepableTokens,
+	isListedOutput,
+	isolateListedBatches,
+} from "@/lib/wallet/migration-listings";
 
 // Chunk sizes: each chunk is its own transaction, so one bad output or a
 // single oversized tx can't sink an entire large sweep, and each completed
@@ -42,10 +48,50 @@ export interface SweepProgress {
 export interface SweepResult {
 	bsvTxids: string[];
 	ordinalTxids: string[];
+	bsv20Txids: string[];
 	bsv21Txids: string[];
+	/** Wallet-owned listings cancelled before the sweep */
 	cancelTxids?: string[];
+	/** Listed legacy outputs whose OrdLock was cancelled inside a sweep spend */
+	cancelledListings: string[];
 	errors: string[];
 }
+
+export function emptySweepResult(
+	extra: Partial<SweepResult> = {},
+): SweepResult {
+	return {
+		bsvTxids: [],
+		ordinalTxids: [],
+		bsv20Txids: [],
+		bsv21Txids: [],
+		cancelledListings: [],
+		errors: [],
+		...extra,
+	};
+}
+
+/** Listings cancelled by a migration: wallet-owned ones plus listed legacy outputs swept. */
+export function cancelledListingCount(result: SweepResult): number {
+	return (result.cancelTxids?.length ?? 0) + result.cancelledListings.length;
+}
+
+/** The @1sat/actions calls the sweep makes; injectable for tests. */
+export interface SweepActions {
+	prepareSweepInputs: typeof prepareSweepInputs;
+	sweepBsv: typeof sweepBsv.execute;
+	sweepOrdinals: typeof sweepOrdinals.execute;
+	sweepBsv20: typeof sweepBsv20.execute;
+	sweepBsv21: typeof sweepBsv21.execute;
+}
+
+const defaultSweepActions: SweepActions = {
+	prepareSweepInputs,
+	sweepBsv: sweepBsv.execute,
+	sweepOrdinals: sweepOrdinals.execute,
+	sweepBsv20: sweepBsv20.execute,
+	sweepBsv21: sweepBsv21.execute,
+};
 
 export interface MigrationSweepParams {
 	wallet: WalletInterface;
@@ -58,10 +104,10 @@ export interface MigrationSweepParams {
 	funding: IndexedOutput[];
 	ordinals: IndexedOutput[];
 	bsv21Tokens: TokenBalance[];
+	/** BSV-20 balances grouped by ticker (groupBsv20Tokens) */
+	bsv20Tokens?: Bsv20Balance[];
+	actions?: Partial<SweepActions>;
 }
-
-const getOwner = (output: IndexedOutput): string | undefined =>
-	output.events?.find((e) => e.startsWith("own:"))?.slice(4);
 
 const chunk = <T>(items: T[], size: number): T[][] => {
 	const out: T[][] = [];
@@ -71,23 +117,69 @@ const chunk = <T>(items: T[], size: number): T[][] => {
 	return out;
 };
 
-// Resolve the signing key for each output from its own: event. A missing
-// key is a hard error BEFORE building the tx — signing with the wrong key
-// used to fail the whole sweep with no diagnostic.
-const buildKeys = (
+/**
+ * Resolve the signing key for each output from its own: events, as
+ * @1sat/sweep-ui's buildKeys does: every own: event is considered and
+ * exactly one must name one of our legacy addresses. Zero or several
+ * matches is a hard error BEFORE building the tx, so nothing is signed
+ * with a guessed key.
+ */
+export const buildKeys = (
 	outputs: IndexedOutput[],
 	keyMap: Map<string, PrivateKey>,
 ): PrivateKey[] =>
 	outputs.map((output) => {
-		const owner = getOwner(output);
-		const key = owner ? keyMap.get(owner) : undefined;
-		if (!key) {
+		const owners = [
+			...new Set(
+				(output.events ?? [])
+					.filter((e) => e.startsWith("own:"))
+					.map((e) => e.slice(4)),
+			),
+		];
+		const matches = owners.filter((owner) => keyMap.has(owner));
+		if (matches.length !== 1) {
 			throw new Error(
-				`No key for output ${output.outpoint} (owner: ${owner ?? "unknown"})`,
+				matches.length === 0
+					? `No key for output ${output.outpoint} (owner: ${owners.join(",") || "unknown"})`
+					: `Output ${output.outpoint} names more than one of this wallet's legacy addresses (${matches.join(",")}); not signing`,
 			);
 		}
-		return key;
+		return keyMap.get(matches[0]) as PrivateKey;
 	});
+
+/**
+ * Canonical `txid.vout` for comparing outpoints across the indexer, overlay
+ * and SDK. An unparseable outpoint is compared as written; its own prepare
+ * or sweep call reports it.
+ */
+const canonicalOutpoint = (outpoint: string): string => {
+	try {
+		return normalizeOutpoint(outpoint);
+	} catch {
+		return outpoint;
+	}
+};
+
+/**
+ * Token amount for an output, looked up by canonical outpoint (the indexer,
+ * overlay and SDK mix `.` and `_`). A missing amount is an error: sweeping a
+ * token input with an amount of 0 would drop its balance from the transfer.
+ */
+const tokenAmountLookup = (amounts: Map<string, string>, label: string) => {
+	const byOutpoint = new Map(
+		[...amounts].map(([outpoint, amount]) => [
+			canonicalOutpoint(outpoint),
+			amount,
+		]),
+	);
+	return (outpoint: string): string => {
+		const amount = byOutpoint.get(canonicalOutpoint(outpoint));
+		if (!amount) {
+			throw new Error(`${label}: no token amount for output ${outpoint}`);
+		}
+		return amount;
+	};
+};
 
 interface PreparedInputs {
 	/** Outputs whose locking scripts were resolved, with their sweep inputs */
@@ -108,6 +200,7 @@ interface PreparedInputs {
  * resolved skips only its own outputs.
  */
 async function prepareInputsConcurrent(
+	prepare: SweepActions["prepareSweepInputs"],
 	ctx: Parameters<typeof prepareSweepInputs>[0],
 	outputs: IndexedOutput[],
 	onDetail?: (done: number, total: number) => void,
@@ -131,7 +224,7 @@ async function prepareInputsConcurrent(
 			const index = cursor++;
 			const [txid, groupOutputs] = groups[index];
 			try {
-				const inputs = await prepareSweepInputs(ctx, groupOutputs);
+				const inputs = await prepare(ctx, groupOutputs);
 				const byOutpoint = new Map(inputs.map((i) => [i.outpoint, i]));
 				for (const output of groupOutputs) {
 					const input = byOutpoint.get(output.outpoint);
@@ -188,32 +281,51 @@ export async function executeMigrationSweep(
 		funding,
 		ordinals,
 		bsv21Tokens,
+		bsv20Tokens = [],
 	} = params;
+	const actions: SweepActions = { ...defaultSweepActions, ...params.actions };
 
 	const ctx = createContext(wallet, { services, chain });
 
+	const result = emptySweepResult();
+
 	const keyMap = new Map<string, PrivateKey>();
-	for (const wif of [legacyPayWif, legacyOrdWif, legacyIdentityWif]) {
+	const legacyKeys: [string, string | undefined][] = [
+		["pay", legacyPayWif],
+		["ord", legacyOrdWif],
+		["identity", legacyIdentityWif],
+	];
+	for (const [role, wif] of legacyKeys) {
 		if (!wif) continue;
 		try {
 			const key = PrivateKey.fromWif(wif);
 			keyMap.set(key.toPublicKey().toAddress(), key);
-		} catch {
-			// skip malformed keys; buildKeys errors identify affected outputs
+		} catch (error) {
+			// Never the WIF itself: only which key and why it did not parse.
+			console.error(`[migration] legacy ${role} key could not be read`, error);
+			result.errors.push(
+				`Legacy ${role} key could not be read (${error instanceof Error ? error.message : String(error)}); outputs at its address were not swept.`,
+			);
 		}
 	}
-
-	const result: SweepResult = {
-		bsvTxids: [],
-		ordinalTxids: [],
-		bsv21Txids: [],
-		errors: [],
-	};
 
 	const fundingChunks = chunk(funding, FUNDING_CHUNK_SIZE);
 	const ordinalChunks = chunk(ordinals, ORDINAL_CHUNK_SIZE);
 	const activeTokens = excludeUnsweepableTokens(bsv21Tokens).filter(
 		(t) => t.outputs.length > 0,
+	);
+	const activeBsv20 = bsv20Tokens.filter((t) => t.outputs.length > 0);
+	const bsv20Batches = new Map(
+		activeBsv20.map((t) => [
+			t.tick,
+			isolateListedBatches(t.outputs, TOKEN_CHUNK_SIZE),
+		]),
+	);
+	const bsv21Batches = new Map(
+		activeTokens.map((t) => [
+			t.tokenId,
+			isolateListedBatches(t.outputs, TOKEN_CHUNK_SIZE),
+		]),
 	);
 
 	// Build the step list up front so the UI can render the full plan
@@ -234,6 +346,14 @@ export async function executeMigrationSweep(
 			txids: [],
 		});
 	}
+	for (const token of activeBsv20) {
+		steps.push({
+			id: `bsv20:${token.tick}`,
+			label: `${token.tick} (${token.outputs.length} output${token.outputs.length !== 1 ? "s" : ""})`,
+			status: "pending",
+			txids: [],
+		});
+	}
 	for (const token of activeTokens) {
 		steps.push({
 			id: `token:${token.tokenId}`,
@@ -246,8 +366,8 @@ export async function executeMigrationSweep(
 	const totalUnits =
 		fundingChunks.length +
 		ordinalChunks.length +
-		activeTokens.reduce(
-			(sum, t) => sum + chunk(t.outputs, TOKEN_CHUNK_SIZE).length,
+		[...bsv20Batches.values(), ...bsv21Batches.values()].reduce(
+			(sum, batches) => sum + batches.length,
 			0,
 		);
 	let completedUnits = 0;
@@ -282,7 +402,7 @@ export async function executeMigrationSweep(
 		execute: (
 			prepared: PreparedInputs["prepared"],
 			keys: PrivateKey[],
-		) => Promise<{ txid?: string; error?: string }>,
+		) => Promise<{ txid?: string; error?: string; spentOutpoints?: string[] }>,
 		collect: (txid: string) => void,
 	) => {
 		const step = stepById(stepId);
@@ -293,11 +413,13 @@ export async function executeMigrationSweep(
 		for (let i = 0; i < chunks.length; i++) {
 			const batchLabel =
 				chunks.length > 1 ? ` (batch ${i + 1}/${chunks.length})` : "";
+			let chunkFailed = false;
 			try {
 				step.detail = `preparing inputs${batchLabel}`;
 				emit(`${errorLabel}: preparing inputs${batchLabel}...`);
 
 				const { prepared, failures } = await prepareInputsConcurrent(
+					actions.prepareSweepInputs,
 					ctx,
 					chunks[i],
 					(done, total) => {
@@ -311,35 +433,69 @@ export async function executeMigrationSweep(
 						`${errorLabel}: skipped ${failure.outpoint} (${failure.error})`,
 					);
 				}
+				// A skipped output stays at the legacy address: the step is
+				// not done even when the rest of the chunk goes through.
+				if (failures.length > 0) chunkFailed = true;
 
-				if (prepared.length === 0) {
-					if (failures.length > 0) failedChunks++;
-					completedUnits++;
-					continue;
-				}
+				if (prepared.length > 0) {
+					step.detail = `broadcasting${batchLabel}`;
+					emit(`${errorLabel}: broadcasting${batchLabel}...`);
 
-				step.detail = `broadcasting${batchLabel}`;
-				emit(`${errorLabel}: broadcasting${batchLabel}...`);
+					const keys = buildKeys(
+						prepared.map((p) => p.output),
+						keyMap,
+					);
+					const txResult = await execute(prepared, keys);
 
-				const keys = buildKeys(
-					prepared.map((p) => p.output),
-					keyMap,
-				);
-				const txResult = await execute(prepared, keys);
-
-				if (txResult.error) {
-					failedChunks++;
-					result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
-				} else if (txResult.txid) {
-					collect(txResult.txid);
-					step.txids.push(txResult.txid);
+					if (txResult.error) {
+						chunkFailed = true;
+						console.error(
+							`[migration] ${errorLabel}${batchLabel} failed`,
+							txResult.error,
+						);
+						result.errors.push(`${errorLabel}${batchLabel}: ${txResult.error}`);
+					} else if (txResult.txid) {
+						collect(txResult.txid);
+						step.txids.push(txResult.txid);
+						// The BSV-21 sweep spends only the inputs the overlay accepted
+						// and reports them; any other input is still at the legacy
+						// address and must not read as swept.
+						const spent = txResult.spentOutpoints
+							? new Set(txResult.spentOutpoints.map(canonicalOutpoint))
+							: null;
+						const outputs = prepared.map((p) => p.output);
+						const swept = spent
+							? outputs.filter((o) => spent.has(canonicalOutpoint(o.outpoint)))
+							: outputs;
+						const left = spent
+							? outputs.filter((o) => !spent.has(canonicalOutpoint(o.outpoint)))
+							: [];
+						if (left.length > 0) {
+							chunkFailed = true;
+							result.errors.push(
+								`${errorLabel}${batchLabel}: ${left.length} output${left.length !== 1 ? "s were" : " was"} not accepted by the token overlay and stayed at the legacy address (${left.map((o) => o.outpoint).join(", ")})`,
+							);
+						}
+						for (const output of swept) {
+							if (isListedOutput(output)) {
+								result.cancelledListings.push(output.outpoint);
+							}
+						}
+					} else {
+						chunkFailed = true;
+						result.errors.push(
+							`${errorLabel}${batchLabel}: the sweep returned no transaction id`,
+						);
+					}
 				}
 			} catch (error) {
-				failedChunks++;
+				chunkFailed = true;
+				console.error(`[migration] ${errorLabel}${batchLabel} failed`, error);
 				result.errors.push(
 					`${errorLabel}${batchLabel}: ${error instanceof Error ? error.message : String(error)}`,
 				);
 			}
+			if (chunkFailed) failedChunks++;
 			completedUnits++;
 			emit(`${errorLabel}: batch ${i + 1}/${chunks.length} complete`);
 		}
@@ -360,7 +516,7 @@ export async function executeMigrationSweep(
 			"BSV sweep",
 			fundingChunks,
 			(prepared, keys) =>
-				sweepBsv.execute(ctx, {
+				actions.sweepBsv(ctx, {
 					inputs: prepared.map((p) => p.input),
 					keys,
 				}),
@@ -376,7 +532,7 @@ export async function executeMigrationSweep(
 			"Ordinal sweep",
 			ordinalChunks,
 			(prepared, keys) =>
-				sweepOrdinals.execute(ctx, {
+				actions.sweepOrdinals(ctx, {
 					inputs: prepared.map((p) => p.input),
 					keys,
 				}),
@@ -384,32 +540,56 @@ export async function executeMigrationSweep(
 		);
 	}
 
-	// 3. BSV-21 tokens — chunked per token, amounts from the overlay-validated
-	// map (never the origin mint amount), inactive tokens skipped
+	// 3. BSV-20 tokens — one step per ticker, listed outputs one per tx,
+	// amounts parsed by groupBsv20Tokens (same order as @1sat/sweep-ui)
+	for (const token of activeBsv20) {
+		const amountOf = tokenAmountLookup(token.amounts, `BSV-20 ${token.tick}`);
+		await sweepChunked(
+			`bsv20:${token.tick}`,
+			`BSV-20 ${token.tick}`,
+			bsv20Batches.get(token.tick) ?? [],
+			(prepared, keys) =>
+				actions.sweepBsv20(ctx, {
+					inputs: prepared.map((p) => ({
+						...p.input,
+						tick: token.tick,
+						amount: amountOf(p.output.outpoint),
+					})),
+					keys,
+				}),
+			(txid) => result.bsv20Txids.push(txid),
+		);
+	}
+
+	// 4. BSV-21 tokens — chunked per token with listed outputs one per tx,
+	// amounts from the overlay-validated map (never the origin mint amount),
+	// inactive tokens skipped
 	for (const token of activeTokens) {
 		const label = token.symbol ?? token.tokenId.slice(0, 8);
 		const step = stepById(`token:${token.tokenId}`);
+		const batches = bsv21Batches.get(token.tokenId) ?? [];
 		if (!token.isActive) {
 			if (step) {
 				step.status = "error";
 				step.error = "not validated on the overlay — skipped";
 			}
 			result.errors.push(`Token ${label}: not active on the overlay — skipped`);
-			completedUnits += chunk(token.outputs, TOKEN_CHUNK_SIZE).length;
+			completedUnits += batches.length;
 			emit(`Token ${label} skipped`);
 			continue;
 		}
 
+		const amountOf = tokenAmountLookup(token.amounts, `Token ${label}`);
 		await sweepChunked(
 			`token:${token.tokenId}`,
 			`Token ${label}`,
-			chunk(token.outputs, TOKEN_CHUNK_SIZE),
+			batches,
 			(prepared, keys) =>
-				sweepBsv21.execute(ctx, {
+				actions.sweepBsv21(ctx, {
 					inputs: prepared.map((p) => ({
 						...p.input,
 						tokenId: token.tokenId,
-						amount: token.amounts.get(p.output.outpoint) ?? "0",
+						amount: amountOf(p.output.outpoint),
 					})),
 					keys,
 				}),
