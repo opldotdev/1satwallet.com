@@ -39,6 +39,7 @@ const SAFE_CONTEXT_KEYS = new Set([
 	"route",
 	"retryable",
 	"httpStatus",
+	"errorName",
 ]);
 const CODE_DETAILS: Record<
 	DiagnosticCode,
@@ -82,6 +83,12 @@ const safeToken = (value: string, fallback: string): string => {
 /** A caller-supplied string cut to `max` characters for errors and logs. */
 export const clipForLog = (value: string, max = 64): string =>
 	value.length > max ? `${value.slice(0, max)}…` : value;
+
+/** The error's class name (never its message), safe for diagnostics. */
+export function errorNameOf(error: unknown): string {
+	if (error instanceof Error) return error.name || "Error";
+	return typeof error;
+}
 
 export function createCorrelationId(): string {
 	return (

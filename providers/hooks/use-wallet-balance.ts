@@ -8,7 +8,7 @@ import {
 } from "@1sat/actions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { errorNameOf, reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	type AssetSurfaceState,
 	assetSurfaceFromCount,
@@ -144,17 +144,12 @@ export function useWalletBalance({
 									);
 								});
 							} catch (error) {
-								console.error(
-									"[wallet-balance] Legacy funding scan failed",
-									address,
-									error,
-								);
 								reportDiagnostic({
 									category: "provider",
 									code: "provider.failed",
 									operation: "wallet.balance.legacy-scan",
 									recoverable: true,
-									context: { retryable: true },
+									context: { retryable: true, errorName: errorNameOf(error) },
 								});
 								return [];
 							}
@@ -194,16 +189,15 @@ export function useWalletBalance({
 				]);
 
 			if (!balanceResult.ok) {
-				console.error(
-					"[wallet-balance] Listing balance outputs failed",
-					balanceResult.error,
-				);
 				reportDiagnostic({
 					category: "provider",
 					code: "provider.failed",
 					operation: "wallet.balance.list-outputs",
 					recoverable: true,
-					context: { retryable: true },
+					context: {
+						retryable: true,
+						errorName: errorNameOf(balanceResult.error),
+					},
 				});
 			}
 
@@ -220,25 +214,28 @@ export function useWalletBalance({
 				: bsv21Result.ok
 					? assetSurfaceFromCount(bsv21Balances.length)
 					: { kind: "error", message: "Couldn't load. Try again." };
-			if (!ordinalsResult.ok && !("skipped" in ordinalsResult)) {
-				console.error(
-					"[wallet-balance] Reading ordinals failed",
-					ordinalsResult.error,
-				);
-			}
-			if (!bsv21Result.ok && !("skipped" in bsv21Result)) {
-				console.error(
-					"[wallet-balance] Reading BSV-21 balances failed",
-					bsv21Result.error,
-				);
-			}
-			if (ordinalsState.kind === "error" || bsv21State.kind === "error") {
+			if (!ordinalsResult.ok && "error" in ordinalsResult) {
 				reportDiagnostic({
 					category: "provider",
 					code: "provider.failed",
-					operation: "wallet.balance.asset-read",
+					operation: "wallet.balance.ordinals-read",
 					recoverable: true,
-					context: { retryable: true, capability: assetRead },
+					context: {
+						retryable: true,
+						errorName: errorNameOf(ordinalsResult.error),
+					},
+				});
+			}
+			if (!bsv21Result.ok && "error" in bsv21Result) {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.balance.bsv21-read",
+					recoverable: true,
+					context: {
+						retryable: true,
+						errorName: errorNameOf(bsv21Result.error),
+					},
 				});
 			}
 
