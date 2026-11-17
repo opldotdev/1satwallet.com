@@ -143,7 +143,12 @@ export function useWalletBalance({
 											e === "type:Token",
 									);
 								});
-							} catch {
+							} catch (error) {
+								console.error(
+									"[wallet-balance] Legacy funding scan failed",
+									address,
+									error,
+								);
 								reportDiagnostic({
 									category: "provider",
 									code: "provider.failed",
@@ -189,6 +194,10 @@ export function useWalletBalance({
 				]);
 
 			if (!balanceResult.ok) {
+				console.error(
+					"[wallet-balance] Listing balance outputs failed",
+					balanceResult.error,
+				);
 				reportDiagnostic({
 					category: "provider",
 					code: "provider.failed",
@@ -211,6 +220,18 @@ export function useWalletBalance({
 				: bsv21Result.ok
 					? assetSurfaceFromCount(bsv21Balances.length)
 					: { kind: "error", message: "Couldn't load. Try again." };
+			if (!ordinalsResult.ok && !("skipped" in ordinalsResult)) {
+				console.error(
+					"[wallet-balance] Reading ordinals failed",
+					ordinalsResult.error,
+				);
+			}
+			if (!bsv21Result.ok && !("skipped" in bsv21Result)) {
+				console.error(
+					"[wallet-balance] Reading BSV-21 balances failed",
+					bsv21Result.error,
+				);
+			}
 			if (ordinalsState.kind === "error" || bsv21State.kind === "error") {
 				reportDiagnostic({
 					category: "provider",
