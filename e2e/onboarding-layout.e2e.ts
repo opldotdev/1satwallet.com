@@ -63,18 +63,19 @@ function measureAction(browser: Browser, name: string) {
 				el.getClientRects().length > 0 &&
 				(el.textContent ?? "").replace(/\s+/g, " ").trim() === label,
 		);
-		const card = button?.closest<HTMLElement>('[data-slot="card"]');
-		if (!button || !card) return null;
-		const style = getComputedStyle(card);
-		const spacing = Number.parseFloat(
-			style.getPropertyValue("--card-spacing") || "0",
+		// The card part the button sits in (footer or content). Its padding is
+		// read resolved, in px: --card-spacing itself is a calc() string.
+		const part = button?.closest<HTMLElement>(
+			'[data-slot="card-footer"], [data-slot="card-content"]',
 		);
-		const border =
-			Number.parseFloat(style.borderLeftWidth) +
-			Number.parseFloat(style.borderRightWidth);
+		if (!button || !part?.closest('[data-slot="card"]')) return null;
+		const style = getComputedStyle(part);
 		return {
 			width: button.getBoundingClientRect().width,
-			available: card.getBoundingClientRect().width - border - 2 * spacing,
+			available:
+				part.clientWidth -
+				Number.parseFloat(style.paddingLeft) -
+				Number.parseFloat(style.paddingRight),
 		};
 	}, name);
 }
