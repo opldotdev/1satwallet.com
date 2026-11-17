@@ -196,6 +196,10 @@ describe("wallet chrome", () => {
 		assert.match(tabs, /list\.scrollTo\(\{/);
 		assert.match(tabs, /prefers-reduced-motion: reduce/);
 		assert.doesNotMatch(tabs, /scrollIntoView/);
+		// The glide is the component's own, so a new section cancels the last
+		// one's; a browser smooth scroll could land after it.
+		assert.doesNotMatch(tabs, /"smooth"/);
+		assert.match(tabs, /cancelAnimationFrame/);
 		assert.match(tabs, /normalizeWalletPath\(usePathname\(\)\)/);
 		assert.match(tabs, /if \(hidden\) return null;/);
 	});

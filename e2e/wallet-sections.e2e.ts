@@ -143,20 +143,52 @@ async function waitForChrome(
 	);
 }
 
+/** The tab row's scroll state, for a failure message that shows its cause. */
+function readTabRow(browser: Browser) {
+	return browser.evaluate((nav: string) => {
+		const round = (n: number) => Math.round(n * 100) / 100;
+		const span = (el: Element) => {
+			const rect = el.getBoundingClientRect();
+			return `${round(rect.left)}-${round(rect.right)}px (${round(rect.width)}px wide)`;
+		};
+		const list = document.querySelector(`${nav} ul`);
+		const current = document.querySelector(`${nav} [aria-current="page"]`);
+		if (!list) return `no ${nav} ul`;
+		return [
+			`scrollLeft ${round(list.scrollLeft)}`,
+			`clientWidth ${list.clientWidth}`,
+			`scrollWidth ${list.scrollWidth}`,
+			`list ${span(list)}`,
+			current
+				? `current tab "${(current.textContent ?? "").trim()}" ${span(current)}`
+				: "no current tab",
+		].join(", ");
+	}, NAV);
+}
+
 /** Waits until the current tab has stopped scrolling into view. */
 async function waitForCurrentTabInView(browser: Browser, where: string) {
-	await browser.waitFor(
-		`${where}: the current tab to scroll into view`,
-		(nav: string) => {
-			const list = document.querySelector(`${nav} ul`);
-			const current = document.querySelector(`${nav} [aria-current="page"]`);
-			if (!list || !current) return false;
-			const box = list.getBoundingClientRect();
-			const tab = current.getBoundingClientRect();
-			return tab.left >= box.left - 1 && tab.right <= box.right + 1;
-		},
-		NAV,
-	);
+	try {
+		await browser.waitFor(
+			`${where}: the current tab to scroll into view`,
+			(nav: string) => {
+				const list = document.querySelector(`${nav} ul`);
+				const current = document.querySelector(`${nav} [aria-current="page"]`);
+				if (!list || !current) return false;
+				const box = list.getBoundingClientRect();
+				const tab = current.getBoundingClientRect();
+				return tab.left >= box.left - 1 && tab.right <= box.right + 1;
+			},
+			NAV,
+		);
+	} catch (error) {
+		const row = await readTabRow(browser).catch(
+			(readError: unknown) => `the row could not be read: ${readError}`,
+		);
+		throw new Error(`${(error as Error).message}. Tab row: ${row}.`, {
+			cause: error,
+		});
+	}
 }
 
 function checkSection(
