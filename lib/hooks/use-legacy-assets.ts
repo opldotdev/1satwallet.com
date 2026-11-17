@@ -108,6 +108,8 @@ export function useLegacyAssets(
 
 	const [scanTrigger, setScanTrigger] = useState(0);
 	const rescan = useCallback(() => {
+		// Clear in the same render so callers never decide from the old scan
+		setScannedKey(null);
 		setScanTrigger((prev) => prev + 1);
 	}, []);
 

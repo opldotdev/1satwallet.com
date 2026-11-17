@@ -148,15 +148,21 @@ function MigrationProgress({
 
 function CompletionState({
 	sweepResult,
+	remaining,
 	onBackToWallet,
 	onRetryFailed,
 }: {
 	sweepResult: SweepResult | null;
+	remaining: number;
 	onBackToWallet: () => void;
 	onRetryFailed: () => void;
 }) {
 	const hadErrors = (sweepResult?.errors.length ?? 0) > 0;
-	const canRescan = hadErrors || !sweepResult;
+	const rescanLabel = hadErrors
+		? "Rescan & Retry Failed Sweeps"
+		: remaining > 0
+			? `Sweep Remaining ${remaining} ${remaining === 1 ? "Item" : "Items"}`
+			: "Scan Legacy Addresses Again";
 	return (
 		<Card>
 			<CardHeader>
@@ -201,13 +207,15 @@ function CompletionState({
 						)}
 					</div>
 				)}
-				{canRescan && (
-					<Button className="w-full" onClick={onRetryFailed}>
-						{hadErrors
-							? "Rescan & Retry Failed Sweeps"
-							: "Scan Legacy Addresses Again"}
-					</Button>
+				{sweepResult && remaining > 0 && (
+					<p className="text-sm text-muted-foreground">
+						{remaining} {remaining === 1 ? "item is" : "items are"} still at
+						your legacy addresses.
+					</p>
 				)}
+				<Button className="w-full" onClick={onRetryFailed}>
+					{rescanLabel}
+				</Button>
 				<Button variant="outline" className="w-full" onClick={onBackToWallet}>
 					Back to Wallet
 				</Button>
@@ -970,6 +978,7 @@ export default function MigratePage() {
 				{phase === "complete" && (
 					<CompletionState
 						sweepResult={sweepResult}
+						remaining={assets.scanned && !assets.loading ? sweepableLegacy : 0}
 						onBackToWallet={() => router.push("/wallet")}
 						onRetryFailed={() => {
 							setSweepResult(null);

@@ -116,4 +116,30 @@ describe("legacy address key", () => {
 			/loading: loading \|\| \(addressKey !== null && !scanned\)/,
 		);
 	});
+
+	it("a rescan marks the scan unfinished in the same render", () => {
+		const hook = readFileSync(
+			join(import.meta.dirname, "../lib/hooks/use-legacy-assets.ts"),
+			"utf8",
+		);
+		assert.match(
+			hook,
+			/const rescan = useCallback\(\(\) => \{[^}]*setScannedKey\(null\);[^}]*setScanTrigger/,
+		);
+	});
+});
+
+describe("completion screen", () => {
+	it("always offers a rescan, and offers the remaining items after a sweep", () => {
+		const page = readFileSync(
+			join(import.meta.dirname, "../app/(main)/wallet/migrate/page.tsx"),
+			"utf8",
+		);
+		assert.doesNotMatch(page, /canRescan/);
+		assert.match(page, /Sweep Remaining \$\{remaining\}/);
+		assert.match(
+			page,
+			/remaining=\{\s*assets\.scanned && !assets\.loading \? sweepableLegacy : 0/,
+		);
+	});
 });
