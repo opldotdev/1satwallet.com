@@ -51,7 +51,17 @@ function Bindings({
 		}),
 	);
 	extra?.();
-	return React.createElement("input", { "aria-label": "search" });
+	return React.createElement(
+		React.Fragment,
+		null,
+		React.createElement("input", { "aria-label": "search" }),
+		React.createElement("button", {
+			type: "button",
+			role: "combobox",
+			"aria-expanded": false,
+			"aria-label": "currency",
+		}),
+	);
 }
 
 describe("keyboard shortcuts", () => {
@@ -69,15 +79,23 @@ describe("keyboard shortcuts", () => {
 		(
 			globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 		).IS_REACT_ACT_ENVIRONMENT = true;
-		React = await import("react");
-		act = React.act;
-		({ createRoot } = await import("react-dom/client"));
-		hotkeys = await import("@tanstack/react-hotkeys");
-		loaded.hotkeys = hotkeys;
-		loaded.React = React;
+		try {
+			React = await import("react");
+			act = React.act;
+			({ createRoot } = await import("react-dom/client"));
+			hotkeys = await import("@tanstack/react-hotkeys");
+			loaded.hotkeys = hotkeys;
+			loaded.React = React;
+		} catch (error) {
+			// Leave no DOM behind for the other test files in this process.
+			await GlobalRegistrator.unregister();
+			throw error;
+		}
 	});
 
 	after(async () => {
+		delete (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean })
+			.IS_REACT_ACT_ENVIRONMENT;
 		await GlobalRegistrator.unregister();
 	});
 
@@ -90,16 +108,23 @@ describe("keyboard shortcuts", () => {
 		chain: Chain = "main",
 		features: Partial<Record<StackFeature, boolean>> | undefined = ALL_FEATURES,
 		extra?: () => void,
+		withProvider = true,
 	) {
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = createRoot(container);
 		await act(async () => {
 			root.render(
-				React.createElement(hotkeys.HotkeysProvider, {
-					defaultOptions: { platform: "linux" },
-					children: React.createElement(Bindings, { chain, features, extra }),
-				}),
+				withProvider
+					? React.createElement(hotkeys.HotkeysProvider, {
+							defaultOptions: { platform: "linux" },
+							children: React.createElement(Bindings, {
+								chain,
+								features,
+								extra,
+							}),
+						})
+					: React.createElement(Bindings, { chain, features, extra }),
 			);
 		});
 	}
@@ -176,7 +201,26 @@ describe("keyboard shortcuts", () => {
 		assert.deepEqual(visited, ["/wallet"]);
 	});
 
-	it("needs g and the key within a second", async () => {
+	it("works with no provider, as the app mounts none", async () => {
+		await mount("main", ALL_FEATURES, undefined, false);
+		await press("g");
+		await press("y");
+		await unmount();
+		assert.deepEqual(visited, ["/wallet/history"]);
+	});
+
+	it("still goes while a closed select keeps focus", async () => {
+		await mount();
+		const trigger = container.querySelector("[role=combobox]");
+		assert.ok(trigger instanceof HTMLElement);
+		trigger.focus();
+		await press("g", {}, trigger);
+		await press("w", {}, trigger);
+		await unmount();
+		assert.deepEqual(visited, ["/wallet"]);
+	});
+
+	it("needs g first", async () => {
 		await mount();
 		await press("w");
 		await unmount();

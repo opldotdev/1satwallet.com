@@ -1,6 +1,6 @@
 "use client";
 
-import { formatForDisplay } from "@tanstack/react-hotkeys";
+import { useFormatForDisplay } from "@tanstack/react-hotkeys";
 import { ChevronRight, Moon, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
@@ -18,7 +18,9 @@ import {
 } from "@/lib/keyboard-shortcuts";
 
 /** What Settings lists, all from the one shortcut list. */
-function shortcutGroups(): readonly {
+function shortcutGroups(
+	formatForDisplay: ReturnType<typeof useFormatForDisplay>,
+): readonly {
 	group: string;
 	keys: readonly (readonly [label: string, key: string])[];
 }[] {
@@ -44,6 +46,7 @@ export function SettingsForm() {
 	const { play } = useSound();
 	const { theme, setTheme } = useTheme();
 	const mounted = useMounted();
+	const formatForDisplay = useFormatForDisplay();
 
 	if (!mounted) return null;
 
@@ -103,7 +106,7 @@ export function SettingsForm() {
 				<SectionHeader title="Keyboard shortcuts" />
 				<Card>
 					<CardContent className="grid grid-cols-2 gap-6 text-sm lg:grid-cols-4">
-						{shortcutGroups().map(({ group, keys }) => (
+						{shortcutGroups(formatForDisplay).map(({ group, keys }) => (
 							<div key={group} className="flex flex-col gap-1">
 								<p className="font-medium">{group}</p>
 								{keys.map(([label, key]) => (

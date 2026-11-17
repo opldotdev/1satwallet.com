@@ -63,8 +63,11 @@ export function KeyboardShortcuts() {
 	useHotkey(CHORD_SHORTCUTS.commandMenu.hotkey, () =>
 		setCommandMenuOpen((open) => !open),
 	);
-	useHotkey(CHORD_SHORTCUTS.toggleTheme.hotkey, () =>
-		setTheme(resolvedTheme === "dark" ? "light" : "dark"),
+	// Not while typing in a field, as before.
+	useHotkey(
+		CHORD_SHORTCUTS.toggleTheme.hotkey,
+		() => setTheme(resolvedTheme === "dark" ? "light" : "dark"),
+		{ ignoreInputs: true },
 	);
 
 	return (
