@@ -26,9 +26,17 @@ import type { Keys } from "@/lib/types";
 import {
 	canSubmitPaths,
 	detectionResultApplies,
-	pathsAfterCustomToggle,
+	nextSearchRun,
+	searchOwnsProcessing,
+	supersedeSearch,
 	type WalletPaths,
 } from "@/lib/wallet/mnemonic-paths";
+
+/**
+ * Why the automatic path search gave no paths: it threw, or it ran and
+ * found no ordinals path for these words (custom paths are the way on).
+ */
+type DetectionFailure = "error" | "not-found";
 
 interface MnemonicGridProps {
 	onSubmit?: (keys: Keys) => void;
@@ -49,7 +57,9 @@ export function MnemonicGrid({
 
 	const [processing, setProcessing] = useState(false);
 	const [useCustomPaths, setUseCustomPaths] = useState(false);
-	const [detectionFailed, setDetectionFailed] = useState(false);
+	const [detectionFailed, setDetectionFailed] = useState<
+		DetectionFailure | undefined
+	>();
 	const [pendingPaths, setPendingPaths] = useState<WalletPaths | undefined>();
 	// The paths that last failed to derive. The notice shows only while
 	// those exact paths are still picked; any edit makes a new object.
@@ -59,6 +69,14 @@ export function MnemonicGrid({
 	// changes them.
 	const phraseRef = useRef(inputMnemonic.join(" "));
 	const customRef = useRef(false);
+	// The latest path search's run number. Start over and custom paths
+	// supersede the search in flight, so only the latest run touches
+	// `processing` or the paths when it returns.
+	const searchRunRef = useRef(0);
+	const dropSearchInFlight = () => {
+		searchRunRef.current = supersedeSearch(searchRunRef.current);
+		setProcessing(false);
+	};
 	const updateWords = (words: string[]) => {
 		phraseRef.current = words.join(" ");
 		setInputMnemonic(words);
@@ -165,7 +183,7 @@ export function MnemonicGrid({
 			.map((w) => w.toLowerCase());
 
 		if (words.length > 0) {
-			setDetectionFailed(false);
+			setDetectionFailed(undefined);
 			// Detected paths belong to the old words.
 			if (!useCustomPaths) setPendingPaths(undefined);
 			const newMnemonic = [...inputMnemonic];
@@ -183,16 +201,22 @@ export function MnemonicGrid({
 		const newMnemonic = [...inputMnemonic];
 		newMnemonic[index] = value.trim().toLowerCase();
 		updateWords(newMnemonic);
-		setDetectionFailed(false);
+		setDetectionFailed(undefined);
 		if (!useCustomPaths) setPendingPaths(undefined);
 	};
 
 	const toggleCustomPaths = () => {
 		const turningOn = !useCustomPaths;
 		customRef.current = turningOn;
+		// Custom mode never uses a search's result, so one still running
+		// would only hold Next back with no sign on screen.
+		if (turningOn) dropSearchInFlight();
 		setUseCustomPaths(turningOn);
-		setPendingPaths((paths) => pathsAfterCustomToggle(turningOn, paths));
-		setDetectionFailed(false);
+		// Either way it starts empty: found paths belong to the words they
+		// were found for, and turning custom off drops whatever was picked
+		// or typed, so the search runs again for these words.
+		setPendingPaths(undefined);
+		setDetectionFailed(undefined);
 	};
 
 	const hasWords = inputMnemonic.some((w) => w);
@@ -207,28 +231,31 @@ export function MnemonicGrid({
 			const phrase = inputMnemonic.join(" ");
 			if (inputMnemonic.some((w) => !w)) return;
 
+			const run = nextSearchRun(searchRunRef.current, phrase);
+			searchRunRef.current = run.id;
 			setProcessing(true);
-			const stillApplies = () =>
-				detectionResultApplies(phrase, {
-					phrase: phraseRef.current,
-					useCustomPaths: customRef.current,
-				});
+			const now = () => ({
+				latestRunId: searchRunRef.current,
+				phrase: phraseRef.current,
+				useCustomPaths: customRef.current,
+			});
 			try {
 				const keys = await findKeysFromMnemonic(phrase);
-				// The words or the switch changed while it ran: drop the result,
-				// and the search runs again for what is there now.
-				if (!stillApplies()) return;
+				// The words or the switch changed while it ran, or Start over
+				// dropped it: drop the result, and the search runs again for
+				// what is there now.
+				if (!detectionResultApplies(run, now())) return;
 				if (keys.ordAddressPath !== undefined) {
 					setPendingPaths({
 						changeAddressPath: (keys.changeAddressPath as string) || "m/0",
 						ordAddressPath: keys.ordAddressPath as string,
 					});
-					setDetectionFailed(false);
+					setDetectionFailed(undefined);
 				} else {
-					setDetectionFailed(true);
+					setDetectionFailed("not-found");
 				}
 			} catch (error) {
-				if (stillApplies()) setDetectionFailed(true);
+				if (detectionResultApplies(run, now())) setDetectionFailed("error");
 				// Logged without its message: it may quote the phrase.
 				console.error("[mnemonic] wallet path detection failed", {
 					name: error instanceof Error ? error.name : typeof error,
@@ -240,7 +267,8 @@ export function MnemonicGrid({
 					recoverable: true,
 				});
 			} finally {
-				setProcessing(false);
+				// A superseded run leaves `processing` to the one after it.
+				if (searchOwnsProcessing(run, now())) setProcessing(false);
 			}
 		};
 
@@ -465,20 +493,36 @@ export function MnemonicGrid({
 				</div>
 			)}
 
-			{mode === "edit" && detectionFailed && !useCustomPaths && (
+			{mode === "edit" && detectionFailed === "error" && !useCustomPaths && (
 				<Notice role="alert" tone="danger">
 					<div className="flex flex-wrap items-center justify-between gap-3">
 						<p>Automatic wallet-path detection failed.</p>
 						<Button
 							variant="outline"
 							size="sm"
-							onClick={() => setDetectionFailed(false)}
+							onClick={() => setDetectionFailed(undefined)}
 						>
 							Try again
 						</Button>
 					</div>
 				</Notice>
 			)}
+
+			{mode === "edit" &&
+				detectionFailed === "not-found" &&
+				!useCustomPaths && (
+					<Notice role="alert" tone="warning">
+						<div className="flex flex-wrap items-center justify-between gap-3">
+							<p>
+								No ordinals path found for these words. Enter the wallet's paths
+								yourself.
+							</p>
+							<Button variant="outline" size="sm" onClick={toggleCustomPaths}>
+								Enter custom paths
+							</Button>
+						</div>
+					</Notice>
+				)}
 
 			{useCustomPaths && mode === "edit" && (
 				<div className="flex flex-col gap-3">
@@ -595,9 +639,9 @@ export function MnemonicGrid({
 							variant="ghost"
 							onClick={() => {
 								updateWords(Array(12).fill(""));
+								dropSearchInFlight();
 								setPendingPaths(undefined);
-								setProcessing(false);
-								setDetectionFailed(false);
+								setDetectionFailed(undefined);
 							}}
 						>
 							<RotateCcw data-icon="inline-start" />

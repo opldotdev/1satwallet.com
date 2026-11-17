@@ -74,11 +74,27 @@ export default function ImportPassphrasePage() {
 				return;
 
 			setIsSaving(true);
-			const success = await importWallet(walletKeys, passphrase, network);
-			setIsSaving(false);
-
-			if (!success) {
+			try {
+				const success = await importWallet(walletKeys, passphrase, network);
+				if (!success) {
+					// importWallet reported the cause.
+					setError("Could not save the wallet in this browser. Try again.");
+				}
+			} catch (err) {
+				// The name only: the message can carry key material.
+				console.error("[wallet] import failed to save the wallet", {
+					network,
+					name: err instanceof Error ? err.name : typeof err,
+				});
+				reportDiagnostic({
+					category: "action",
+					code: "action.failed",
+					operation: "wallet.import",
+					recoverable: true,
+				});
 				setError("Could not save the wallet in this browser. Try again.");
+			} finally {
+				setIsSaving(false);
 			}
 		} else {
 			if (

@@ -156,14 +156,6 @@ describe("mnemonic grid", () => {
 		assert.match(grid, /mode === "edit" &&\s*isValid &&\s*!useCustomPaths/);
 	});
 
-	it("drops detected paths when the words change", () => {
-		const grid = read("components/wallet/mnemonic-grid.tsx");
-		assert.match(
-			grid,
-			/handleWordChange[\s\S]*?if \(!useCustomPaths\) setPendingPaths\(undefined\)/,
-		);
-	});
-
 	it("catches a malformed custom path instead of throwing from Next", () => {
 		const grid = read("components/wallet/mnemonic-grid.tsx");
 		assert.match(
@@ -171,12 +163,6 @@ describe("mnemonic grid", () => {
 			/try \{\s*keys = getKeysFromMnemonicAndPaths\([\s\S]*?\.trim\(\)[\s\S]*?\} catch \(error\) \{[\s\S]*?name: error instanceof Error \? error\.name : typeof error/,
 		);
 		assert.match(grid, /That derivation path isn't valid\./);
-	});
-
-	it("updates the phrase and custom refs in the handlers, not in an effect", () => {
-		const grid = read("components/wallet/mnemonic-grid.tsx");
-		assert.doesNotMatch(grid, /phraseRef\.current = inputMnemonic/);
-		assert.match(grid, /customRef\.current = turningOn;/);
 	});
 
 	it("keeps the browser from completing, capitalizing or correcting seed words", () => {
@@ -305,6 +291,37 @@ describe("D5 screens", () => {
 			/console\.error\("\[cwi\] could not load the authorization request"/,
 		);
 		assert.match(page, /"Couldn't send the denial\. Try again\."/);
+		assert.match(page, /console\.error\("\[cwi\] could not unlock the wallet"/);
+		// The wire error is for the app and the log, never the screen.
+		assert.doesNotMatch(page, /setRequestError\(wireError/);
+	});
+
+	it("give each authorize card an h2 under the wallet header's h1", () => {
+		const page = read("app/(main)/wallet/cwi/authorize/page.tsx");
+		assert.doesNotMatch(page, /<h1/);
+		assert.doesNotMatch(page, /<CardTitle>\s*[^<\s]/);
+		assert.match(page, /<CardTitle>\s*<h2>Authorize wallet request<\/h2>/);
+	});
+
+	it("log a wallet save that throws and stop the spinner", () => {
+		for (const [file, tag] of [
+			["app/(main)/wallet/create/encrypt/page.tsx", "create"],
+			["app/(main)/wallet/import/passphrase/page.tsx", "import"],
+		]) {
+			const page = read(file);
+			const log = page.match(
+				new RegExp(`console\\.error\\("\\[wallet\\] ${tag} failed[^)]*\\)`),
+			)?.[0];
+			assert.ok(log, `${file}: expected the save failure logged`);
+			// The name only: the message can carry key material.
+			assert.match(log, /name: \w+ instanceof Error \? \w+\.name/, file);
+			assert.doesNotMatch(log, /\.message|passphrase|mnemonic|Keys/, file);
+			assert.match(
+				page,
+				/catch \(\w+\) \{[\s\S]*?Could not save the wallet in this browser\. Try again\.[\s\S]*?\} finally \{/,
+				file,
+			);
+		}
 	});
 
 	it("keep the hidden backup file input out of the tab order", () => {

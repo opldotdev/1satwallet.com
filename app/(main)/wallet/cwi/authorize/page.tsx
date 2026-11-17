@@ -232,9 +232,12 @@ function AuthorizeContent() {
 			} catch (completionError) {
 				console.error("[cwi] could not report a failed call to the app", {
 					requestId: requestData.requestId,
+					callError: wireError.description,
 					error: completionError,
 				});
-				setRequestError(wireError.description);
+				setRequestError(
+					"The request failed, and the app couldn't be told. Start again from the app.",
+				);
 				setIsSubmitting(false);
 			}
 		}
@@ -279,6 +282,12 @@ function AuthorizeContent() {
 					setUnlockError("Invalid passphrase");
 				}
 			} catch (error) {
+				// The error never carries the passphrase: unlockWallet rethrows
+				// only WalletSaveError, whose message is fixed.
+				console.error("[cwi] could not unlock the wallet", {
+					requestId,
+					error,
+				});
 				setUnlockError(
 					error instanceof WalletSaveError
 						? error.message
@@ -289,7 +298,7 @@ function AuthorizeContent() {
 				setIsUnlocking(false);
 			}
 		},
-		[isUnlocking, passphrase, unlockWallet],
+		[isUnlocking, passphrase, requestId, unlockWallet],
 	);
 
 	if (isLoadingRequest) {
@@ -340,7 +349,9 @@ function AuthorizeContent() {
 				<Card className="w-full max-w-md">
 					<CardHeader className="text-center">
 						<Shield className="mx-auto size-10 text-primary" />
-						<CardTitle>Unlock wallet</CardTitle>
+						<CardTitle>
+							<h2>Unlock wallet</h2>
+						</CardTitle>
 					</CardHeader>
 					<CardContent>
 						<form onSubmit={handleUnlock} className="flex flex-col gap-4">
@@ -402,7 +413,9 @@ function AuthorizeContent() {
 			<Card className="w-full max-w-lg">
 				<CardHeader className="text-center">
 					<CheckCircle className="mx-auto size-10 text-primary" />
-					<CardTitle>Authorize wallet request</CardTitle>
+					<CardTitle>
+						<h2>Authorize wallet request</h2>
+					</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
 					<DetailList>
@@ -477,7 +490,9 @@ function StatusScreen({
 			<Card className="w-full max-w-md">
 				<CardHeader className="text-center">
 					<div className="mx-auto [&>svg]:size-10">{icon}</div>
-					<CardTitle>{title}</CardTitle>
+					<CardTitle>
+						<h2>{title}</h2>
+					</CardTitle>
 				</CardHeader>
 				{children && (
 					<CardContent className="text-center text-sm text-muted-foreground">

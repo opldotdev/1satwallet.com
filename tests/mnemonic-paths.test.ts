@@ -3,7 +3,10 @@ import { describe, it } from "node:test";
 import {
 	canSubmitPaths,
 	detectionResultApplies,
-	pathsAfterCustomToggle,
+	nextSearchRun,
+	type PathSearchNow,
+	searchOwnsProcessing,
+	supersedeSearch,
 	type WalletPaths,
 } from "../lib/wallet/mnemonic-paths";
 
@@ -14,58 +17,104 @@ const DETECTED: WalletPaths = {
 	changeAddressPath: "m/0",
 	ordAddressPath: "m/0/7",
 };
-const RELAYX: WalletPaths = {
-	changeAddressPath: "m/44'/236'/0'/0/0",
-	ordAddressPath: "m/44'/236'/1'/0/0",
-	identityAddressPath: "m/0'/236'/0'/0/0",
-};
+
+/**
+ * The grid's search bookkeeping, driven the way the component drives it:
+ * the latest run number plus the words and switch on screen.
+ */
+function grid(phrase: string) {
+	const now: PathSearchNow = {
+		latestRunId: 0,
+		phrase,
+		useCustomPaths: false,
+	};
+	return {
+		now,
+		search() {
+			const run = nextSearchRun(now.latestRunId, now.phrase);
+			now.latestRunId = run.id;
+			return run;
+		},
+		edit(phrase: string) {
+			now.phrase = phrase;
+		},
+		startOver() {
+			now.latestRunId = supersedeSearch(now.latestRunId);
+			now.phrase = "";
+		},
+		customOn() {
+			now.latestRunId = supersedeSearch(now.latestRunId);
+			now.useCustomPaths = true;
+		},
+	};
+}
 
 describe("a path search that returns", () => {
-	it("applies to the words it searched while they are unchanged", () => {
-		assert.equal(
-			detectionResultApplies(PHRASE_A, {
-				phrase: PHRASE_A,
-				useCustomPaths: false,
-			}),
-			true,
-		);
+	it("applies and clears the spinner while nothing changed", () => {
+		const g = grid(PHRASE_A);
+		const run = g.search();
+		assert.equal(searchOwnsProcessing(run, g.now), true);
+		assert.equal(detectionResultApplies(run, g.now), true);
 	});
 
-	it("is ignored once the words were edited to another phrase mid-search", () => {
-		assert.equal(
-			detectionResultApplies(PHRASE_A, {
-				phrase: PHRASE_B,
-				useCustomPaths: false,
-			}),
-			false,
-		);
+	it("after the words were edited mid-search, clears the spinner but drops its result", () => {
+		const g = grid(PHRASE_A);
+		const run = g.search();
+		g.edit(PHRASE_B);
+		// Clearing the spinner lets the search run again for the new words.
+		assert.equal(searchOwnsProcessing(run, g.now), true);
+		assert.equal(detectionResultApplies(run, g.now), false);
 	});
 
-	it("is ignored once the words were cleared with Start over", () => {
-		assert.equal(
-			detectionResultApplies(PHRASE_A, { phrase: "", useCustomPaths: false }),
-			false,
-		);
+	it("after Start over, leaves the spinner and the paths alone", () => {
+		const g = grid(PHRASE_A);
+		const run = g.search();
+		g.startOver();
+		assert.equal(searchOwnsProcessing(run, g.now), false);
+		assert.equal(detectionResultApplies(run, g.now), false);
 	});
 
-	it("is ignored once custom paths were switched on mid-search", () => {
+	it("after Start over and a new phrase, leaves the new search's spinner on", () => {
+		const g = grid(PHRASE_A);
+		const old = g.search();
+		g.startOver();
+		g.edit(PHRASE_B);
+		const current = g.search();
+		// The old search returns first: it must not end the new one's
+		// spinner, or the grid would start a duplicate search.
+		assert.equal(searchOwnsProcessing(old, g.now), false);
+		assert.equal(detectionResultApplies(old, g.now), false);
+		assert.equal(searchOwnsProcessing(current, g.now), true);
+		assert.equal(detectionResultApplies(current, g.now), true);
+	});
+
+	it("drops its result even when the same words are pasted back after Start over", () => {
+		const g = grid(PHRASE_A);
+		const old = g.search();
+		g.startOver();
+		g.edit(PHRASE_A);
+		g.search();
+		assert.equal(detectionResultApplies(old, g.now), false);
+	});
+
+	it("after custom paths were switched on, leaves the spinner and the paths alone", () => {
+		const g = grid(PHRASE_A);
+		const run = g.search();
+		g.customOn();
+		assert.equal(searchOwnsProcessing(run, g.now), false);
+		assert.equal(detectionResultApplies(run, g.now), false);
+	});
+
+	it("never applies in custom mode, even as the latest run", () => {
+		const run = nextSearchRun(0, PHRASE_A);
 		assert.equal(
-			detectionResultApplies(PHRASE_A, {
+			detectionResultApplies(run, {
+				latestRunId: run.id,
 				phrase: PHRASE_A,
 				useCustomPaths: true,
 			}),
 			false,
 		);
-	});
-});
-
-describe("the custom paths switch", () => {
-	it("clears a preset when turned off, so the search runs again", () => {
-		assert.equal(pathsAfterCustomToggle(false, RELAYX), undefined);
-	});
-
-	it("starts custom mode empty, so found paths can't outlive their words", () => {
-		assert.equal(pathsAfterCustomToggle(true, DETECTED), undefined);
 	});
 });
 

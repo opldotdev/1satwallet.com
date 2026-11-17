@@ -47,6 +47,19 @@ export default function EncryptWalletPage() {
 					recoverable: true,
 				});
 			}
+		} catch (error) {
+			// The name only: the message can carry the seed phrase.
+			console.error("[wallet] create failed to save the wallet", {
+				network,
+				name: error instanceof Error ? error.name : typeof error,
+			});
+			reportDiagnostic({
+				category: "action",
+				code: "action.failed",
+				operation: "wallet.create",
+				recoverable: true,
+			});
+			setError("Could not save the wallet in this browser. Try again.");
 		} finally {
 			setIsLoading(false);
 		}
