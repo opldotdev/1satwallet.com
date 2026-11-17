@@ -6,6 +6,7 @@ import {
 	type Bsv21AuthorityActions,
 	confirmsPermanentMintTermination,
 	executeBsv21AuthorityIntent,
+	holdsBsv21MintAuthority,
 	permanentMintTerminationConfirmation,
 	prepareLiveBsv21AuthorityExecution,
 	requireLiveBsv21Capability,
@@ -215,5 +216,77 @@ describe("canonical BSV21 authority action dispatch", () => {
 			destination: { counterparty: "self" },
 		});
 		assert.equal(Object.hasOwn(mintInput ?? {}, "auth"), false);
+	});
+});
+
+describe("mint authority lookup", () => {
+	const walletWith = (outputs: unknown[], seen: unknown[] = []) =>
+		({
+			wallet: {
+				listOutputs: async (args: unknown) => {
+					seen.push(args);
+					return { totalOutputs: outputs.length, outputs };
+				},
+			},
+		}) as unknown as Pick<OneSatContext, "wallet">;
+	const deployTxid = "cd".repeat(32);
+
+	test("reads auth-tagged outputs of the BSV-21 basket, without transactions", async () => {
+		const seen: unknown[] = [];
+		await holdsBsv21MintAuthority(walletWith([], seen), tokenId);
+		assert.deepEqual(seen, [
+			{
+				basket: "bsv21",
+				tags: ["bsv21:auth"],
+				tagQueryMode: "all",
+				includeTags: true,
+				includeCustomInstructions: true,
+				limit: 1000,
+			},
+		]);
+	});
+
+	test("finds a re-issued authority by its token tag and a fresh one by its deploy outpoint", async () => {
+		const reissued = {
+			outpoint: `${"ef".repeat(32)}.1`,
+			tags: ["bsv21:auth", `bsv21:${tokenId}`],
+		};
+		const fresh = {
+			outpoint: `${deployTxid}.0`,
+			tags: ["bsv21:auth", "bsv21:deploy"],
+		};
+		assert.equal(
+			await holdsBsv21MintAuthority(walletWith([reissued]), tokenId),
+			true,
+		);
+		assert.equal(
+			await holdsBsv21MintAuthority(
+				walletWith([fresh]),
+				`${deployTxid.toUpperCase()}_0`,
+			),
+			true,
+		);
+		assert.equal(
+			await holdsBsv21MintAuthority(
+				walletWith([reissued, fresh]),
+				`${"12".repeat(32)}_0`,
+			),
+			false,
+		);
+		assert.equal(await holdsBsv21MintAuthority(walletWith([]), tokenId), false);
+	});
+
+	test("lets a failed read reach the caller", async () => {
+		const ctx = {
+			wallet: {
+				listOutputs: async () => {
+					throw new Error("storage closed");
+				},
+			},
+		} as unknown as Pick<OneSatContext, "wallet">;
+		await assert.rejects(
+			holdsBsv21MintAuthority(ctx, tokenId),
+			/storage closed/,
+		);
 	});
 });

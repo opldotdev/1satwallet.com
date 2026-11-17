@@ -2,7 +2,7 @@
 
 import { type Bsv21Balance, getBsv21Balances } from "@1sat/actions";
 import { useQueryClient } from "@tanstack/react-query";
-import { Coins, KeyRound, Loader2, Send } from "lucide-react";
+import { Coins, KeyRound, Loader2, RefreshCw, Send } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,10 @@ import type { Chain } from "@/lib/chain-endpoints";
 import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
-import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import {
+	type AssetSurfaceState,
+	describeAssetSurface,
+} from "@/lib/wallet/asset-query-state";
 import {
 	bsv21ActionFailureMessage,
 	executeBsv21Send,
@@ -47,6 +50,30 @@ import {
 /** A BSV-21 token's ticker: its symbol, else the start of its id. */
 export const bsv21Ticker = (token: { sym?: string; id: string }) =>
 	token.sym || token.id.slice(0, 8);
+
+/**
+ * What the wallet can send of a BSV-21 token: its whole balance. The
+ * wallet's balance read counts spendable outputs only, so nothing is pending.
+ */
+export const bsv21Spendable = (token: Bsv21Balance) => BigInt(token.amt);
+
+/** Why BSV-21 balances aren't shown, with a Retry after a failed read. */
+export function Bsv21Unreadable({ state }: { state: AssetSurfaceState }) {
+	const { refreshBalance } = useWalletToolbox();
+	return (
+		<EmptyState
+			action={
+				state.kind === "error" ? (
+					<Button onClick={refreshBalance} variant="outline">
+						<RefreshCw data-icon="inline-start" /> Retry
+					</Button>
+				) : undefined
+			}
+			icon={Coins}
+			title={describeAssetSurface(state, "token")}
+		/>
+	);
+}
 
 /** A BSV-21 token's icon, else its deploy inscription's thumbnail. */
 export const bsv21Icon = (token: Bsv21Balance, chain: Chain) =>
@@ -88,7 +115,7 @@ export function Bsv21SendDialog({
 	const [error, setError] = useState<string | null>(null);
 	const [busy, setBusy] = useState(false);
 	const ticker = bsv21Ticker(token);
-	const balance = BigInt(token.amt);
+	const balance = bsv21Spendable(token);
 
 	const refresh = useCallback(async () => {
 		refreshBalance();
@@ -344,12 +371,7 @@ export default function TokenGrid() {
 	if (isBalanceLoading) {
 		content = <TokenRowsSkeleton />;
 	} else if (bsv21State.kind !== "ready" && bsv21State.kind !== "empty") {
-		content = (
-			<EmptyState
-				icon={Coins}
-				title={describeAssetSurface(bsv21State, "token")}
-			/>
-		);
+		content = <Bsv21Unreadable state={bsv21State} />;
 	} else if (tokens.length === 0) {
 		content = (
 			<EmptyState
@@ -363,12 +385,8 @@ export default function TokenGrid() {
 			<TokenList>
 				{tokens.map((token) => (
 					<TokenRow
-						amount={formatBsv21Amount(token.all.confirmed, token.dec)}
-						caption={
-							token.all.pending > 0n
-								? `${formatBsv21Amount(token.all.pending, token.dec)} pending`
-								: shortOutpoint(token.id)
-						}
+						amount={formatBsv21Amount(bsv21Spendable(token), token.dec)}
+						caption={shortOutpoint(token.id)}
 						href={tokenDetailHref("bsv21", token.id)}
 						icon={bsv21Icon(token, chain)}
 						key={token.id}

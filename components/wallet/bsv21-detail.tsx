@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { Coins, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useState } from "react";
@@ -10,27 +11,79 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
-import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	formatBsv21Amount,
 	normalizeBsv21TokenId,
 } from "@/lib/wallet/bsv21-actions";
+import { holdsBsv21MintAuthority } from "@/lib/wallet/bsv21-authority";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { Bsv21AuthorityManager } from "./bsv21-authority-manager";
 import { TokenDetailLayout } from "./token-detail-layout";
 import {
 	Bsv21SendDialog,
 	Bsv21UnavailableNotice,
+	Bsv21Unreadable,
 	bsv21Icon,
+	bsv21Spendable,
 	bsv21Ticker,
 } from "./token-grid";
 
-/** Opens the mint authority manager with this token's ID filled in. */
+const NO_AUTHORITY =
+	"Minting needs this token's mint authority, and this wallet doesn't hold it.";
+
+/**
+ * Whether this wallet holds `tokenId`'s mint authority: true or false once
+ * read, null while reading or when the read failed (Mint then stays on and
+ * the mint itself says why it can't). Kept under the balance's key, so every
+ * balance refresh, a mint's included, reads it again.
+ */
+function useMintAuthority(tokenId: string): boolean | null {
+	const { bsv21State, chain, identityKey, oneSatContext } = useWalletToolbox();
+	// Read only from a wallet whose BSV-21 outputs this site already reads.
+	const readable = bsv21State.kind === "ready" || bsv21State.kind === "empty";
+	const query = useQuery({
+		queryKey: [
+			"wallet-balance",
+			chain,
+			identityKey,
+			"bsv21-mint-authority",
+			tokenId,
+		],
+		enabled: readable && oneSatContext !== null,
+		retry: false,
+		queryFn: async () => {
+			if (!oneSatContext)
+				throw new Error("No wallet to read authorities from.");
+			try {
+				return await holdsBsv21MintAuthority(oneSatContext, tokenId);
+			} catch (error) {
+				console.error(`[bsv21] mint authority of ${tokenId} not read:`, error);
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.bsv21.mint-authority",
+					recoverable: true,
+					context: { retryable: true },
+				});
+				throw error;
+			}
+		},
+	});
+	return query.isSuccess ? query.data : null;
+}
+
+/**
+ * Opens the mint authority manager with this token's ID filled in. Off when
+ * the wallet is known to hold no authority for it.
+ */
 function MintButton({
 	tokenId,
+	authority,
 	onDone,
 }: {
 	tokenId: string;
+	authority: boolean | null;
 	onDone: (message: string) => void;
 }) {
 	const { oneSatContext } = useWalletToolbox();
@@ -40,7 +93,11 @@ function MintButton({
 			onDone={onDone}
 			tokenId={tokenId}
 			trigger={
-				<Button disabled={!(oneSatContext && available)} variant="outline">
+				<Button
+					disabled={!(oneSatContext && available) || authority === false}
+					title={authority === false ? NO_AUTHORITY : undefined}
+					variant="outline"
+				>
 					<Sparkles data-icon="inline-start" /> Mint
 				</Button>
 			}
@@ -80,6 +137,11 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 	} = useWalletToolbox();
 	const [status, setStatus] = useState<string | null>(null);
 	const onDone = useCallback((message: string) => setStatus(message), []);
+	const authority = useMintAuthority(tokenId);
+	const noAuthority =
+		authority === false ? (
+			<p className="text-muted-foreground text-sm">{NO_AUTHORITY}</p>
+		) : null;
 	const marketHref = `/market/bsv21/${tokenId}`;
 	const statusLine = status ? (
 		<p className="text-primary text-sm wrap-anywhere" role="status">
@@ -100,12 +162,7 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 		);
 	}
 	if (bsv21State.kind !== "ready" && bsv21State.kind !== "empty") {
-		return (
-			<EmptyState
-				icon={Coins}
-				title={describeAssetSurface(bsv21State, "token")}
-			/>
-		);
+		return <Bsv21Unreadable state={bsv21State} />;
 	}
 
 	const token = bsv21Tokens.find(
@@ -117,8 +174,20 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 		return (
 			<div className="flex flex-col gap-4">
 				<EmptyState
-					action={<MintButton onDone={onDone} tokenId={tokenId} />}
-					description="A new token shows here once the BSV-21 overlay indexes it. If you hold its mint authority, you can mint it."
+					action={
+						authority === false ? undefined : (
+							<MintButton
+								authority={authority}
+								onDone={onDone}
+								tokenId={tokenId}
+							/>
+						)
+					}
+					description={
+						authority === false
+							? "A new token shows here once the BSV-21 overlay indexes it. This wallet doesn't hold its mint authority either."
+							: "A new token shows here once the BSV-21 overlay indexes it. If you hold its mint authority, you can mint it."
+					}
 					icon={Coins}
 					title="This wallet holds none of this token"
 				/>
@@ -133,15 +202,11 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 			actions={
 				<>
 					<Bsv21SendDialog onSent={onDone} token={token} />
-					<MintButton onDone={onDone} tokenId={tokenId} />
+					<MintButton authority={authority} onDone={onDone} tokenId={tokenId} />
 				</>
 			}
-			balance={formatBsv21Amount(token.all.confirmed, token.dec)}
-			balanceCaption={
-				token.all.pending > 0n
-					? `${formatBsv21Amount(token.all.pending, token.dec)} pending`
-					: "Available"
-			}
+			balance={formatBsv21Amount(bsv21Spendable(token), token.dec)}
+			balanceCaption="Available"
 			details={
 				<>
 					<DetailRow label="Decimals">{token.dec}</DetailRow>
@@ -163,6 +228,7 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 			status={
 				<>
 					<Bsv21UnavailableNotice />
+					{noAuthority}
 					{statusLine}
 				</>
 			}

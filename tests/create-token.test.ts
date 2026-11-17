@@ -157,6 +157,37 @@ describe("Tokens section", () => {
 		);
 	});
 
+	it("offers Retry on a failed BSV-21 read and shows one spendable amount", () => {
+		const grid = read("components/wallet/token-grid.tsx");
+		assert.match(grid, /<Button onClick=\{refreshBalance\} variant="outline">/);
+		assert.match(grid, /state\.kind === "error"/);
+		for (const file of [
+			"components/wallet/token-grid.tsx",
+			"components/wallet/bsv21-detail.tsx",
+		]) {
+			const source = read(file);
+			// @1sat/actions reads spendable outputs only: nothing is pending.
+			assert.doesNotMatch(source, /all\.(pending|confirmed)/, file);
+			assert.match(source, /<Bsv21Unreadable state=\{bsv21State\} \/>/, file);
+		}
+		assert.match(grid, /const balance = bsv21Spendable\(token\);/);
+		assert.match(
+			read("components/wallet/bsv21-detail.tsx"),
+			/balance=\{formatBsv21Amount\(bsv21Spendable\(token\), token\.dec\)\}/,
+		);
+	});
+
+	it("keeps the 1Color heading through every state of its group", () => {
+		const grid = read("components/wallet/one-color-grid.tsx");
+		const group = grid.slice(
+			grid.indexOf("export default function OneColorGrid"),
+		);
+		assert.match(group, /content = <TokenRowsSkeleton \/>;/);
+		assert.match(group, /content = <OneColorExternalWallet \/>;/);
+		assert.match(group, /<TokenGroup[\s\S]*id="tokens-1color"/);
+		assert.doesNotMatch(grid, /<OneColorGate/);
+	});
+
 	it("links the market from a BSV-21 token's page on mainnet only", () => {
 		const detail = read("components/wallet/bsv21-detail.tsx");
 		assert.match(detail, /isRouteAvailableOn\(chain, marketHref\)/);
