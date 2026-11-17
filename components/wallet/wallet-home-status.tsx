@@ -157,6 +157,17 @@ export function WalletHomeStatus() {
 								icon: RefreshCw,
 								task: syncTasks.addresses,
 							},
+							// Only the built-in wallet has its own Receive addresses to sync.
+							...(connectionMode !== "external"
+								? [
+										{
+											id: "receive-addresses",
+											title: "Receive address sync",
+											icon: RefreshCw,
+											task: syncTasks.receiveAddresses,
+										},
+									]
+								: []),
 							{
 								id: "payments",
 								title: "Payment inbox",

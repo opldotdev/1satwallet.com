@@ -26,6 +26,18 @@ wallet rotates its address after detecting an incoming payment. An external
 wallet supplies the derivation and remains responsible for discovery and
 rotation.
 
+The built-in wallet's Receive addresses are BRC-29 self-derived
+(`[2,"3241645161d8"]`, keyID `base64("1sat") base64(index)`), which
+`syncAddresses` does not scan. Each owned sync now also runs the
+`receiveAddresses` task (`lib/wallet/receive-address-sync.ts`) over every
+address the address manager holds, on the account's chain: plain BSV,
+ordinals and BSV-21 sent to the shown Receive address are internalized under
+that BRC-29 derivation, and plain BSV is then swept into funding. The task
+keeps its own processed-tx store and cursor; an address the manager gains
+later is scanned once from the start before it joins that cursor. Only the
+indices this browser holds (0 to its stored `maxDerivedIndex`, 0-4 by
+default) are scanned.
+
 ## Deliberate blockers
 
 - Paymail remains disabled until OPL-4014 validates every resolved payment
