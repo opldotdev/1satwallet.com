@@ -65,7 +65,7 @@ export function OnboardingStep({
 					<h2
 						ref={headingRef}
 						tabIndex={-1}
-						className="text-lg leading-tight font-semibold tracking-tight outline-none"
+						className="rounded-sm text-lg leading-tight font-semibold tracking-tight outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 					>
 						{title}
 					</h2>

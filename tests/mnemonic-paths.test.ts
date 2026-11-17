@@ -64,8 +64,8 @@ describe("the custom paths switch", () => {
 		assert.equal(pathsAfterCustomToggle(false, RELAYX), undefined);
 	});
 
-	it("keeps the found paths as a starting point when turned on", () => {
-		assert.deepEqual(pathsAfterCustomToggle(true, DETECTED), DETECTED);
+	it("starts custom mode empty, so found paths can't outlive their words", () => {
+		assert.equal(pathsAfterCustomToggle(true, DETECTED), undefined);
 	});
 });
 

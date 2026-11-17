@@ -23,15 +23,17 @@ export function detectionResultApplies(
 }
 
 /**
- * The paths after the custom-paths switch flips. Turning custom on keeps
- * what was found as a starting point. Turning it off drops whatever was
- * picked or typed, so the automatic search runs again for these words.
+ * The paths after the custom-paths switch flips. Either way it starts
+ * empty: found paths belong to the words they were found for, and would
+ * otherwise stay put if the words then changed in custom mode; turning
+ * custom off drops whatever was picked or typed, so the automatic search
+ * runs again for these words.
  */
 export function pathsAfterCustomToggle(
-	turningOn: boolean,
-	paths: WalletPaths | undefined,
+	_turningOn: boolean,
+	_paths: WalletPaths | undefined,
 ): WalletPaths | undefined {
-	return turningOn ? paths : undefined;
+	return undefined;
 }
 
 /** Next imports only with a valid phrase and both paths filled in. */

@@ -47,24 +47,29 @@ export function MnemonicGrid({
 		mnemonic ? mnemonic.split(" ") : Array(12).fill(""),
 	);
 
-	useEffect(() => {
-		if (mnemonic) {
-			setInputMnemonic(mnemonic.split(" "));
-		}
-	}, [mnemonic]);
-
 	const [processing, setProcessing] = useState(false);
 	const [useCustomPaths, setUseCustomPaths] = useState(false);
 	const [detectionFailed, setDetectionFailed] = useState(false);
 	const [pendingPaths, setPendingPaths] = useState<WalletPaths | undefined>();
+	// The paths that last failed to derive. The notice shows only while
+	// those exact paths are still picked; any edit makes a new object.
+	const [invalidPaths, setInvalidPaths] = useState<WalletPaths | undefined>();
 	// What the words and switch are now, for a path search that returns
-	// after they changed.
-	const phraseRef = useRef("");
+	// after they changed. Set alongside the state in every handler that
+	// changes them.
+	const phraseRef = useRef(inputMnemonic.join(" "));
 	const customRef = useRef(false);
+	const updateWords = (words: string[]) => {
+		phraseRef.current = words.join(" ");
+		setInputMnemonic(words);
+	};
+
 	useEffect(() => {
-		phraseRef.current = inputMnemonic.join(" ");
-		customRef.current = useCustomPaths;
-	}, [inputMnemonic, useCustomPaths]);
+		if (mnemonic) {
+			phraseRef.current = mnemonic;
+			setInputMnemonic(mnemonic.split(" "));
+		}
+	}, [mnemonic]);
 
 	// Copy to clipboard state (view mode)
 	const [copied, setCopied] = useState(false);
@@ -163,15 +168,13 @@ export function MnemonicGrid({
 			setDetectionFailed(false);
 			// Detected paths belong to the old words.
 			if (!useCustomPaths) setPendingPaths(undefined);
-			setInputMnemonic((prev) => {
-				const newMnemonic = [...prev];
-				words.forEach((word, i) => {
-					if (startIndex + i < 12) {
-						newMnemonic[startIndex + i] = word;
-					}
-				});
-				return newMnemonic;
+			const newMnemonic = [...inputMnemonic];
+			words.forEach((word, i) => {
+				if (startIndex + i < 12) {
+					newMnemonic[startIndex + i] = word;
+				}
 			});
+			updateWords(newMnemonic);
 		}
 	};
 
@@ -179,13 +182,14 @@ export function MnemonicGrid({
 		if (mode === "view") return;
 		const newMnemonic = [...inputMnemonic];
 		newMnemonic[index] = value.trim().toLowerCase();
-		setInputMnemonic(newMnemonic);
+		updateWords(newMnemonic);
 		setDetectionFailed(false);
 		if (!useCustomPaths) setPendingPaths(undefined);
 	};
 
 	const toggleCustomPaths = () => {
 		const turningOn = !useCustomPaths;
+		customRef.current = turningOn;
 		setUseCustomPaths(turningOn);
 		setPendingPaths((paths) => pathsAfterCustomToggle(turningOn, paths));
 		setDetectionFailed(false);
@@ -573,6 +577,14 @@ export function MnemonicGrid({
 				</div>
 			)}
 
+			{mode === "edit" &&
+				invalidPaths !== undefined &&
+				invalidPaths === pendingPaths && (
+					<Notice role="alert" tone="danger">
+						That derivation path isn't valid.
+					</Notice>
+				)}
+
 			{mode === "edit" && (onSubmit || hasWords) && (
 				<div
 					data-slot="mnemonic-actions"
@@ -582,7 +594,7 @@ export function MnemonicGrid({
 						<Button
 							variant="ghost"
 							onClick={() => {
-								setInputMnemonic(Array(12).fill(""));
+								updateWords(Array(12).fill(""));
 								setPendingPaths(undefined);
 								setProcessing(false);
 								setDetectionFailed(false);
@@ -600,14 +612,26 @@ export function MnemonicGrid({
 							}
 							onClick={() => {
 								if (!onSubmit || !pendingPaths) return;
-								const keys = getKeysFromMnemonicAndPaths(
-									inputMnemonic.join(" "),
-									{
-										changeAddressPath: pendingPaths.changeAddressPath,
-										ordAddressPath: pendingPaths.ordAddressPath,
-										identityAddressPath: pendingPaths.identityAddressPath,
-									},
-								);
+								let keys: ReturnType<typeof getKeysFromMnemonicAndPaths>;
+								try {
+									keys = getKeysFromMnemonicAndPaths(inputMnemonic.join(" "), {
+										changeAddressPath: pendingPaths.changeAddressPath.trim(),
+										ordAddressPath: pendingPaths.ordAddressPath.trim(),
+										identityAddressPath:
+											pendingPaths.identityAddressPath?.trim() || undefined,
+									});
+								} catch (error) {
+									// The name only: the message can carry key material.
+									console.error(
+										"[mnemonic] could not derive keys from the paths",
+										{
+											name: error instanceof Error ? error.name : typeof error,
+										},
+									);
+									setInvalidPaths(pendingPaths);
+									return;
+								}
+								setInvalidPaths(undefined);
 								onSubmit(keys);
 							}}
 						>

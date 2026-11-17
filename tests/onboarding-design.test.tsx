@@ -164,6 +164,21 @@ describe("mnemonic grid", () => {
 		);
 	});
 
+	it("catches a malformed custom path instead of throwing from Next", () => {
+		const grid = read("components/wallet/mnemonic-grid.tsx");
+		assert.match(
+			grid,
+			/try \{\s*keys = getKeysFromMnemonicAndPaths\([\s\S]*?\.trim\(\)[\s\S]*?\} catch \(error\) \{[\s\S]*?name: error instanceof Error \? error\.name : typeof error/,
+		);
+		assert.match(grid, /That derivation path isn't valid\./);
+	});
+
+	it("updates the phrase and custom refs in the handlers, not in an effect", () => {
+		const grid = read("components/wallet/mnemonic-grid.tsx");
+		assert.doesNotMatch(grid, /phraseRef\.current = inputMnemonic/);
+		assert.match(grid, /customRef\.current = turningOn;/);
+	});
+
 	it("keeps the browser from completing, capitalizing or correcting seed words", () => {
 		const grid = read("components/wallet/mnemonic-grid.tsx");
 		const fields = grid.match(
