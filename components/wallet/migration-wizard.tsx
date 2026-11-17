@@ -592,9 +592,9 @@ function IntroStep({
 				<div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 ring-1 ring-primary/20">
 					<Shield className="h-8 w-8 text-primary" />
 				</div>
-				<h1 className="text-3xl font-bold tracking-tight">
+				<h2 className="text-3xl font-bold tracking-tight">
 					Migrate your assets
-				</h1>
+				</h2>
 				<p className="mx-auto max-w-md text-muted-foreground leading-relaxed">
 					This is not a key from a modern wallet. You may need to migrate your
 					assets to see them. You can do this now, or later from the wallet.

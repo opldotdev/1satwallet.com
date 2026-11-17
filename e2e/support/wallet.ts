@@ -12,6 +12,13 @@ export const TESTNET_BADGE_LABEL = "Testnet account. Coins have no real value.";
 
 const unlockDialog: Locator = { role: "dialog", name: "Unlock wallet" };
 
+/** The tab of a wallet section: a link in the "Wallet sections" navigation. */
+export const sectionLink = (name: string): Locator => ({
+	role: "link",
+	name,
+	within: { role: "navigation", name: "Wallet sections" },
+});
+
 /** Clears the passphrase field and drops the passphrase from the page. */
 function clearPassphrase(browser: Browser) {
 	return browser.evaluate(() => {

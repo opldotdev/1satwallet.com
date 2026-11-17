@@ -750,9 +750,6 @@ export default function MigratePage() {
 	if (toolbox.connectionMode === "external") {
 		return (
 			<section className="space-y-6">
-				<div className="flex items-center justify-between gap-3">
-					<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
-				</div>
 				<div>
 					<Card>
 						<CardContent className="py-8 text-center text-muted-foreground">
@@ -769,9 +766,6 @@ export default function MigratePage() {
 	if (isWalletLocked || !walletKeys) {
 		return (
 			<section className="space-y-6">
-				<div className="flex items-center justify-between gap-3">
-					<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
-				</div>
 				<div>
 					<Card>
 						<CardContent className="py-8 text-center text-muted-foreground">
@@ -785,15 +779,14 @@ export default function MigratePage() {
 
 	return (
 		<section className="space-y-6">
-			<div className="flex items-center justify-between gap-3">
-				<h2 className="font-mono text-xl font-medium">Wallet Migration</h2>
-				{phase === "preview" && totalAssets > 0 && (
+			{phase === "preview" && totalAssets > 0 && (
+				<div className="flex justify-end">
 					<Badge variant="secondary">
 						{totalAssets} sweepable asset
 						{totalAssets !== 1 ? "s" : ""}
 					</Badge>
-				)}
-			</div>
+				</div>
+			)}
 
 			<div className="space-y-4">
 				{/* Scanning */}
