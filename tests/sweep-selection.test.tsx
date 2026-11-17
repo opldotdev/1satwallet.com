@@ -106,6 +106,12 @@ describe("sweep ordinal selection in a host", () => {
 		await stub("@1sat/actions", (real) => ({
 			...real,
 			scanAddresses: async () => scanFixture,
+			// Scanned one address at a time: the fixture sits on the ord
+			// address only, as the indexer would report it.
+			scanAddress: async (_services: unknown, address: string) =>
+				address === "stub-ord-address"
+					? scanFixture
+					: { ...scanFixture, ordinals: [] },
 		}));
 		await stub("@/lib/wallet-migration", (real) => ({
 			...real,
