@@ -73,15 +73,8 @@ describe("testnet surfaces", () => {
 		const shortcuts = read("components/keyboard-shortcuts.tsx");
 		assert.match(shortcuts, /isRouteAvailableOn\(chain, command\.href\)/);
 		assert.match(
-			shortcuts,
-			/if \(isRouteAvailableOn\(chain, href\)\) router\.push/,
-		);
-		assert.doesNotMatch(
-			shortcuts.slice(
-				shortcuts.indexOf("switch (key)"),
-				shortcuts.indexOf('} else if (key === "g")'),
-			),
-			/router\.push\(/,
+			read("lib/keyboard-shortcuts.ts"),
+			/isRouteAvailableOn\(chain, shortcut\.href\)/,
 		);
 	});
 

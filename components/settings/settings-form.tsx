@@ -1,5 +1,6 @@
 "use client";
 
+import { useFormatForDisplay } from "@tanstack/react-hotkeys";
 import { ChevronRight, Moon, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
@@ -10,46 +11,42 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { Switch } from "@/components/ui/switch";
 import { useSound } from "@/hooks/use-sound";
 import { useMounted } from "@/lib/hooks/use-mounted";
+import {
+	CHORD_SHORTCUTS,
+	GO_SHORTCUTS,
+	type GoShortcut,
+} from "@/lib/keyboard-shortcuts";
 
-const SHORTCUTS: readonly {
+/** What Settings lists, all from the one shortcut list. */
+function shortcutGroups(
+	formatForDisplay: ReturnType<typeof useFormatForDisplay>,
+): readonly {
 	group: string;
 	keys: readonly (readonly [label: string, key: string])[];
-}[] = [
-	{
-		group: "Global",
-		keys: [
-			["Left sidebar", "⌘ ["],
-			["Right sidebar", "⌘ ]"],
-		],
-	},
-	{
-		group: "Go to (g + key)",
-		keys: [
-			["Home", "h"],
-			["Activity", "a"],
-			["Settings", "s"],
-		],
-	},
-	{
-		group: "Market",
-		keys: [
-			["Ordinals", "m"],
-			["BSV21", "v"],
-		],
-	},
-	{
-		group: "Wallet",
-		keys: [
-			["Dashboard", "w"],
-			["History", "y"],
-		],
-	},
-];
+}[] {
+	const chords = [
+		CHORD_SHORTCUTS.leftSidebar,
+		CHORD_SHORTCUTS.rightSidebar,
+		CHORD_SHORTCUTS.commandMenu,
+		CHORD_SHORTCUTS.toggleTheme,
+	].map(({ label, hotkey }) => [label, formatForDisplay(hotkey)] as const);
+	const go = (group: GoShortcut["group"]) =>
+		GO_SHORTCUTS.filter((shortcut) => shortcut.group === group).map(
+			({ label, key }) => [label, key] as const,
+		);
+	return [
+		{ group: "Global", keys: chords },
+		{ group: "Go to (g + key)", keys: go("Go to") },
+		{ group: "Market (g + key)", keys: go("Market") },
+		{ group: "Wallet (g + key)", keys: go("Wallet") },
+	];
+}
 
 export function SettingsForm() {
 	const { play } = useSound();
 	const { theme, setTheme } = useTheme();
 	const mounted = useMounted();
+	const formatForDisplay = useFormatForDisplay();
 
 	if (!mounted) return null;
 
@@ -109,7 +106,7 @@ export function SettingsForm() {
 				<SectionHeader title="Keyboard shortcuts" />
 				<Card>
 					<CardContent className="grid grid-cols-2 gap-6 text-sm lg:grid-cols-4">
-						{SHORTCUTS.map(({ group, keys }) => (
+						{shortcutGroups(formatForDisplay).map(({ group, keys }) => (
 							<div key={group} className="flex flex-col gap-1">
 								<p className="font-medium">{group}</p>
 								{keys.map(([label, key]) => (

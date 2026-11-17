@@ -1,5 +1,6 @@
 "use client";
 
+import { useHotkey, useHotkeys } from "@tanstack/react-hotkeys";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import * as React from "react";
@@ -15,155 +16,59 @@ import {
 import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
+import {
+	CHORD_SHORTCUTS,
+	goHintFor,
+	goShortcutBindings,
+} from "@/lib/keyboard-shortcuts";
 import type { StackFeature } from "@/lib/stack-features";
 
-const commands: Array<{
-	label: string;
-	href: string;
-	shortcut?: string;
-	feature?: StackFeature;
-}> = [
-	{ label: "Home", href: "/", shortcut: "G H" },
-	{
-		label: "Activity",
-		href: "/activity",
-		shortcut: "G A",
-		feature: "activity",
-	},
-	{
-		label: "Ordinal market",
-		href: "/market/ordinals",
-		shortcut: "G M",
-		feature: "ordinalMarket",
-	},
-	{
-		label: "BSV21 market",
-		href: "/market/bsv21",
-		shortcut: "G V",
-		feature: "bsv21",
-	},
-	{
-		label: "Inscribe",
-		href: "/inscribe",
-		shortcut: "G I",
-		feature: "inscribe",
-	},
-	{ label: "Wallet", href: "/wallet", shortcut: "G W" },
-	{
-		label: "Wallet identity",
-		href: "/wallet/identity",
-		feature: "identity",
-	},
-	{
-		label: "Wallet ordinals",
-		href: "/wallet/ordinals",
-		shortcut: "G O",
-		feature: "ordinals",
-	},
-	{
-		label: "Wallet tokens",
-		href: "/wallet/tokens",
-		shortcut: "G 1",
-	},
-	{ label: "Wallet history", href: "/wallet/history", shortcut: "G Y" },
-	{ label: "Wallet settings", href: "/wallet/settings", shortcut: "G ," },
-	{ label: "Download", href: "/download" },
-	{ label: "Documentation", href: "/docs", shortcut: "G D" },
-	{ label: "Settings", href: "/settings", shortcut: "G S" },
-];
+/** Pages the command menu offers. Their key hints come from GO_SHORTCUTS. */
+const commands: Array<{ label: string; href: string; feature?: StackFeature }> =
+	[
+		{ label: "Home", href: "/" },
+		{ label: "Activity", href: "/activity", feature: "activity" },
+		{
+			label: "Ordinal market",
+			href: "/market/ordinals",
+			feature: "ordinalMarket",
+		},
+		{ label: "BSV21 market", href: "/market/bsv21", feature: "bsv21" },
+		{ label: "Inscribe", href: "/inscribe", feature: "inscribe" },
+		{ label: "Wallet", href: "/wallet" },
+		{ label: "Wallet identity", href: "/wallet/identity", feature: "identity" },
+		{ label: "Wallet ordinals", href: "/wallet/ordinals", feature: "ordinals" },
+		{ label: "Wallet tokens", href: "/wallet/tokens" },
+		{ label: "Wallet history", href: "/wallet/history" },
+		{ label: "Wallet settings", href: "/wallet/settings" },
+		{ label: "Download", href: "/download" },
+		{ label: "Documentation", href: "/docs" },
+		{ label: "Settings", href: "/settings" },
+	];
 
+/**
+ * Site-wide shortcuts: "go to" sequences, the command menu and the theme.
+ * The sidebar toggles live in the sidebar layout, which owns their state.
+ */
 export function KeyboardShortcuts() {
 	const router = useRouter();
 	const { resolvedTheme, setTheme } = useTheme();
 	const features = useStackFeatures().data?.features;
 	const chain = useWalletChain();
 	const [commandMenuOpen, setCommandMenuOpen] = React.useState(false);
-	// We can't easily access both sidebar contexts here because they are nested.
-	// This component needs to be inside the context to toggle.
-	// But we have TWO contexts.
 
-	// Strategy: This component handles NAVIGATION shortcuts only.
-	// Sidebar toggles need to be handled where the context is available (in Layout).
-
-	const gPressedAt = React.useRef(0);
-
-	React.useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-				e.preventDefault();
-				setCommandMenuOpen((open) => !open);
-				return;
-			}
-
-			// Ignore if typing in an input
-			if (
-				e.target instanceof HTMLElement &&
-				(e.target.matches("input, textarea, select") ||
-					e.target.isContentEditable)
-			) {
-				return;
-			}
-
-			const key = e.key.toLowerCase();
-			if ((e.metaKey || e.ctrlKey) && e.shiftKey && key === "d") {
-				e.preventDefault();
-				setTheme(resolvedTheme === "dark" ? "light" : "dark");
-				return;
-			}
-
-			if (gPressedAt.current && e.timeStamp - gPressedAt.current <= 1000) {
-				gPressedAt.current = 0;
-				const go = (href: string) => {
-					if (isRouteAvailableOn(chain, href)) router.push(href);
-				};
-				switch (key) {
-					case "h":
-						go("/");
-						break;
-					case "w":
-						go("/wallet");
-						break;
-					case "m":
-						if (features?.ordinalMarket) go("/market/ordinals");
-						break;
-					case "v":
-						if (features?.bsv21) go("/market/bsv21");
-						break;
-					case "i":
-						if (features?.inscribe) go("/inscribe");
-						break;
-					case "d":
-						go("/docs");
-						break;
-					case "s":
-						go("/settings");
-						break;
-					case "o":
-						if (features?.ordinals) go("/wallet/ordinals");
-						break;
-					case "1":
-						go("/wallet/tokens");
-						break;
-					case ",":
-						go("/wallet/settings");
-						break;
-					case "y":
-						go("/wallet/history");
-						break;
-					case "a":
-						if (features?.activity) go("/activity");
-						break;
-				}
-			} else if (key === "g") {
-				gPressedAt.current = e.timeStamp;
-			} else {
-				gPressedAt.current = 0;
-			}
-		};
-
-		window.addEventListener("keydown", handleKeyDown);
-		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [chain, features, resolvedTheme, router, setTheme]);
+	useHotkeys(
+		goShortcutBindings({ chain, features, go: (href) => router.push(href) }),
+	);
+	useHotkey(CHORD_SHORTCUTS.commandMenu.hotkey, () =>
+		setCommandMenuOpen((open) => !open),
+	);
+	// Not while typing in a field, as before.
+	useHotkey(
+		CHORD_SHORTCUTS.toggleTheme.hotkey,
+		() => setTheme(resolvedTheme === "dark" ? "light" : "dark"),
+		{ ignoreInputs: true },
+	);
 
 	return (
 		<CommandDialog open={commandMenuOpen} onOpenChange={setCommandMenuOpen}>
@@ -174,6 +79,7 @@ export function KeyboardShortcuts() {
 					{commands.map((command) => {
 						if (command.feature && !features?.[command.feature]) return null;
 						if (!isRouteAvailableOn(chain, command.href)) return null;
+						const hint = goHintFor(command.href);
 						return (
 							<CommandItem
 								key={command.href}
@@ -183,8 +89,8 @@ export function KeyboardShortcuts() {
 								}}
 							>
 								{command.label}
-								{command.shortcut && (
-									<CommandShortcut>{command.shortcut}</CommandShortcut>
+								{hint && (
+									<CommandShortcut>{hint.toUpperCase()}</CommandShortcut>
 								)}
 							</CommandItem>
 						);

@@ -34,6 +34,7 @@ import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { useSound } from "@/hooks/use-sound";
 import { PRIVACY_MODE_KEY } from "@/lib/constants";
 import { useStackFeatures } from "@/lib/hooks/use-stack-features";
+import { goHintFor } from "@/lib/keyboard-shortcuts";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import type { StackFeature } from "@/lib/stack-features";
 import { useSettingsStorage } from "@/lib/wallet-storage";
@@ -43,7 +44,6 @@ import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 interface WalletNavItem {
 	title: string;
 	url: string;
-	shortcut?: string;
 	feature?: StackFeature;
 }
 
@@ -64,23 +64,19 @@ const navData: Array<{
 			{
 				title: "Ordinals",
 				url: "/wallet/ordinals",
-				shortcut: "g o",
 				feature: "ordinals",
 			},
 			{
 				title: "Tokens",
 				url: "/wallet/tokens",
-				shortcut: "g 1",
 			},
 			{
 				title: "History",
 				url: "/wallet/history",
-				shortcut: "g y",
 			},
 			{
 				title: "Settings",
 				url: "/wallet/settings",
-				shortcut: "g ,",
 			},
 		],
 	},
@@ -322,9 +318,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 													<SidebarMenuButton asChild>
 														<Link href={item.url} onClick={handleNav}>
 															{item.title}
-															{item.shortcut && (
+															{goHintFor(item.url) && (
 																<span className="ml-auto hidden text-xs tracking-widest text-muted-foreground md:block">
-																	{item.shortcut}
+																	{goHintFor(item.url)}
 																</span>
 															)}
 														</Link>

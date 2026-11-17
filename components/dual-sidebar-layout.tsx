@@ -1,5 +1,6 @@
 "use client";
 
+import { useHotkey } from "@tanstack/react-hotkeys";
 import { PanelLeft, Wallet } from "lucide-react";
 import type * as React from "react";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -14,12 +15,12 @@ import {
 } from "@/components/ui/sidebar";
 import { FullScreenUnlock } from "@/components/wallet/full-screen-unlock";
 import { MigrationWizard } from "@/components/wallet/migration-wizard";
-import { useHotkeys } from "@/hooks/use-hotkeys";
+import { CHORD_SHORTCUTS } from "@/lib/keyboard-shortcuts";
 
 // Wrapper to handle Left Sidebar shortcuts and context
 function LeftSidebarWrapper({ children }: { children: React.ReactNode }) {
 	const { toggleSidebar } = useSidebar();
-	useHotkeys("[", toggleSidebar, [toggleSidebar]);
+	useHotkey(CHORD_SHORTCUTS.leftSidebar.hotkey, toggleSidebar);
 	return (
 		<>
 			<SidebarSoundEffects />
@@ -31,7 +32,7 @@ function LeftSidebarWrapper({ children }: { children: React.ReactNode }) {
 // Wrapper to handle Right Sidebar shortcuts and context
 function RightSidebarWrapper({ children }: { children: React.ReactNode }) {
 	const { toggleSidebar } = useSidebar();
-	useHotkeys("]", toggleSidebar, [toggleSidebar]);
+	useHotkey(CHORD_SHORTCUTS.rightSidebar.hotkey, toggleSidebar);
 	return (
 		<>
 			<SidebarSoundEffects />
