@@ -1,15 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
 import { MnemonicGrid } from "@/components/wallet/mnemonic-grid";
+import { OnboardingStep } from "@/components/wallet/onboarding-step";
 import type { Keys } from "@/lib/types";
 import { useImportWallet } from "../provider";
 
@@ -23,28 +16,13 @@ export default function ImportMnemonicPage() {
 	};
 
 	return (
-		<section className="space-y-6">
-			<div className="flex items-center justify-between gap-3">
-				<h2 className="font-mono text-xl font-medium">Import Wallet</h2>
-			</div>
-			<div>
-				<Card>
-					<CardHeader>
-						<CardTitle>Enter Mnemonic Seed</CardTitle>
-						<CardDescription>
-							Enter your 12-word recovery phrase to import your wallet.
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<MnemonicGrid onSubmit={handleMnemonicSubmit} />
-						<div className="mt-4 flex justify-start">
-							<Button variant="ghost" onClick={() => router.back()}>
-								Back
-							</Button>
-						</div>
-					</CardContent>
-				</Card>
-			</div>
-		</section>
+		<OnboardingStep
+			step={1}
+			total={2}
+			title="Enter your recovery phrase"
+			description="Type or paste the 12 words in order."
+		>
+			<MnemonicGrid onSubmit={handleMnemonicSubmit} />
+		</OnboardingStep>
 	);
 }

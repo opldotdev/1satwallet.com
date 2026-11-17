@@ -52,14 +52,19 @@ describe("wallet import ux", () => {
 		assert.ok(unlockStart !== -1, "expected handleUnlock");
 		const unlockSlice = page.slice(unlockStart, unlockStart + 800);
 		assert.doesNotMatch(unlockSlice, /fetch\(/);
-		assert.doesNotMatch(unlockSlice, /console\./);
+		// A failed unlock is logged, but never with the passphrase.
+		assert.match(
+			unlockSlice,
+			/console\.error\("\[cwi\] could not unlock the wallet"/,
+		);
+		assert.doesNotMatch(unlockSlice, /console\.[a-z]+\([^)]*passphrase/i);
 	});
 
 	it("stops failed path auto-detection at the root instead of looping", () => {
 		const grid = read("components/wallet/mnemonic-grid.tsx");
 		assert.match(
 			grid,
-			/const \[detectionFailed, setDetectionFailed\] = useState\(false\)/,
+			/const \[detectionFailed, setDetectionFailed\] = useState<\s*DetectionFailure \| undefined\s*>\(\)/,
 		);
 		// Guard stops the effect becoming eligible again once processing flips back.
 		assert.match(grid, /!detectionFailed/);
@@ -68,13 +73,20 @@ describe("wallet import ux", () => {
 			/!processing &&[\s\S]*?!pendingPaths &&[\s\S]*?!detectionFailed/,
 		);
 		// Failure is recorded both when no path is found and when lookup throws.
-		assert.match(grid, /setDetectionFailed\(true\)/);
+		assert.match(grid, /setDetectionFailed\("not-found"\)/);
+		assert.match(grid, /setDetectionFailed\("error"\)/);
 		// Mnemonic edits and custom-path toggles clear the failure for one new attempt.
-		assert.match(grid, /handleWordChange[\s\S]*?setDetectionFailed\(false\)/);
-		assert.match(grid, /handlePaste[\s\S]*?setDetectionFailed\(false\)/);
-		assert.match(grid, /toggleCustomPaths[\s\S]*?setDetectionFailed\(false\)/);
+		assert.match(
+			grid,
+			/handleWordChange[\s\S]*?setDetectionFailed\(undefined\)/,
+		);
+		assert.match(grid, /handlePaste[\s\S]*?setDetectionFailed\(undefined\)/);
+		assert.match(
+			grid,
+			/toggleCustomPaths[\s\S]*?setDetectionFailed\(undefined\)/,
+		);
 		// Explicit retry only needs to clear the guard; that state change re-runs the effect once.
-		assert.match(grid, /onClick=\{\(\) => setDetectionFailed\(false\)\}/);
+		assert.match(grid, /onClick=\{\(\) => setDetectionFailed\(undefined\)\}/);
 		assert.doesNotMatch(grid, /detectionAttempt/);
 	});
 
@@ -83,13 +95,17 @@ describe("wallet import ux", () => {
 		assert.match(grid, /role="alert"/);
 		assert.match(grid, /Automatic wallet-path detection failed\./);
 		assert.match(grid, /Try again/);
-		assert.match(grid, /onClick=\{\(\) => setDetectionFailed\(false\)\}/);
+		// Finding no path is not an error to retry: it points to custom paths.
+		assert.match(grid, /No ordinals path found for these words\./);
+		assert.match(grid, /Enter custom paths/);
+		assert.match(grid, /onClick=\{\(\) => setDetectionFailed\(undefined\)\}/);
 		assert.match(grid, /role="status"/);
 		assert.match(grid, /Searching wallet paths…/);
-		// Next stays disabled while the search runs or no path is resolved.
+		// Next stays disabled while the search runs or no path is resolved
+		// (canSubmitPaths, tested in mnemonic-paths.test.ts).
 		assert.match(
 			grid,
-			/disabled=\{[\s\S]*?processing[\s\S]*?\(!pendingPaths && !useCustomPaths\)/,
+			/disabled=\{\s*!canSubmitPaths\(\{ isValid, processing, paths: pendingPaths \}\)/,
 		);
 	});
 

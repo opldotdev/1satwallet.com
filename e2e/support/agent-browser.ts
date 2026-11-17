@@ -305,9 +305,24 @@ export class Browser {
 		return `[data-e2e-target="${mark}"]`;
 	}
 
-	/** Clicks the element `locator` finds, with agent-browser's own click. */
+	/**
+	 * Clicks the element `locator` finds, with agent-browser's own click.
+	 *
+	 * The element is first scrolled just far enough to show it whole, as a
+	 * person would before tapping. agent-browser (0.43) scrolls only an element
+	 * wholly off screen: one that peeks in at the bottom edge with its centre
+	 * below the fold is refused as "outside the viewport".
+	 */
 	async click(locator: Locator, timeout?: number) {
-		await this.run(["click", await this.mark(locator, timeout)]);
+		const target = await this.mark(locator, timeout);
+		await this.evaluate((selector: string) => {
+			document.querySelector(selector)?.scrollIntoView({
+				block: "nearest",
+				inline: "nearest",
+				behavior: "instant",
+			});
+		}, target);
+		await this.run(["click", target]);
 	}
 
 	/** Fills the field `locator` finds. Never use this for a secret. */
