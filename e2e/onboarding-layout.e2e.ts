@@ -63,10 +63,12 @@ function measureAction(browser: Browser, name: string) {
 				el.getClientRects().length > 0 &&
 				(el.textContent ?? "").replace(/\s+/g, " ").trim() === label,
 		);
-		// The card part the button sits in (footer or content). Its padding is
+		// The card part the button sits in: the step's action footer (a
+		// CardFooter whose data-slot OnboardingStep renames to
+		// "onboarding-actions"), another footer, or the content. Its padding is
 		// read resolved, in px: --card-spacing itself is a calc() string.
 		const part = button?.closest<HTMLElement>(
-			'[data-slot="card-footer"], [data-slot="card-content"]',
+			'[data-slot="onboarding-actions"], [data-slot="card-footer"], [data-slot="card-content"]',
 		);
 		if (!button || !part?.closest('[data-slot="card"]')) return null;
 		const style = getComputedStyle(part);
