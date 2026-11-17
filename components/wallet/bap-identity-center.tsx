@@ -41,6 +41,7 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import {
 	Dialog,
 	DialogContent,
@@ -134,7 +135,7 @@ function ProfileImageField({
 		<div className="space-y-2">
 			<Label htmlFor={`bap-${field}`}>{label}</Label>
 			<div
-				className={`relative overflow-hidden border bg-muted/50 ${field === "banner" ? "aspect-[3/1] w-full rounded-md" : "size-20 rounded-full"}`}
+				className={`relative overflow-hidden border bg-muted/50 ${field === "banner" ? "aspect-[3/1] w-full rounded-lg" : "size-20 rounded-full"}`}
 			>
 				{previewUrl ? (
 					<Image
@@ -365,11 +366,11 @@ function ProfileEditor({
 
 	return (
 		<div className="space-y-5">
-			<div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-3">
+			<div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 p-3">
 				<Badge variant={bapId ? "default" : "secondary"}>
 					{bapId ? "Published in wallet" : "Not published"}
 				</Badge>
-				{bapId && <code className="break-all text-xs">{bapId}</code>}
+				{bapId && <code className="break-all font-mono text-xs">{bapId}</code>}
 			</div>
 
 			<div className="grid gap-4 sm:grid-cols-2">
@@ -442,7 +443,7 @@ function ProfileEditor({
 				are not hidden.
 			</p>
 			<StatusMessage status={status} />
-			<div className="flex flex-wrap gap-2">
+			<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
 				<Button
 					disabled={
 						operation !== null ||
@@ -452,10 +453,7 @@ function ProfileEditor({
 					onClick={() => setReviewOpen(true)}
 				>
 					{operation === "profile" && (
-						<Loader2
-							className="h-4 w-4 animate-spin"
-							data-icon="inline-start"
-						/>
+						<Loader2 className="animate-spin" data-icon="inline-start" />
 					)}
 					Review profile transaction
 				</Button>
@@ -463,7 +461,7 @@ function ProfileEditor({
 					<AlertDialog>
 						<AlertDialogTrigger asChild>
 							<Button disabled={operation !== null} variant="outline">
-								<Fingerprint className="h-4 w-4" data-icon="inline-start" />
+								<Fingerprint data-icon="inline-start" />
 								Publish identity only
 							</Button>
 						</AlertDialogTrigger>
@@ -492,9 +490,9 @@ function ProfileEditor({
 						<AlertDialogTrigger asChild>
 							<Button disabled={operation !== null} variant="outline">
 								{operation === "rotate" ? (
-									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									<Loader2 className="animate-spin" data-icon="inline-start" />
 								) : (
-									<RefreshCw className="mr-2 h-4 w-4" />
+									<RefreshCw data-icon="inline-start" />
 								)}
 								Rotate signing key
 							</Button>
@@ -531,14 +529,13 @@ function ProfileEditor({
 							public fields. Published fields this page does not edit are kept.
 						</DialogDescription>
 					</DialogHeader>
-					<dl className="max-h-72 space-y-3 overflow-auto rounded-md border p-3 text-sm">
+					<DetailList className="rounded-lg border p-3">
 						{profileEntries.map(([field, value]) => (
-							<div key={field}>
-								<dt className="font-medium">{field}</dt>
-								<dd className="break-words text-muted-foreground">{value}</dd>
-							</div>
+							<DetailRow key={field} label={field} mono={false} stack>
+								{value}
+							</DetailRow>
 						))}
-					</dl>
+					</DetailList>
 					<DialogFooter>
 						<Button onClick={() => setReviewOpen(false)} variant="outline">
 							Cancel
@@ -617,7 +614,8 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
-					<ShieldCheck className="h-5 w-5" /> Attest a BAP attribute
+					<ShieldCheck className="size-5 text-muted-foreground" /> Attest a BAP
+					attribute
 				</CardTitle>
 				<CardDescription>
 					Review the full private claim locally. Only its protocol-derived hash
@@ -668,7 +666,9 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 				)}
 				<StatusMessage status={status} />
 				<Button disabled={!bapId || submitting} onClick={prepareReview}>
-					{submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+					{submitting && (
+						<Loader2 className="animate-spin" data-icon="inline-start" />
+					)}
 					Review exact signed claim
 				</Button>
 			</CardContent>
@@ -686,7 +686,7 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 						</DialogDescription>
 					</DialogHeader>
 					{review && (
-						<dl className="max-h-96 space-y-3 overflow-auto rounded-md border p-3 text-sm">
+						<DetailList className="rounded-lg border p-3">
 							{[
 								["Subject", review.subject],
 								["Attribute", review.attributeName],
@@ -697,14 +697,16 @@ function AttestationPanel({ bapId }: { bapId: string | null }) {
 								["Exact ATTEST hash", review.attestationHash],
 								["Sequence", review.counter],
 							].map(([label, value]) => (
-								<div key={label}>
-									<dt className="font-medium">{label}</dt>
-									<dd className="break-all font-mono text-muted-foreground text-xs">
-										{value}
-									</dd>
-								</div>
+								<DetailRow
+									className="[&_dd]:text-xs"
+									key={label}
+									label={label}
+									stack
+								>
+									{value}
+								</DetailRow>
 							))}
-						</dl>
+						</DetailList>
 					)}
 					<DialogFooter>
 						<Button onClick={() => setReview(null)} variant="outline">
@@ -757,7 +759,8 @@ function DiscoveryPanel() {
 		<Card>
 			<CardHeader>
 				<CardTitle className="flex items-center gap-2">
-					<Search className="h-5 w-5" /> BAP index discovery
+					<Search className="size-5 text-muted-foreground" /> BAP index
+					discovery
 				</CardTitle>
 				<CardDescription>
 					Results come from the public 1Sat BAP index, not from wallet
@@ -814,7 +817,7 @@ function DiscoveryPanel() {
 						className="flex items-center gap-2 text-muted-foreground text-sm"
 						role="status"
 					>
-						<Loader2 className="h-4 w-4 animate-spin" /> Searching the public
+						<Loader2 className="size-4 animate-spin" /> Searching the public
 						index…
 					</p>
 				)}
@@ -843,9 +846,9 @@ function DiscoveryPanel() {
 				)}
 				<div className="space-y-3">
 					{results.map((identity) => (
-						<div className="rounded-md border p-3" key={identity.idKey}>
+						<div className="rounded-lg border p-3" key={identity.idKey}>
 							<div className="flex flex-wrap items-center gap-2">
-								<BadgeCheck className="h-4 w-4" />
+								<BadgeCheck className="size-4 text-muted-foreground" />
 								<strong>
 									{bapDisplayName(identity) ?? "Indexed BAP identity"}
 								</strong>
@@ -926,7 +929,7 @@ export function BapIdentityCenter() {
 				className="flex items-center gap-2 text-muted-foreground text-sm"
 				role="status"
 			>
-				<Loader2 className="h-4 w-4 animate-spin" /> Loading wallet identity…
+				<Loader2 className="size-4 animate-spin" /> Loading wallet identity…
 			</p>
 		);
 	}
@@ -948,7 +951,7 @@ export function BapIdentityCenter() {
 				className="flex items-center gap-2 text-muted-foreground text-sm"
 				role="status"
 			>
-				<Loader2 className="h-4 w-4 animate-spin" /> Reading wallet identity…
+				<Loader2 className="size-4 animate-spin" /> Reading wallet identity…
 			</p>
 		);
 	}
@@ -967,7 +970,7 @@ export function BapIdentityCenter() {
 
 	return (
 		<Tabs defaultValue="profile">
-			<TabsList className="grid h-auto w-full grid-cols-3">
+			<TabsList className="grid h-auto w-full grid-cols-3 [&>*]:max-md:min-h-11">
 				<TabsTrigger value="profile">Profile</TabsTrigger>
 				<TabsTrigger value="attest">Attest</TabsTrigger>
 				<TabsTrigger value="discover">Discover</TabsTrigger>
@@ -976,7 +979,8 @@ export function BapIdentityCenter() {
 				<Card>
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
-							<Fingerprint className="h-5 w-5" /> BAP identity
+							<Fingerprint className="size-5 text-muted-foreground" /> BAP
+							identity
 						</CardTitle>
 						<CardDescription>
 							Wallet-local state from the active BRC-100 provider. The website

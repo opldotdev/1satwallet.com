@@ -10,7 +10,16 @@ import {
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	Card,
+	CardContent,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
+import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { isValidRedirectMethod } from "@/lib/cwi/redirect-utils";
 import { redirectOriginator, toCWIErrorFields } from "@/lib/cwi/types";
 import { clipForLog } from "@/lib/runtime-diagnostics";
@@ -98,11 +107,13 @@ function AuthorizeContent() {
 				setRequestData(data as PendingAuthRequest);
 			} catch (error) {
 				if (cancelled) return;
-				const message =
-					error instanceof Error
-						? error.message
-						: "Failed to load authorization request.";
-				setRequestError(message);
+				console.error("[cwi] could not load the authorization request", {
+					requestId,
+					error,
+				});
+				setRequestError(
+					"The request couldn't be loaded. It may have expired; start again from the app.",
+				);
 			} finally {
 				if (!cancelled) {
 					setIsLoadingRequest(false);
@@ -200,6 +211,10 @@ function AuthorizeContent() {
 			});
 			redirectToCallback(completion.redirectUrl);
 		} catch (error) {
+			console.error("[cwi] requested call failed", {
+				requestId: requestData.requestId,
+				error,
+			});
 			const wireError = toCWIErrorFields(
 				error,
 				process.env.NODE_ENV !== "production",
@@ -214,8 +229,15 @@ function AuthorizeContent() {
 					error_stack: wireError.stack,
 				});
 				redirectToCallback(completion.redirectUrl);
-			} catch {
-				setRequestError(wireError.description);
+			} catch (completionError) {
+				console.error("[cwi] could not report a failed call to the app", {
+					requestId: requestData.requestId,
+					callError: wireError.description,
+					error: completionError,
+				});
+				setRequestError(
+					"The request failed, and the app couldn't be told. Start again from the app.",
+				);
 				setIsSubmitting(false);
 			}
 		}
@@ -239,9 +261,11 @@ function AuthorizeContent() {
 			});
 			redirectToCallback(completion.redirectUrl);
 		} catch (error) {
-			const description =
-				error instanceof Error ? error.message : "Failed to deny request.";
-			setRequestError(description);
+			console.error("[cwi] could not send the denial", {
+				requestId: requestData.requestId,
+				error,
+			});
+			setRequestError("Couldn't send the denial. Try again.");
 			setIsSubmitting(false);
 		}
 	}, [requestData, completeAuthorization, redirectToCallback]);
@@ -258,6 +282,12 @@ function AuthorizeContent() {
 					setUnlockError("Invalid passphrase");
 				}
 			} catch (error) {
+				// The error never carries the passphrase: unlockWallet rethrows
+				// only WalletSaveError, whose message is fixed.
+				console.error("[cwi] could not unlock the wallet", {
+					requestId,
+					error,
+				});
 				setUnlockError(
 					error instanceof WalletSaveError
 						? error.message
@@ -268,81 +298,64 @@ function AuthorizeContent() {
 				setIsUnlocking(false);
 			}
 		},
-		[isUnlocking, passphrase, unlockWallet],
+		[isUnlocking, passphrase, requestId, unlockWallet],
 	);
 
 	if (isLoadingRequest) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<Loader2 className="h-10 w-10 mx-auto mb-2 animate-spin text-primary" />
-						<CardTitle>Loading authorization request</CardTitle>
-					</CardHeader>
-				</Card>
-			</div>
+			<StatusScreen
+				icon={<Loader2 className="animate-spin text-primary" />}
+				title="Loading authorization request"
+			/>
 		);
 	}
 
 	if (!requestData) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<XCircle className="h-10 w-10 mx-auto mb-2 text-destructive" />
-						<CardTitle>Authorization request unavailable</CardTitle>
-					</CardHeader>
-					<CardContent className="text-sm text-muted-foreground text-center">
-						{requestError ?? "The request could not be loaded."}
-					</CardContent>
-				</Card>
-			</div>
+			<StatusScreen
+				icon={<XCircle className="text-destructive" />}
+				title="Authorization request unavailable"
+			>
+				{requestError ?? "The request could not be loaded."}
+			</StatusScreen>
 		);
 	}
 
 	if (isExpired || requestData.status !== "pending") {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<XCircle className="h-10 w-10 mx-auto mb-2 text-destructive" />
-						<CardTitle>Authorization request is no longer active</CardTitle>
-					</CardHeader>
-					<CardContent className="text-sm text-muted-foreground text-center">
-						Status: {requestData.status}
-					</CardContent>
-				</Card>
-			</div>
+			<StatusScreen
+				icon={<XCircle className="text-destructive" />}
+				title="Authorization request is no longer active"
+			>
+				Status: {requestData.status}
+			</StatusScreen>
 		);
 	}
 
 	if (!hasWallet) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<XCircle className="h-10 w-10 mx-auto mb-2 text-destructive" />
-						<CardTitle>No wallet available</CardTitle>
-					</CardHeader>
-					<CardContent className="text-sm text-muted-foreground text-center">
-						Create or import a wallet before authorizing requests.
-					</CardContent>
-				</Card>
-			</div>
+			<StatusScreen
+				icon={<XCircle className="text-destructive" />}
+				title="No wallet available"
+			>
+				Create or import a wallet before authorizing requests.
+			</StatusScreen>
 		);
 	}
 
 	if (isWalletLocked) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
+			<AuthorizeScreen>
 				<Card className="w-full max-w-md">
 					<CardHeader className="text-center">
-						<Shield className="h-10 w-10 mx-auto mb-2 text-primary" />
-						<CardTitle>Unlock wallet</CardTitle>
+						<Shield className="mx-auto size-10 text-primary" />
+						<CardTitle>
+							<h2>Unlock wallet</h2>
+						</CardTitle>
 					</CardHeader>
 					<CardContent>
-						<form onSubmit={handleUnlock} className="space-y-4">
-							<input
+						<form onSubmit={handleUnlock} className="flex flex-col gap-4">
+							<Input
 								aria-label="Passphrase"
 								autoComplete="current-password"
 								type="password"
@@ -353,7 +366,6 @@ function AuthorizeContent() {
 								disabled={isUnlocking}
 								aria-invalid={unlockError ? true : undefined}
 								aria-describedby={unlockError ? "cwi-unlock-error" : undefined}
-								className="w-full px-3 py-2 rounded-md border bg-background"
 							/>
 							{unlockError && (
 								<p
@@ -369,7 +381,7 @@ function AuthorizeContent() {
 								{isUnlocking ? (
 									<>
 										<Loader2
-											className="h-4 w-4 animate-spin"
+											className="animate-spin"
 											data-icon="inline-start"
 										/>
 										Unlocking…
@@ -381,83 +393,114 @@ function AuthorizeContent() {
 						</form>
 					</CardContent>
 				</Card>
-			</div>
+			</AuthorizeScreen>
 		);
 	}
 
 	if (!isInitialized || isInitializing || !permissionsManager) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-background p-4">
-				<Card className="w-full max-w-md">
-					<CardHeader className="text-center">
-						<Loader2 className="h-10 w-10 mx-auto mb-2 animate-spin text-primary" />
-						<CardTitle>Preparing wallet authorization</CardTitle>
-					</CardHeader>
-					<CardContent className="text-sm text-muted-foreground text-center">
-						Waiting for wallet services to initialize.
-					</CardContent>
-				</Card>
-			</div>
+			<StatusScreen
+				icon={<Loader2 className="animate-spin text-primary" />}
+				title="Preparing wallet authorization"
+			>
+				Waiting for wallet services to initialize.
+			</StatusScreen>
 		);
 	}
 
 	return (
-		<div className="min-h-screen flex items-center justify-center bg-background p-4">
+		<AuthorizeScreen>
 			<Card className="w-full max-w-lg">
 				<CardHeader className="text-center">
-					<CheckCircle className="h-10 w-10 mx-auto mb-2 text-primary" />
-					<CardTitle>Authorize wallet request</CardTitle>
+					<CheckCircle className="mx-auto size-10 text-primary" />
+					<CardTitle>
+						<h2>Authorize wallet request</h2>
+					</CardTitle>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					<div className="rounded-lg border bg-muted/40 p-3 text-sm">
-						<p className="font-medium">Requesting origin</p>
-						<p className="text-muted-foreground flex items-center gap-1 break-all">
-							<ExternalLink className="h-3 w-3" />
-							{requestData.origin}
-						</p>
-					</div>
-					<div className="rounded-lg border bg-muted/40 p-3 text-sm">
-						<p className="font-medium">Method</p>
-						<p className="text-muted-foreground break-all">
-							{requestData.call}
-						</p>
-					</div>
-					<div className="rounded-lg border bg-muted/40 p-3 text-xs">
-						<p className="font-medium text-sm mb-2">Args</p>
-						<pre className="overflow-auto whitespace-pre-wrap break-all">
-							{jsonPreview(requestData.args)}
-						</pre>
-					</div>
-					{requestError && (
-						<div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-							{requestError}
-						</div>
-					)}
-					<div className="flex gap-3">
-						<Button
-							variant="outline"
-							className="flex-1"
-							onClick={handleDeny}
-							disabled={isSubmitting}
-						>
-							Deny
-						</Button>
-						<Button
-							className="flex-1"
-							onClick={handleApprove}
-							disabled={isSubmitting}
-						>
-							{isSubmitting ? (
-								<Loader2 className="h-4 w-4 mr-2 animate-spin" />
-							) : (
-								<CheckCircle className="h-4 w-4 mr-2" />
-							)}
-							Allow
-						</Button>
-					</div>
+				<CardContent className="flex flex-col gap-4">
+					<DetailList>
+						<DetailRow label="Requesting origin" mono={false} stack>
+							<span className="flex items-center gap-1">
+								<ExternalLink aria-hidden="true" className="size-3 shrink-0" />
+								{requestData.origin}
+							</span>
+						</DetailRow>
+						<DetailRow label="Method">{requestData.call}</DetailRow>
+						<DetailRow label="Args" stack>
+							<pre className="max-w-full overflow-x-auto rounded-md bg-muted/50 p-3 text-xs whitespace-pre-wrap break-all">
+								{jsonPreview(requestData.args)}
+							</pre>
+						</DetailRow>
+					</DetailList>
+					{requestError && <Notice tone="danger">{requestError}</Notice>}
 				</CardContent>
+				{/* On phones the decision stays in reach at the bottom of the
+				    screen, clear of the home indicator. */}
+				<CardFooter className="gap-3 max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:border-t max-sm:bg-card max-sm:pt-3 max-sm:pb-[max(--spacing(3),env(safe-area-inset-bottom))]">
+					<Button
+						variant="outline"
+						className="flex-1"
+						onClick={handleDeny}
+						disabled={isSubmitting}
+					>
+						Deny
+					</Button>
+					<Button
+						className="flex-1"
+						onClick={handleApprove}
+						disabled={isSubmitting}
+					>
+						{isSubmitting ? (
+							<Loader2 className="animate-spin" data-icon="inline-start" />
+						) : (
+							<CheckCircle data-icon="inline-start" />
+						)}
+						Allow
+					</Button>
+				</CardFooter>
 			</Card>
+		</AuthorizeScreen>
+	);
+}
+
+/**
+ * The card sits under the wallet header: at the top on phones, where any
+ * extra height would only push the page past the screen, and centered in
+ * most of the remaining height from sm.
+ */
+function AuthorizeScreen({ children }: { children: React.ReactNode }) {
+	return (
+		<div className="flex items-start justify-center sm:min-h-[60dvh] sm:items-center">
+			{children}
 		</div>
+	);
+}
+
+function StatusScreen({
+	icon,
+	title,
+	children,
+}: {
+	icon: React.ReactNode;
+	title: string;
+	children?: React.ReactNode;
+}) {
+	return (
+		<AuthorizeScreen>
+			<Card className="w-full max-w-md">
+				<CardHeader className="text-center">
+					<div className="mx-auto [&>svg]:size-10">{icon}</div>
+					<CardTitle>
+						<h2>{title}</h2>
+					</CardTitle>
+				</CardHeader>
+				{children && (
+					<CardContent className="text-center text-sm text-muted-foreground">
+						{children}
+					</CardContent>
+				)}
+			</Card>
+		</AuthorizeScreen>
 	);
 }
 
@@ -465,14 +508,10 @@ export default function CWIAuthorizePage() {
 	return (
 		<Suspense
 			fallback={
-				<div className="min-h-screen flex items-center justify-center bg-background p-4">
-					<Card className="w-full max-w-md">
-						<CardHeader className="text-center">
-							<Loader2 className="h-10 w-10 mx-auto mb-2 animate-spin text-primary" />
-							<CardTitle>Loading authorization</CardTitle>
-						</CardHeader>
-					</Card>
-				</div>
+				<StatusScreen
+					icon={<Loader2 className="animate-spin text-primary" />}
+					title="Loading authorization"
+				/>
 			}
 		>
 			<AuthorizeContent />

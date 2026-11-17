@@ -1,20 +1,50 @@
 "use client";
 
-import { ChevronRight, Keyboard, Palette, Wallet } from "lucide-react";
+import { ChevronRight, Moon, Wallet } from "lucide-react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useSyncExternalStore } from "react";
+import { SettingsGroup, SettingsRow } from "@/components/settings/settings-row";
 import { ThemeTokenPicker } from "@/components/settings/theme-token-picker";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
+import { Card, CardContent } from "@/components/ui/card";
+import { SectionHeader } from "@/components/ui/section-header";
 import { Switch } from "@/components/ui/switch";
 import { useSound } from "@/hooks/use-sound";
+
+const SHORTCUTS: readonly {
+	group: string;
+	keys: readonly (readonly [label: string, key: string])[];
+}[] = [
+	{
+		group: "Global",
+		keys: [
+			["Left sidebar", "⌘ ["],
+			["Right sidebar", "⌘ ]"],
+		],
+	},
+	{
+		group: "Go to (g + key)",
+		keys: [
+			["Home", "h"],
+			["Activity", "a"],
+			["Settings", "s"],
+		],
+	},
+	{
+		group: "Market",
+		keys: [
+			["Ordinals", "m"],
+			["BSV21", "v"],
+		],
+	},
+	{
+		group: "Wallet",
+		keys: [
+			["Dashboard", "w"],
+			["History", "y"],
+		],
+	},
+];
 
 export function SettingsForm() {
 	const { play } = useSound();
@@ -28,23 +58,14 @@ export function SettingsForm() {
 	if (!mounted) return null;
 
 	return (
-		<div className="grid gap-6">
-			<Card>
-				<CardHeader>
-					<div className="flex items-center gap-2">
-						<Palette className="h-5 w-5 text-primary" />
-						<CardTitle>Appearance</CardTitle>
-					</div>
-					<CardDescription>Customize the UI.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<Label htmlFor="dark-mode">Dark Mode</Label>
-							<span className="text-xs text-muted-foreground">
-								Switch themes.
-							</span>
-						</div>
+		<div className="flex flex-col gap-6">
+			<SettingsGroup title="Appearance">
+				<SettingsRow
+					icon={Moon}
+					title="Dark mode"
+					description="Use the dark theme."
+					htmlFor="dark-mode"
+					control={
 						<Switch
 							id="dark-mode"
 							checked={theme === "dark"}
@@ -53,102 +74,62 @@ export function SettingsForm() {
 								setTheme(checked ? "dark" : "light");
 							}}
 						/>
-					</div>
-				</CardContent>
-			</Card>
+					}
+				/>
+			</SettingsGroup>
 
 			<ThemeTokenPicker />
 
-			{/* Wallet Settings Link */}
-			<Link
-				href="/wallet/settings"
-				className="md:col-span-2"
-				onClick={() => play("click")}
-			>
-				<Card className="hover:bg-accent/50 transition-colors cursor-pointer border-l-4 border-l-primary">
-					<CardContent className="flex items-center justify-between p-6">
-						<div className="flex items-center gap-4">
-							<div className="p-2 bg-primary/10 rounded-full">
-								<Wallet className="h-6 w-6 text-primary" />
-							</div>
-							<div>
-								<h3 className="font-semibold text-lg">Wallet Settings</h3>
-								<p className="text-sm text-muted-foreground">
-									Manage privacy, currency, and blockchain synchronization.
+			<section className="flex flex-col gap-3">
+				<SectionHeader title="Wallet" />
+				<Link
+					href="/wallet/settings"
+					className="group rounded-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+					onClick={() => play("click")}
+				>
+					<Card className="transition-colors group-hover:bg-accent/50">
+						<CardContent className="flex items-center gap-3">
+							<Wallet
+								aria-hidden="true"
+								className="size-5 shrink-0 text-muted-foreground"
+							/>
+							<div className="flex min-w-0 flex-1 flex-col gap-1">
+								<p className="text-sm font-medium">Wallet settings</p>
+								<p className="text-muted-foreground text-sm">
+									Privacy, currency, sync and connected apps.
 								</p>
 							</div>
-						</div>
-						<ChevronRight className="h-5 w-5 text-muted-foreground" />
+							<ChevronRight
+								aria-hidden="true"
+								className="size-5 shrink-0 text-muted-foreground"
+							/>
+						</CardContent>
+					</Card>
+				</Link>
+			</section>
+
+			{/* A phone has no keyboard to use them with. */}
+			<section className="flex flex-col gap-3 max-md:hidden">
+				<SectionHeader title="Keyboard shortcuts" />
+				<Card>
+					<CardContent className="grid grid-cols-2 gap-6 text-sm lg:grid-cols-4">
+						{SHORTCUTS.map(({ group, keys }) => (
+							<div key={group} className="flex flex-col gap-1">
+								<p className="font-medium">{group}</p>
+								{keys.map(([label, key]) => (
+									<div
+										key={label}
+										className="flex justify-between gap-3 text-xs"
+									>
+										<span className="text-muted-foreground">{label}</span>
+										<kbd className="font-mono">{key}</kbd>
+									</div>
+								))}
+							</div>
+						))}
 					</CardContent>
 				</Card>
-			</Link>
-
-			{/* Shortcuts Card */}
-			<Card className="md:col-span-2">
-				<CardHeader>
-					<div className="flex items-center gap-2">
-						<Keyboard className="h-5 w-5 text-primary" />
-						<CardTitle>Keyboard Shortcuts</CardTitle>
-					</div>
-					<CardDescription>Navigate efficiently.</CardDescription>
-				</CardHeader>
-				<CardContent>
-					<div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-						{/* Re-organize for density */}
-						<div>
-							<span className="font-semibold block mb-1">Global</span>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Left Sidebar</span>{" "}
-								<span className="font-mono">⌘ [</span>
-							</div>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Right Sidebar</span>{" "}
-								<span className="font-mono">⌘ ]</span>
-							</div>
-						</div>
-
-						<div>
-							<span className="font-semibold block mb-1">Nav (g + key)</span>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Home</span>{" "}
-								<span className="font-mono">h</span>
-							</div>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Activity</span>{" "}
-								<span className="font-mono">a</span>
-							</div>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Settings</span>{" "}
-								<span className="font-mono">s</span>
-							</div>
-						</div>
-
-						<div>
-							<span className="font-semibold block mb-1">Market</span>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Ordinals</span>{" "}
-								<span className="font-mono">m</span>
-							</div>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">BSV21</span>{" "}
-								<span className="font-mono">v</span>
-							</div>
-						</div>
-
-						<div>
-							<span className="font-semibold block mb-1">Wallet</span>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">Dash</span>{" "}
-								<span className="font-mono">w</span>
-							</div>
-							<div className="flex justify-between text-xs">
-								<span className="text-muted-foreground">History</span>{" "}
-								<span className="font-mono">y</span>
-							</div>
-						</div>
-					</div>
-				</CardContent>
-			</Card>
+			</section>
 		</div>
 	);
 }

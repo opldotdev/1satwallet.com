@@ -3,25 +3,21 @@
 import {
 	Bug,
 	Cable,
+	Coins,
+	Database,
 	Eye,
 	EyeOff,
+	Globe,
+	Inbox,
 	Loader2,
 	LogOut,
 	RefreshCw,
 	Shield,
-	Wallet,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { SettingsGroup, SettingsRow } from "@/components/settings/settings-row";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -29,7 +25,6 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { MessageboxReceiving } from "@/components/wallet/messagebox-receiving";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
@@ -66,132 +61,93 @@ export function WalletSettingsForm() {
 	if (!mounted) return null;
 
 	return (
-		<div className="grid gap-6">
-			<Card>
-				<CardHeader>
-					<div className="flex items-center gap-2">
-						<div className="p-2 bg-primary/10 rounded-full">
-							<Cable className="h-6 w-6 text-primary" />
-						</div>
-						<div>
-							<CardTitle>Wallet Connection</CardTitle>
-							<CardDescription>
-								{connectionMode === "external"
-									? `Connected through ${providerType ?? "a BRC-100 provider"}.`
-									: "Using the wallet built into this browser."}
-							</CardDescription>
-						</div>
-					</div>
-				</CardHeader>
-				{connectionMode === "built-in" && (
-					<CardContent>
-						<div className="flex flex-col space-y-1">
-							<Label className="text-base">Wallet Storage</Label>
-							<span className="text-sm text-muted-foreground">
-								Active store:{" "}
+		<div className="flex flex-col gap-6">
+			<SettingsGroup title="Connection">
+				{connectionMode === "external" ? (
+					<SettingsRow
+						icon={Cable}
+						title="Wallet connection"
+						description={`Connected through ${providerType ?? "a BRC-100 provider"}.`}
+						action={
+							<Button
+								onClick={() => void disconnectExternalWallet()}
+								variant="outline"
+							>
+								<LogOut data-icon="inline-start" />
+								Disconnect
+							</Button>
+						}
+					/>
+				) : (
+					<SettingsRow
+						icon={Database}
+						title="Wallet storage"
+						description={
+							<>
+								Using the wallet built into this browser. Active store:{" "}
 								<code className="break-all font-mono">{storageHost}</code>. A
 								copy in this browser is kept in sync as a backup.
-							</span>
+							</>
+						}
+					/>
+				)}
+				{connectionMode === "built-in" && (
+					<SettingsRow icon={Inbox}>
+						{/* Its own label is text-base; rows title at text-sm. */}
+						<div className="[&_[data-slot=label]]:text-sm">
+							<MessageboxReceiving />
 						</div>
-						<Separator className="my-4" />
-						<MessageboxReceiving />
-					</CardContent>
+					</SettingsRow>
 				)}
-				{connectionMode === "external" && (
-					<CardContent>
-						<Button
-							onClick={() => void disconnectExternalWallet()}
-							variant="outline"
-						>
-							<LogOut className="h-4 w-4" data-icon="inline-start" />
-							Disconnect External Wallet
-						</Button>
-					</CardContent>
-				)}
-			</Card>
+			</SettingsGroup>
 
-			<Card>
-				<CardHeader>
-					<div className="flex items-center gap-2">
-						<div className="p-2 bg-primary/10 rounded-full">
-							<Wallet className="h-6 w-6 text-primary" />
-						</div>
-						<div>
-							<CardTitle>Wallet Preferences</CardTitle>
-							<CardDescription>
-								Manage how your wallet behaves and displays data.
-							</CardDescription>
-						</div>
-					</div>
-				</CardHeader>
-				<CardContent className="space-y-6">
-					{/* Network: fixed per account, never a setting */}
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<Label className="text-base">Network</Label>
-							<span className="text-sm text-muted-foreground">
-								{connectionMode === "external"
-									? "Reported by the connected wallet."
-									: "Set when this wallet was created or imported. It cannot be changed."}
-							</span>
-						</div>
-						{chain === "test" ? (
+			<SettingsGroup title="Preferences">
+				{/* Network: fixed per account, never a setting */}
+				<SettingsRow
+					icon={Globe}
+					title="Network"
+					description={
+						connectionMode === "external"
+							? "Reported by the connected wallet."
+							: "Set when this wallet was created or imported. It cannot be changed."
+					}
+					control={
+						chain === "test" ? (
 							<TestnetBadge />
 						) : (
 							<span className="text-sm font-medium">Mainnet</span>
-						)}
-					</div>
-
-					<Separator />
-
-					{/* Currency Selection */}
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<Label htmlFor="currency" className="text-base">
-								Display Currency
-							</Label>
-							<span className="text-sm text-muted-foreground">
-								Select your preferred currency for fiat value display.
-							</span>
-						</div>
-						<div className="flex items-center gap-2">
-							<Select
-								value={currency}
-								onValueChange={(v) => {
-									play("click");
-									setCurrency(v);
-								}}
-							>
-								<SelectTrigger className="w-[100px]" id="currency">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="USD">USD</SelectItem>
-									<SelectItem value="BSV">BSV</SelectItem>
-								</SelectContent>
-							</Select>
-						</div>
-					</div>
-
-					<Separator />
-
-					{/* Privacy Mode */}
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<div className="flex items-center gap-2">
-								<Label htmlFor="privacy" className="text-base">
-									Privacy Mode
-								</Label>
-								{isPrivacyModeEnabled ? (
-									<EyeOff className="h-4 w-4 text-muted-foreground" />
-								) : (
-									<Eye className="h-4 w-4 text-muted-foreground" />
-								)}
-							</div>
-							<span className="text-sm text-muted-foreground">
-								Hide wallet balances by default in the sidebar and dashboard.
-							</span>
-						</div>
+						)
+					}
+				/>
+				<SettingsRow
+					icon={Coins}
+					title="Display currency"
+					description="The currency fiat values are shown in."
+					htmlFor="currency"
+					action={
+						<Select
+							value={currency}
+							onValueChange={(v) => {
+								play("click");
+								setCurrency(v);
+							}}
+						>
+							<SelectTrigger id="currency">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="USD">USD</SelectItem>
+								<SelectItem value="BSV">BSV</SelectItem>
+							</SelectContent>
+						</Select>
+					}
+				/>
+				<SettingsRow
+					icon={isPrivacyModeEnabled ? EyeOff : Eye}
+					title="Privacy mode"
+					description="Hide balances by default in the sidebar and dashboard."
+					htmlFor="privacy"
+					control={
 						<Switch
 							id="privacy"
 							checked={isPrivacyModeEnabled}
@@ -200,136 +156,74 @@ export function WalletSettingsForm() {
 								setIsPrivacyModeEnabled(v);
 							}}
 						/>
-					</div>
-
-					<Separator />
-
-					{/* Sync */}
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<Label className="text-base">Blockchain Sync</Label>
-							<span className="text-sm text-muted-foreground">
-								Manually refresh your spendable balance and indexed assets.
-							</span>
-						</div>
+					}
+				/>
+				<SettingsRow
+					icon={RefreshCw}
+					title="Blockchain sync"
+					description="Refresh your spendable balance and indexed assets now."
+					action={
 						<Button
 							variant="outline"
-							size="sm"
 							onClick={() => {
 								play("click");
 								syncWallet();
 							}}
 							disabled={!isInitialized || isSyncing}
-							className="min-w-[100px]"
 						>
 							{isSyncing ? (
-								<Loader2
-									className="h-4 w-4 animate-spin"
-									data-icon="inline-start"
-								/>
+								<Loader2 className="animate-spin" data-icon="inline-start" />
 							) : (
-								<RefreshCw className="h-4 w-4" data-icon="inline-start" />
+								<RefreshCw data-icon="inline-start" />
 							)}
-							{isSyncing ? "Syncing..." : "Sync Now"}
+							{isSyncing ? "Syncing…" : "Sync now"}
 						</Button>
-					</div>
-
-					<Separator />
-
-					{connectionMode === "built-in" && (
-						<div className="flex items-center justify-between space-x-2">
-							<div className="flex flex-col space-y-1">
-								<Label className="text-base">Connected Apps</Label>
-								<span className="text-sm text-muted-foreground">
-									Review and revoke permissions granted to external apps.
-								</span>
-							</div>
-							<Button
-								variant="outline"
-								size="sm"
-								asChild
-								onClick={() => play("click")}
-							>
-								<Link href="/wallet/permissions">
-									<Shield className="h-4 w-4" data-icon="inline-start" />
-									Manage
-								</Link>
+					}
+				/>
+				{connectionMode === "built-in" && (
+					<SettingsRow
+						icon={Shield}
+						title="Connected apps"
+						description="Review and revoke what external apps may do."
+						action={
+							<Button variant="outline" asChild onClick={() => play("click")}>
+								<Link href="/wallet/permissions">Manage</Link>
 							</Button>
-						</div>
-					)}
-				</CardContent>
-			</Card>
+						}
+					/>
+				)}
+			</SettingsGroup>
 
-			{/* Developer Tools */}
-			<Card>
-				<CardHeader>
-					<div className="flex items-center gap-2">
-						<div className="p-2 bg-chart-3/10 rounded-full">
-							<Bug className="h-6 w-6 text-chart-3" />
-						</div>
-						<div>
-							<CardTitle>Developer Tools</CardTitle>
-							<CardDescription>
-								Advanced debugging and diagnostic features.
-							</CardDescription>
-						</div>
-					</div>
-				</CardHeader>
-				<CardContent>
-					<div className="flex items-center justify-between space-x-2">
-						<div className="flex flex-col space-y-1">
-							<Label className="text-base">Wallet Diagnostics</Label>
-							<span className="text-sm text-muted-foreground">
-								View wallet state, test integrations, and debug issues.
-							</span>
-						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							asChild
-							onClick={() => play("click")}
-						>
-							<Link href="/wallet/diagnostics">
-								<Bug className="h-4 w-4" data-icon="inline-start" />
-								Open
-							</Link>
+			<SettingsGroup title="Developer">
+				<SettingsRow
+					icon={Bug}
+					title="Wallet diagnostics"
+					description="View wallet state, test integrations and debug issues."
+					action={
+						<Button variant="outline" asChild onClick={() => play("click")}>
+							<Link href="/wallet/diagnostics">Open</Link>
 						</Button>
-					</div>
-				</CardContent>
-			</Card>
+					}
+				/>
+			</SettingsGroup>
 
-			{/* Danger Zone */}
 			{connectionMode === "built-in" && (
-				<Card className="border-destructive/50">
-					<CardHeader>
-						<CardTitle className="text-destructive">Danger Zone</CardTitle>
-						<CardDescription>
-							Irreversible actions that affect your wallet access.
-						</CardDescription>
-					</CardHeader>
-					<CardContent>
-						<div className="flex items-center justify-between space-x-2">
-							<div className="flex flex-col space-y-1">
-								<Label className="text-base">Sign Out</Label>
-								<span className="text-sm text-muted-foreground">
-									Remove this wallet from the browser. Ensure you have your
-									recovery phrase backed up.
-								</span>
-							</div>
+				<SettingsGroup title="Danger zone" danger>
+					<SettingsRow
+						icon={LogOut}
+						title="Sign out"
+						description="Remove this wallet from the browser. Make sure your recovery phrase is backed up first."
+						action={
 							<Button
 								variant="destructive"
-								size="sm"
 								asChild
 								onClick={() => play("click")}
 							>
-								<Link href="/wallet/delete">
-									<LogOut className="h-4 w-4" data-icon="inline-start" />
-									Sign Out
-								</Link>
+								<Link href="/wallet/delete">Sign out</Link>
 							</Button>
-						</div>
-					</CardContent>
-				</Card>
+						}
+					/>
+				</SettingsGroup>
 			)}
 		</div>
 	);
