@@ -1,14 +1,19 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Lock, LockOpen, RefreshCw, X } from "lucide-react";
+import { ChevronDown, Loader2, Lock, LockOpen, RefreshCw } from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DetailList, DetailRow } from "@/components/ui/detail-list";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Notice } from "@/components/ui/notice";
+import { SectionHeader } from "@/components/ui/section-header";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
 	DialogContent,
 	DialogDescription,
+	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 	DialogTrigger,
@@ -31,7 +36,6 @@ import {
 } from "@/lib/wallet/lock-actions";
 import { useSettingsStorage } from "@/lib/wallet-storage";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
-import styles from "./wallet-home.module.css";
 import { formatSatoshisAsBsv, parseBsvAmount } from "./wallet-home-utils";
 
 interface ReviewedLock {
@@ -180,54 +184,49 @@ function LockDialog({
 					</DialogDescription>
 				</DialogHeader>
 				{state.status === "success" ? (
-					<div className="space-y-4" role="status">
-						<p className="font-mono text-2xl">
+					<>
+						<p className="font-mono font-semibold text-2xl" role="status">
 							{formatSatoshisAsBsv(state.satoshis)} BSV
 						</p>
-						<details className="text-muted-foreground text-sm">
-							<summary className="cursor-pointer">Transaction details</summary>
-							<p className="mt-2 break-all font-mono text-xs">{state.txid}</p>
+						<details className="group text-muted-foreground text-sm">
+							<summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md focus-visible:outline-2 focus-visible:outline-ring md:min-h-9 [&::-webkit-details-marker]:hidden">
+								Transaction details
+								<ChevronDown
+									aria-hidden="true"
+									className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+								/>
+							</summary>
+							<p className="mt-2 font-mono text-xs wrap-anywhere">
+								{state.txid}
+							</p>
 						</details>
-						<Button className="w-full" onClick={close}>
-							Done
-						</Button>
-					</div>
+						<DialogFooter>
+							<Button onClick={close}>Done</Button>
+						</DialogFooter>
+					</>
 				) : reviewing ? (
-					<div className="space-y-4">
-						<dl className="space-y-3 rounded-lg border p-4 text-sm">
-							<div className="flex justify-between gap-4">
-								<dt className="text-muted-foreground">Amount</dt>
-								<dd className="font-mono">
-									{formatSatoshisAsBsv(state.satoshis)} BSV
-								</dd>
-							</div>
-							<div className="flex justify-between gap-4">
-								<dt className="text-muted-foreground">Unlocks at block</dt>
-								<dd className="font-mono">
-									{state.until.toLocaleString("en-US")}
-								</dd>
-							</div>
-							<div className="flex justify-between gap-4">
-								<dt className="text-muted-foreground">Locked for</dt>
-								<dd className="text-right">
-									{(state.until - state.currentHeight).toLocaleString("en-US")}{" "}
-									blocks,{" "}
-									{approximateBlockDuration(state.until - state.currentHeight)}
-								</dd>
-							</div>
-							<div className="flex justify-between gap-4">
-								<dt className="text-muted-foreground">Network fee</dt>
-								<dd>Calculated by wallet</dd>
-							</div>
-						</dl>
-						<p className="text-muted-foreground text-xs">
-							The network fee is paid on top of the locked amount.
-						</p>
-						<p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+					<>
+						<DetailList>
+							<DetailRow label="Amount">
+								{formatSatoshisAsBsv(state.satoshis)} BSV
+							</DetailRow>
+							<DetailRow label="Unlocks at block">
+								{state.until.toLocaleString("en-US")}
+							</DetailRow>
+							<DetailRow label="Locked for" mono={false}>
+								{(state.until - state.currentHeight).toLocaleString("en-US")}{" "}
+								blocks,{" "}
+								{approximateBlockDuration(state.until - state.currentHeight)}
+							</DetailRow>
+							<DetailRow label="Network fee" mono={false}>
+								Paid on top of the amount
+							</DetailRow>
+						</DetailList>
+						<Notice tone="warning">
 							You can't spend these coins or cancel the lock before block{" "}
 							{state.until.toLocaleString("en-US")}.
-						</p>
-						<div className="grid grid-cols-2 gap-2">
+						</Notice>
+						<DialogFooter>
 							<Button
 								disabled={state.status === "locking"}
 								onClick={() => setState({ status: "idle" })}
@@ -244,11 +243,11 @@ function LockDialog({
 								)}
 								{state.status === "locking" ? "Locking…" : "Confirm and lock"}
 							</Button>
-						</div>
-					</div>
+						</DialogFooter>
+					</>
 				) : (
-					<div className="space-y-4">
-						<div className="space-y-2">
+					<>
+						<div className="flex flex-col gap-2">
 							<Label htmlFor="wallet-lock-amount">Amount (BSV)</Label>
 							<Input
 								id="wallet-lock-amount"
@@ -258,8 +257,8 @@ function LockDialog({
 								value={amount}
 							/>
 						</div>
-						<fieldset className="space-y-2">
-							<legend className="font-medium text-sm">Unlock</legend>
+						<fieldset className="flex flex-col gap-2">
+							<legend className="mb-2 font-medium text-sm">Unlock</legend>
 							<div className="grid grid-cols-2 gap-2">
 								{(
 									[
@@ -304,19 +303,17 @@ function LockDialog({
 							</p>
 						</fieldset>
 						{state.status === "error" && (
-							<div className="flex gap-2 text-destructive text-sm" role="alert">
-								<X className="mt-0.5 size-4 shrink-0" />
-								<span>{state.message}</span>
-							</div>
+							<Notice tone="danger">{state.message}</Notice>
 						)}
-						<Button
-							className="w-full"
-							disabled={!amount.trim() || !heightValue.trim()}
-							onClick={() => void review()}
-						>
-							Review lock
-						</Button>
-					</div>
+						<DialogFooter>
+							<Button
+								disabled={!amount.trim() || !heightValue.trim()}
+								onClick={() => void review()}
+							>
+								Review lock
+							</Button>
+						</DialogFooter>
+					</>
 				)}
 			</DialogContent>
 		</SoundDialog>
@@ -393,140 +390,152 @@ export function WalletLocks() {
 	return (
 		<section
 			aria-labelledby="wallet-locks-heading"
-			className="space-y-4 border-border border-t pt-6"
+			className="flex flex-col gap-4 border-border border-t pt-6"
 		>
-			<div className="flex flex-wrap items-start justify-between gap-3">
-				<div className="flex items-start gap-3">
-					<Lock className={styles.accent} aria-hidden="true" />
-					<div>
-						<h2 id="wallet-locks-heading">Locks</h2>
-						<p className={styles.description}>
-							{locksQuery.data
-								? `${amount(total)} locked in ${coins.length} coin${coins.length === 1 ? "" : "s"} · block ${locksQuery.data.currentHeight.toLocaleString("en-US")}`
-								: "BSV time-locked until a block height."}
-						</p>
-					</div>
-				</div>
-				<div className="flex gap-2">
-					<Button
-						aria-label="Refresh locks"
-						disabled={!services || locksQuery.isFetching}
-						onClick={() => {
-							clearUnlockResult();
-							void locksQuery.refetch();
-						}}
-						size="icon"
-						variant="ghost"
-					>
-						<RefreshCw
-							className={
-								locksQuery.isFetching ? "motion-safe:animate-spin" : ""
-							}
-						/>
-					</Button>
-					{ready.length > 1 && (
+			<SectionHeader
+				action={
+					<>
 						<Button
-							disabled={unlocking !== null}
-							onClick={() => void unlock("all", ready)}
-							size="sm"
-							variant="outline"
+							aria-label="Refresh locks"
+							disabled={!services || locksQuery.isFetching}
+							onClick={() => {
+								clearUnlockResult();
+								void locksQuery.refetch();
+							}}
+							size="icon"
+							variant="ghost"
 						>
-							{unlocking === "all" ? (
-								<Loader2 className="animate-spin" data-icon="inline-start" />
-							) : (
-								<LockOpen data-icon="inline-start" />
-							)}
-							Unlock all ({ready.length})
+							<RefreshCw
+								className={
+									locksQuery.isFetching ? "motion-safe:animate-spin" : ""
+								}
+							/>
 						</Button>
-					)}
-					<LockDialog
-						currentHeight={locksQuery.data?.currentHeight ?? null}
-						onLocked={async () => {
-							clearUnlockResult();
-							await refresh();
-						}}
-					/>
-				</div>
-			</div>
+						<LockDialog
+							currentHeight={locksQuery.data?.currentHeight ?? null}
+							onLocked={async () => {
+								clearUnlockResult();
+								await refresh();
+							}}
+						/>
+					</>
+				}
+				description={
+					locksQuery.data
+						? `${amount(total)} locked in ${coins.length} coin${coins.length === 1 ? "" : "s"} · block ${locksQuery.data.currentHeight.toLocaleString("en-US")}`
+						: "BSV time-locked until a block height."
+				}
+				title={<span id="wallet-locks-heading">Locks</span>}
+			/>
 
 			{!services ? (
 				<p className="text-muted-foreground text-sm">
 					Locks aren't available for this wallet connection.
 				</p>
 			) : locksQuery.isPending ? (
-				<p
-					className="flex items-center gap-2 text-muted-foreground text-sm"
-					role="status"
-				>
-					<Loader2 className="size-4 motion-safe:animate-spin" /> Loading locks…
-				</p>
+				<div role="status">
+					<span className="sr-only">Loading locks…</span>
+					<ul aria-hidden="true" className="divide-y divide-border">
+						{[0, 1].map((row) => (
+							<li
+								className="flex min-h-14 items-center justify-between py-3"
+								key={row}
+							>
+								<div className="flex flex-col gap-2">
+									<Skeleton className="h-4 w-32" />
+									<Skeleton className="h-3 w-24" />
+								</div>
+								<Skeleton className="h-3 w-28" />
+							</li>
+						))}
+					</ul>
+				</div>
 			) : locksQuery.isError ? (
-				<p className="text-destructive text-sm" role="alert">
-					Locks could not be loaded. Try again.
-				</p>
+				<Notice tone="danger">Locks could not be loaded. Try again.</Notice>
 			) : coins.length === 0 ? (
 				<p className="text-muted-foreground text-sm">No locked coins.</p>
 			) : (
-				<ul className="divide-y divide-border rounded-lg border">
-					{coins.map((coin) => {
-						const blocksLeft = coin.until - locksQuery.data.currentHeight;
-						return (
-							<li
-								className="flex flex-wrap items-center justify-between gap-3 p-3"
-								key={coin.outpoint}
+				<>
+					{ready.length > 1 && (
+						<div className="flex items-center justify-between gap-3">
+							<p className="text-muted-foreground text-sm">
+								{ready.length} locks are ready to unlock.
+							</p>
+							<Button
+								disabled={unlocking !== null}
+								onClick={() => void unlock("all", ready)}
+								size="sm"
+								variant="outline"
 							>
-								<div className="min-w-0">
-									<p className="font-mono text-sm">{amount(coin.satoshis)}</p>
-									<p className="text-muted-foreground text-xs">
-										Unlock block {coin.until.toLocaleString("en-US")}
-									</p>
-								</div>
-								{coin.spendable ? (
-									<div className="flex items-center gap-3">
-										<span className="font-medium text-success text-xs">
-											Spendable
-										</span>
-										{!coin.id && (
-											<span className="text-muted-foreground text-xs">
-												Can't unlock here: no wallet tracking record.
-											</span>
-										)}
-										<Button
-											disabled={unlocking !== null || !coin.id}
-											onClick={() => void unlock(coin.outpoint, [coin])}
-											size="sm"
-										>
-											{unlocking === coin.outpoint ? (
-												<Loader2
-													className="animate-spin"
-													data-icon="inline-start"
-												/>
-											) : (
-												<LockOpen data-icon="inline-start" />
-											)}
-											Unlock
-										</Button>
-									</div>
+								{unlocking === "all" ? (
+									<Loader2 className="animate-spin" data-icon="inline-start" />
 								) : (
-									<span className="text-warning text-xs">
-										{blocksLeft.toLocaleString("en-US")} block
-										{blocksLeft === 1 ? "" : "s"} left,{" "}
-										{approximateBlockDuration(blocksLeft)}
-									</span>
+									<LockOpen data-icon="inline-start" />
 								)}
-							</li>
-						);
-					})}
-				</ul>
+								Unlock all ({ready.length})
+							</Button>
+						</div>
+					)}
+					<ul className="divide-y divide-border">
+						{coins.map((coin) => {
+							const blocksLeft = coin.until - locksQuery.data.currentHeight;
+							return (
+								<li
+									className="flex min-h-14 items-center justify-between gap-3 py-3"
+									key={coin.outpoint}
+								>
+									<div className="flex min-w-0 flex-col gap-1">
+										<p className="font-mono text-sm">{amount(coin.satoshis)}</p>
+										<p className="text-muted-foreground text-xs">
+											Unlock block {coin.until.toLocaleString("en-US")}
+										</p>
+										{coin.spendable && !coin.id && (
+											<p className="text-muted-foreground text-xs">
+												Can't unlock here: no wallet tracking record.
+											</p>
+										)}
+									</div>
+									{coin.spendable ? (
+										<div className="flex shrink-0 items-center gap-3">
+											<span className="font-medium text-success text-xs">
+												Spendable
+											</span>
+											<Button
+												disabled={unlocking !== null || !coin.id}
+												onClick={() => void unlock(coin.outpoint, [coin])}
+												size="sm"
+											>
+												{unlocking === coin.outpoint ? (
+													<Loader2
+														className="animate-spin"
+														data-icon="inline-start"
+													/>
+												) : (
+													<LockOpen data-icon="inline-start" />
+												)}
+												Unlock
+											</Button>
+										</div>
+									) : (
+										<span className="shrink-0 text-right text-warning text-xs">
+											{blocksLeft.toLocaleString("en-US")} block
+											{blocksLeft === 1 ? "" : "s"} left,{" "}
+											{approximateBlockDuration(blocksLeft)}
+										</span>
+									)}
+								</li>
+							);
+						})}
+					</ul>
+				</>
 			)}
-			{unlockError && (
-				<p className="text-destructive text-sm" role="alert">
-					{unlockError}
-				</p>
-			)}
+			{unlockError && <Notice tone="danger">{unlockError}</Notice>}
 			{unlockTxid && (
-				<p className="break-all text-muted-foreground text-xs" role="status">
-					Unlocked. Transaction {unlockTxid}
+				<p
+					className="text-muted-foreground text-xs wrap-anywhere"
+					role="status"
+				>
+					Unlocked. Transaction <span className="font-mono">{unlockTxid}</span>
 				</p>
 			)}
 		</section>

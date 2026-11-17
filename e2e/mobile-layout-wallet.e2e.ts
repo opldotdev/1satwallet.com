@@ -135,7 +135,7 @@ walletTest(
 				sendDialog,
 				closeCheckAt(viewport),
 			);
-			// The Send dialog has no footer today; any it gains is checked here.
+			// Its footer (Review payment) is checked for full-width buttons.
 			checkBottomSheet(
 				geometry,
 				`Send dialog at ${describeViewport(viewport)}`,

@@ -19,6 +19,8 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // A quiet, filled action beside a balance (wallet overview).
+        tile: "bg-muted text-foreground hover:bg-accent [&_svg]:text-brand",
       },
       // Below md every size is at least a 44px tap target (lg 48px). It is
       // a min size, so a className height override still holds on desktop.
