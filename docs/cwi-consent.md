@@ -102,6 +102,14 @@ next one asks again.
   app's `listOutputs` of a `p color` basket, and from every output of a
   `p color` action an app lists (outputs in `p color` baskets are already
   hidden). The wallet's own reads keep them.
+- **Apps never read `p color` labels.** A `p color plan` label is a chunk of
+  the transaction's plan, and its owned outputs name the wallet's identity key
+  as `senderIdentityKey`. So outputs an app lists from a `p color` asset basket
+  or `p color assets` carry no `labels` at all, outputs from any other basket
+  lose their `p color` labels, and every action an app lists loses its
+  `p color` labels, including the plan label the app named in `listActions`.
+  An app's other labels are untouched. The wallet's own reads keep every
+  label.
 - **Receipts are accepted without a prompt.** An app's `internalizeAction`
   into a `p color` value or authority basket goes to the module, which has no
   receive message type and asks nobody, as in Yours (1color branch) and the
