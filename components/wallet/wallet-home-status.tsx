@@ -21,7 +21,10 @@ import { useWalletHandles } from "@/hooks/use-wallet-handles";
 import { endpointsOf, isOneColorAvailable } from "@/lib/chain-endpoints";
 import { type WalletTabValue, walletTabsFor } from "@/lib/chain-surfaces";
 import { useWalletChain } from "@/lib/hooks/use-wallet-chain";
-import { describeAssetSurface } from "@/lib/wallet/asset-query-state";
+import {
+	assetSurfaceFromCount,
+	describeAssetSurface,
+} from "@/lib/wallet/asset-query-state";
 import type { SyncTaskState } from "@/providers/hooks/use-sync-engine";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import styles from "./wallet-home.module.css";
@@ -67,9 +70,7 @@ function TokensDescription() {
 		: oneColor.isError
 			? "1Color couldn't load"
 			: describeAssetSurface(
-					oneColor.data.length === 0
-						? { kind: "empty" }
-						: { kind: "ready", count: oneColor.data.length },
+					assetSurfaceFromCount(oneColor.data.length),
 					"1Color token",
 				);
 	return `${bsv21} · ${colored}`;
