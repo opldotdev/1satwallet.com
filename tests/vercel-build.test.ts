@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
-const read = (file: string) =>
-	readFileSync(join(process.cwd(), file), "utf8");
+const read = (file: string) => readFileSync(join(process.cwd(), file), "utf8");
 
 describe("Vercel build", () => {
 	it("builds every deployment through the one script", () => {
