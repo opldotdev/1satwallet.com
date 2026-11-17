@@ -157,6 +157,35 @@ walletTest(
 			(result) => result.count === 0,
 		);
 
+		// Both standards' groups are on testnet, each settled past its skeleton.
+		await browser.waitFor(
+			"the BSV-21 and 1Color groups to finish loading",
+			(groups: string[]) =>
+				groups.every((group) => {
+					const section = document.querySelector(
+						`section[aria-labelledby="${group}"]`,
+					);
+					return (
+						section !== null &&
+						section.querySelector('[role="status"][aria-live="polite"]') ===
+							null
+					);
+				}),
+			["tokens-bsv21", "tokens-1color"],
+			CHAIN_TIMEOUT,
+		);
+		const groups = await browser.evaluate(
+			(ids: string[]) =>
+				ids.filter(
+					(id) =>
+						document.querySelector(`section[aria-labelledby="${id}"]`) === null,
+				),
+			["tokens-bsv21", "tokens-1color"],
+		);
+		for (const id of groups) {
+			problems.add(`/wallet/tokens: no section[aria-labelledby="${id}"].`);
+		}
+
 		// Rows open the wallet's own token page, never the market.
 		const rows = await readRows(browser);
 		if (rows.market > 0) {
@@ -176,9 +205,48 @@ walletTest(
 		}
 		problems.throwIfAny("Tokens on testnet");
 
+		// Each standard's page has its own headline and the back arrow to
+		// Tokens. A wallet holding none of a standard skips that page.
+		const skipped: string[] = [];
+		const [firstOneColor] = rows.oneColor;
+		if (firstOneColor) {
+			await browser.click({
+				role: "link",
+				within: { role: "region", name: "1Color" },
+				index: 0,
+			});
+			await waitForSettledPage(browser, firstOneColor, null, CHAIN_TIMEOUT);
+			const page = await readHeadings(browser);
+			if (page.h1.length !== 1 || page.h1[0] !== "1Color token") {
+				problems.add(
+					`${firstOneColor}: visible h1 ${JSON.stringify(page.h1)}, expected exactly ["1Color token"].`,
+				);
+			}
+			const back = await browser.query({
+				role: "link",
+				name: "Back to Tokens",
+			});
+			if (back.count !== 1) {
+				problems.add(
+					`${firstOneColor}: ${back.count} "Back to Tokens" links, expected 1.`,
+				);
+			}
+			problems.throwIfAny("1Color token page on testnet");
+			// Back by the arrow: a tap keeps the wallet unlocked.
+			await browser.click({ role: "link", name: "Back to Tokens" });
+			await waitForSettledPage(browser, "/wallet/tokens", null, CHAIN_TIMEOUT);
+		} else {
+			skipped.push(
+				"wallet A holds no 1Color token, so there is no row to open.",
+			);
+		}
+
 		const [first] = rows.bsv21;
 		if (!first) {
-			t.skip("wallet A holds no BSV-21 token, so there is no row to open.");
+			skipped.push(
+				"wallet A holds no BSV-21 token, so there is no row to open.",
+			);
+			t.skip(skipped.join(" "));
 			return;
 		}
 		await browser.click({
@@ -201,5 +269,6 @@ walletTest(
 		);
 		await checkPhones(browser, first, problems);
 		problems.throwIfAny("BSV-21 token page on testnet");
+		if (skipped.length > 0) t.skip(skipped.join(" "));
 	},
 );

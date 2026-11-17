@@ -1,7 +1,10 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { isRouteAvailableOn } from "@/lib/chain-surfaces";
-import { WALLET_CHAIN_COOKIE } from "@/lib/wallet-chain";
+import {
+	isRouteAvailableOn,
+	unavailableRouteRedirect,
+} from "@/lib/chain-surfaces";
+import { parseWalletChain, WALLET_CHAIN_COOKIE } from "@/lib/wallet-chain";
 
 export const NOT_ON_TESTNET_PATH = "/not-on-testnet";
 
@@ -75,16 +78,26 @@ export function proxy(request: NextRequest) {
 		});
 	}
 
-	// A wallet on testnet gets a static notice in place of mainnet-only pages,
-	// so those pages stay static for everyone else and never render here.
-	const onTestnet = request.cookies.get(WALLET_CHAIN_COOKIE)?.value === "test";
+	// The cookie is set only while the wallet is on testnet; anything else is
+	// mainnet. A page the chain lacks that has a home elsewhere (1Color's, off
+	// testnet) redirects there. A wallet on testnet gets a static notice in
+	// place of mainnet-only pages, so those pages stay static for everyone
+	// else and never render here.
+	const chain = parseWalletChain(
+		request.cookies.get(WALLET_CHAIN_COOKIE)?.value,
+	);
+	const redirectTo = unavailableRouteRedirect(chain, request.nextUrl.pathname);
 	const notOnTestnet =
-		onTestnet && !isRouteAvailableOn("test", request.nextUrl.pathname);
-	const response = notOnTestnet
-		? NextResponse.rewrite(new URL(NOT_ON_TESTNET_PATH, request.url))
-		: NextResponse.next();
-	if (notOnTestnet) {
-		// The notice depends on the cookie, so no cache may keep it for the URL.
+		redirectTo === null &&
+		chain === "test" &&
+		!isRouteAvailableOn("test", request.nextUrl.pathname);
+	const response = redirectTo
+		? NextResponse.redirect(new URL(redirectTo, request.url))
+		: notOnTestnet
+			? NextResponse.rewrite(new URL(NOT_ON_TESTNET_PATH, request.url))
+			: NextResponse.next();
+	if (redirectTo || notOnTestnet) {
+		// Both depend on the cookie, so no cache may keep them for the URL.
 		response.headers.set(
 			"Cache-Control",
 			"private, no-store, max-age=0, must-revalidate",

@@ -15,7 +15,8 @@ import type { Locator } from "./support/page-query";
 // The Tokens section on mainnet, as a first-time visitor: one h1, Tokens
 // the current tab, no 1Color anywhere and a Create token sheet with no
 // standard picker (BSV-21 is the only standard). The old BSV21 and 1Color
-// addresses land on Tokens. Read-only: nothing is signed.
+// addresses, and a 1Color token's page, land on Tokens. Read-only: nothing
+// is signed.
 
 const NAV = 'nav[aria-label="Wallet sections"]';
 const createButton: Locator = { role: "button", name: "Create token" };
@@ -131,7 +132,10 @@ e2eTest(
 	},
 );
 
-for (const path of ["/wallet/bsv21", "/wallet/1color"]) {
+// A 1Color token's page is testnet only: on mainnet it lands on Tokens too.
+const ONE_COLOR_TOKEN = `/wallet/1color/${"0".repeat(64)}_0`;
+
+for (const path of ["/wallet/bsv21", "/wallet/1color", ONE_COLOR_TOKEN]) {
 	e2eTest(
 		`tokens: ${path} lands on the Tokens section`,
 		visitor(path),
@@ -141,6 +145,11 @@ for (const path of ["/wallet/bsv21", "/wallet/1color"]) {
 			if (page.h1.length !== 1 || page.h1[0] !== "Tokens") {
 				throw new Error(
 					`${path} landed on ${page.pathname} with visible h1 ${JSON.stringify(page.h1)}, expected exactly ["Tokens"].`,
+				);
+			}
+			if (page.oneColor) {
+				throw new Error(
+					`${path} landed on ${page.pathname}, which mentions 1Color on mainnet.`,
 				);
 			}
 		},

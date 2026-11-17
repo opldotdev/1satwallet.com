@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getRewrittenUrl, isRewrite } from "next/experimental/testing/server";
+import {
+	getRedirectUrl,
+	getRewrittenUrl,
+	isRewrite,
+} from "next/experimental/testing/server";
 import { NextRequest } from "next/server";
 import { NOT_ON_TESTNET_PATH, proxy } from "../proxy";
 
@@ -50,11 +54,37 @@ describe("testnet proxy", () => {
 		for (const path of [
 			"/",
 			"/wallet",
-			"/wallet/bsv21",
+			"/wallet/tokens",
+			"/wallet/bsv21/abc_0",
+			"/wallet/1color/abc_0",
 			"/marketing",
 			"/settings",
 		]) {
-			assert.equal(isRewrite(proxy(request(path, "test"))), false, path);
+			const response = proxy(request(path, "test"));
+			assert.equal(isRewrite(response), false, path);
+			assert.equal(getRedirectUrl(response), null, path);
+		}
+	});
+});
+
+describe("1Color off testnet", () => {
+	it("redirects every 1Color page to Tokens unless the wallet is on testnet", () => {
+		for (const path of ["/wallet/1color", "/wallet/1color/abc_0"]) {
+			for (const chain of [undefined, "main", "testnet", ""]) {
+				const response = proxy(request(path, chain));
+				assert.equal(
+					getRedirectUrl(response),
+					"https://1satwallet.com/wallet/tokens",
+					`${path} with chain cookie ${chain}`,
+				);
+				assert.match(response.headers.get("cache-control") ?? "", /no-store/);
+			}
+		}
+	});
+
+	it("leaves other pages and look-alike paths alone on mainnet", () => {
+		for (const path of ["/wallet/1colorx", "/wallet/tokens", "/wallet"]) {
+			assert.equal(getRedirectUrl(proxy(request(path))), null, path);
 		}
 	});
 });

@@ -62,69 +62,57 @@ export function OneColorLoading({ label }: { label: string }) {
 const noSubscription = () => () => {};
 
 /**
- * What every 1Color page shows before it can read the built-in wallet: the
- * mainnet notice, the unlock prompt, the external-wallet notice. Renders
- * `children` once the built-in wallet is ready on a chain with 1Color.
+ * Whether the built-in wallet's 1Color tokens can be read here, before any
+ * read: "unavailable" on a chain without 1Color, "locked" with no wallet
+ * open, "external" while an external wallet (which keeps its own tokens) is
+ * connected.
  */
-export function OneColorGate({ children }: { children: ReactNode }) {
+export type OneColorAccess =
+	| "loading"
+	| "unavailable"
+	| "locked"
+	| "external"
+	| "ready";
+
+export function useOneColorAccess(): OneColorAccess {
 	const { chain, connectionMode, isInitialized, isInitializing } =
 		useWalletToolbox();
-	// The page prerenders as mainnet, so nothing chain-specific renders until
-	// the client knows the active account's network: a testnet account never
-	// flashes the "testnet only" notice and hydration never mismatches.
+	// Pages prerender as mainnet, so nothing chain-specific is decided until
+	// the client knows the active account's network: a testnet account is
+	// never sent away from a 1Color page, and hydration never mismatches.
 	const mounted = useSyncExternalStore(
 		noSubscription,
 		() => true,
 		() => false,
 	);
+	if (!mounted) return "loading";
+	if (!isOneColorAvailable(chain)) return "unavailable";
+	if (isInitializing) return "loading";
+	if (!isInitialized) return "locked";
+	if (connectionMode === "external") return "external";
+	return "ready";
+}
 
-	if (!mounted) return <OneColorLoading label="Loading wallet…" />;
-
-	if (!isOneColorAvailable(chain)) {
-		return (
-			<OneColorNotice>
-				<p>
-					1Color tokens are on testnet only, and this wallet is a mainnet
-					account.
-				</p>
-			</OneColorNotice>
-		);
-	}
-
-	if (isInitializing) return <OneColorLoading label="Loading wallet…" />;
-
-	if (!isInitialized) {
-		return (
-			<OneColorNotice>
-				<p>Please unlock or connect a wallet to view your 1Color tokens.</p>
-			</OneColorNotice>
-		);
-	}
-
-	if (connectionMode === "external") {
-		return (
-			<OneColorNotice>
-				<p>
-					{describeAssetSurface(
-						{ kind: "unsupported", capability: "provider-managed" },
-						"token",
-					)}
-				</p>
-			</OneColorNotice>
-		);
-	}
-
-	return children;
+/** An external wallet keeps its own 1Color tokens; this site reads its own. */
+export function OneColorExternalWallet() {
+	return (
+		<EmptyState
+			description="This site shows 1Color tokens held in its own wallet only."
+			icon={Coins}
+			title={describeAssetSurface(
+				{ kind: "unsupported", capability: "provider-managed" },
+				"token",
+			)}
+		/>
+	);
 }
 
 function OneColorList() {
 	const query = useOneColorBalances();
 
-	let content: ReactNode;
-	if (query.isPending) {
-		content = <TokenRowsSkeleton />;
-	} else if (query.isError) {
-		content = (
+	if (query.isPending) return <TokenRowsSkeleton />;
+	if (query.isError) {
+		return (
 			<EmptyState
 				icon={Coins}
 				title={describeAssetSurface(
@@ -138,52 +126,69 @@ function OneColorList() {
 				}
 			/>
 		);
-	} else if (query.data.length === 0) {
-		content = (
+	}
+	if (query.data.length === 0) {
+		return (
 			<EmptyState
 				description="Tokens sent to your handle, or created here, show up here."
 				icon={Coins}
 				title="No 1Color tokens yet"
 			/>
 		);
-	} else {
+	}
+	return (
+		<TokenList>
+			{query.data.map((token) => (
+				<TokenRow
+					amount={formatBsv21Amount(token.available, token.dec)}
+					badge={<OneColorAuthorityChip authorities={token.authorities} />}
+					caption={
+						token.pending > 0n
+							? `${formatBsv21Amount(token.pending, token.dec)} pending`
+							: shortOutpoint(token.assetId)
+					}
+					href={tokenDetailHref("1color", token.assetId)}
+					icon={token.icon}
+					key={token.assetId}
+					ticker={oneColorTicker(token)}
+				/>
+			))}
+		</TokenList>
+	);
+}
+
+/**
+ * The 1Color group of the Tokens section (testnet only): BRC-162 holdings
+ * of the built-in wallet. The heading stays while the wallet loads, is
+ * locked or is external; a chain without 1Color renders nothing at all.
+ */
+export default function OneColorGrid() {
+	const access = useOneColorAccess();
+	if (access === "unavailable") return null;
+
+	let content: ReactNode;
+	if (access === "loading") {
+		content = <TokenRowsSkeleton />;
+	} else if (access === "locked") {
 		content = (
-			<TokenList>
-				{query.data.map((token) => (
-					<TokenRow
-						amount={formatBsv21Amount(token.available, token.dec)}
-						badge={<OneColorAuthorityChip authorities={token.authorities} />}
-						caption={
-							token.pending > 0n
-								? `${formatBsv21Amount(token.pending, token.dec)} pending`
-								: shortOutpoint(token.assetId)
-						}
-						href={tokenDetailHref("1color", token.assetId)}
-						icon={token.icon}
-						key={token.assetId}
-						ticker={oneColorTicker(token)}
-					/>
-				))}
-			</TokenList>
+			<EmptyState
+				icon={Coins}
+				title="Unlock your wallet to see your 1Color tokens"
+			/>
 		);
+	} else if (access === "external") {
+		content = <OneColorExternalWallet />;
+	} else {
+		content = <OneColorList />;
 	}
 
 	return (
 		<TokenGroup
-			action={<OneColorReceiveDialog />}
+			action={access === "ready" ? <OneColorReceiveDialog /> : undefined}
 			id="tokens-1color"
 			title="1Color"
 		>
 			{content}
 		</TokenGroup>
-	);
-}
-
-/** The 1Color group of the Tokens section (testnet only): BRC-162 holdings. */
-export default function OneColorGrid() {
-	return (
-		<OneColorGate>
-			<OneColorList />
-		</OneColorGate>
 	);
 }

@@ -1,17 +1,20 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
-import { useCallback, useState } from "react";
+import { Coins, ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DetailRow } from "@/components/ui/detail-list";
+import { EmptyState } from "@/components/ui/empty-state";
 import { SectionHeader } from "@/components/ui/section-header";
 import {
 	OneColorAuthorityChip,
-	OneColorGate,
+	OneColorExternalWallet,
 	OneColorLoading,
 	OneColorNotice,
+	useOneColorAccess,
 } from "@/components/wallet/one-color-grid";
 import { oneColorBalancesQueryKey } from "@/hooks/use-one-color-balances";
 import {
@@ -430,14 +433,38 @@ function OneColorDetailBody({ assetId }: { assetId: string }) {
 }
 
 /**
+ * What the page shows before it can read the built-in wallet. A chain
+ * without 1Color never shows the page: it goes to Tokens (the proxy sends
+ * mainnet there before render; this covers a chain switched in the tab).
+ */
+function OneColorDetailGate({ children }: { children: ReactNode }) {
+	const access = useOneColorAccess();
+	const router = useRouter();
+	useEffect(() => {
+		if (access === "unavailable") router.replace("/wallet/tokens");
+	}, [access, router]);
+
+	if (access === "loading" || access === "unavailable") {
+		return <OneColorLoading label="Loading wallet…" />;
+	}
+	if (access === "locked") {
+		return (
+			<EmptyState icon={Coins} title="Unlock your wallet to see this token" />
+		);
+	}
+	if (access === "external") return <OneColorExternalWallet />;
+	return children;
+}
+
+/**
  * One 1Color token (testnet only): balance, Receive, Send and Mint, sends
  * waiting to be claimed, history and the token's facts. The wallet header
  * is the page's h1 and back arrow to Tokens.
  */
 export default function OneColorDetail({ assetId }: { assetId: string }) {
 	return (
-		<OneColorGate>
+		<OneColorDetailGate>
 			<OneColorDetailBody assetId={assetId} />
-		</OneColorGate>
+		</OneColorDetailGate>
 	);
 }

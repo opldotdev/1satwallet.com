@@ -62,7 +62,8 @@ export function OneColorDeployForm({
 }: CreateTokenFormProps) {
 	const queryClient = useQueryClient();
 	const { play } = useSound();
-	const { chain, colorContext, refreshBalance } = useWalletToolbox();
+	const { chain, colorContext, connectionMode, refreshBalance } =
+		useWalletToolbox();
 	const [icon, setIcon] = useState<SelectedIcon | null>(null);
 	const [review, setReview] = useState<OneColorDeployInput | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -198,8 +199,9 @@ export function OneColorDeployForm({
 				<>
 					{colorContext ? null : (
 						<Notice>
-							1Color tokens are created with this site's own wallet. Unlock it
-							to continue.
+							{connectionMode === "external"
+								? "1Color tokens are created with this site's own wallet. A connected wallet can't create them: disconnect it and unlock this site's wallet."
+								: "1Color tokens are created with this site's own wallet. Unlock it to continue."}
 						</Notice>
 					)}
 					<TokenDraftFields

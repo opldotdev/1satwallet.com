@@ -1,5 +1,6 @@
 import type { Chain } from "@/lib/chain-endpoints";
 import {
+	unavailableRouteRedirect,
 	WALLET_TABS,
 	type WalletTabValue,
 	walletTabsFor,
@@ -141,7 +142,12 @@ export function walletSectionFor(
 	chain: Chain,
 ): WalletSection {
 	const path = normalizeWalletPath(pathname);
-	const sub = walletSubPageFor(path);
+	// A sub-page the chain redirects away from (1Color off testnet) is never
+	// named, not even for the moment before the redirect lands.
+	const sub =
+		unavailableRouteRedirect(chain, path) === null
+			? walletSubPageFor(path)
+			: null;
 	if (sub) {
 		return {
 			title: sub.title,

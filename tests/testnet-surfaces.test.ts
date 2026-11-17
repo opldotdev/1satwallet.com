@@ -49,7 +49,8 @@ describe("testnet surfaces", () => {
 			"/",
 			"/wallet",
 			"/wallet/tokens",
-			"/wallet/bsv21",
+			"/wallet/bsv21/abc_0",
+			"/wallet/1color/abc_0",
 			"/wallet/history",
 			"/wallet/settings",
 			"/settings",
@@ -186,7 +187,7 @@ describe("testnet surfaces", () => {
 		assert.match(route, /subscribeWalletChain\(refreshOnMainnet\)/);
 	});
 
-	it("renders no chain-specific 1Color notice before the client knows the chain", () => {
+	it("decides nothing chain-specific about 1Color before the client knows the chain", () => {
 		const grid = read("components/wallet/one-color-grid.tsx");
 		assert.match(
 			grid,
@@ -194,10 +195,13 @@ describe("testnet surfaces", () => {
 		);
 		assert.doesNotMatch(grid, /Switch the network/);
 		assert.doesNotMatch(grid, /\/wallet\/settings/);
-		assert.match(grid, /this wallet is a mainnet\s+account\./);
-		const loaderAt = grid.indexOf("if (!mounted) return <OneColorLoading");
-		assert.ok(loaderAt > 0);
-		assert.ok(loaderAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
+		// No "testnet only" notice anywhere: mainnet never shows 1Color.
+		assert.doesNotMatch(grid, /mainnet\s+account/);
+		const loadingAt = grid.indexOf('if (!mounted) return "loading";');
+		assert.ok(loadingAt > 0);
+		assert.ok(loadingAt < grid.indexOf("if (!isOneColorAvailable(chain))"));
+		// The Tokens group renders nothing at all on a chain without 1Color.
+		assert.match(grid, /if \(access === "unavailable"\) return null;/);
 	});
 
 	it("drops cached 1Color holdings when the wallet identity changes", () => {

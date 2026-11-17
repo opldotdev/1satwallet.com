@@ -17,13 +17,34 @@ const MAINNET_ONLY_ROUTES = [
 /** 1Color routes: only on a chain with a color overlay (testnet today). */
 const ONE_COLOR_ROUTES = ["/wallet/1color"] as const;
 
-export function isRouteAvailableOn(chain: Chain, href: string): boolean {
+/** Whether `href` (query and hash ignored) is `route` or a path under it. */
+const isUnder = (href: string, route: string) => {
 	const path = href.split(/[?#]/, 1)[0];
-	const under = (route: string) =>
-		path === route || path.startsWith(`${route}/`);
-	if (!isOneColorAvailable(chain) && ONE_COLOR_ROUTES.some(under)) return false;
+	return path === route || path.startsWith(`${route}/`);
+};
+
+const isOneColorRoute = (href: string) =>
+	ONE_COLOR_ROUTES.some((route) => isUnder(href, route));
+
+export function isRouteAvailableOn(chain: Chain, href: string): boolean {
+	if (!isOneColorAvailable(chain) && isOneColorRoute(href)) return false;
 	if (chain === "main") return true;
-	return !MAINNET_ONLY_ROUTES.some(under);
+	return !MAINNET_ONLY_ROUTES.some((route) => isUnder(href, route));
+}
+
+/**
+ * Where a page the chain lacks sends the visitor, when it has a home there:
+ * 1Color's pages go to Tokens, so a chain without 1Color never shows one.
+ * Null for a page the chain has, and for a mainnet-only page on testnet,
+ * which keeps its address and gets the static notice instead.
+ */
+export function unavailableRouteRedirect(
+	chain: Chain,
+	href: string,
+): string | null {
+	return !isOneColorAvailable(chain) && isOneColorRoute(href)
+		? "/wallet/tokens"
+		: null;
 }
 
 /**

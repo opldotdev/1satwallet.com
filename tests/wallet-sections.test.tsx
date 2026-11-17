@@ -122,7 +122,6 @@ describe("walletSectionFor", () => {
 			],
 			["/wallet/migrate", "Wallet migration", "/wallet", "Wallet"],
 			["/wallet/bsv21/abc_0", "BSV-21 token", "/wallet/tokens", "Tokens"],
-			["/wallet/1color/abc_0", "1Color token", "/wallet/tokens", "Tokens"],
 		];
 		for (const [path, title, parentHref, parentTitle] of cases) {
 			for (const chain of ["main", "test"] as const) {
@@ -133,6 +132,34 @@ describe("walletSectionFor", () => {
 				);
 			}
 		}
+		assert.deepEqual(walletSectionFor("/wallet/1color/abc_0", "test"), {
+			title: "1Color token",
+			parentHref: "/wallet/tokens",
+			parentTitle: "Tokens",
+			showTabs: false,
+		});
+	});
+
+	it("never names a 1Color page on mainnet, which redirects it to Tokens", () => {
+		for (const path of ["/wallet/1color/abc_0", "/wallet/1color/abc_0/"]) {
+			const section = walletSectionFor(path, "main");
+			assert.deepEqual(
+				section,
+				{ title: "Wallet", showTabs: true, tab: undefined },
+				path,
+			);
+			assert.doesNotMatch(section.title, /1\s*Color/i, path);
+		}
+		// A mainnet-only page on testnet keeps its name over the notice.
+		assert.equal(
+			walletSectionFor("/wallet/migrate", "test").title,
+			"Wallet migration",
+		);
+		const detail = read("components/wallet/one-color-detail.tsx");
+		assert.match(
+			detail,
+			/if \(access === "unavailable"\) router\.replace\("\/wallet\/tokens"\);/,
+		);
 	});
 
 	it("shows an app's request with no tabs and nowhere to go back to", () => {
