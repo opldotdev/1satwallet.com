@@ -35,7 +35,7 @@ import {
 const WALLET_ROUTES = [
 	"/wallet",
 	"/wallet/ordinals",
-	"/wallet/bsv21",
+	"/wallet/tokens",
 	"/wallet/opns",
 	"/wallet/identity",
 	"/wallet/certificates",
