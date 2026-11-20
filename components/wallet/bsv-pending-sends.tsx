@@ -34,16 +34,20 @@ const short = (key: string) => `${key.slice(0, 8)}…${key.slice(-6)}`;
 /** The account's PeerPay outbox, re-read on this tab's and other tabs' changes. */
 export function usePeerPayOutbox(chain: Chain, identityKey: string | null) {
 	const [entries, setEntries] = useState<PeerPayOutboxEntry[]>([]);
+	const [failed, setFailed] = useState(false);
 	const reload = useCallback(() => {
 		if (!identityKey || typeof window === "undefined") {
 			setEntries([]);
+			setFailed(false);
 			return;
 		}
 		try {
 			setEntries(peerPayOutbox(window.localStorage, chain, identityKey).list());
+			setFailed(false);
 		} catch (error) {
 			console.error("[peerpay-send] reading the outbox failed", { error });
 			setEntries([]);
+			setFailed(true);
 		}
 	}, [chain, identityKey]);
 	useEffect(() => {
@@ -56,7 +60,7 @@ export function usePeerPayOutbox(chain: Chain, identityKey: string | null) {
 		window.addEventListener("storage", onStorage);
 		return () => window.removeEventListener("storage", onStorage);
 	}, [chain, identityKey, reload]);
-	return { entries, reload };
+	return { entries, failed, reload };
 }
 
 function PeerPayRow({
@@ -316,6 +320,16 @@ export function BsvPendingSends() {
 			<h3 className="font-medium text-sm" id="bsv-pending-sends">
 				Waiting to be claimed
 			</h3>
+			{outbox.failed ? (
+				<div className="flex items-center gap-2 text-sm" role="alert">
+					<span className="text-destructive">
+						Saved PeerPay payments couldn&apos;t be read in this browser.
+					</span>
+					<Button onClick={outbox.reload} size="sm" variant="outline">
+						Try again
+					</Button>
+				</div>
+			) : null}
 			{handleSends.isError ? (
 				<div className="flex items-center gap-2 text-sm" role="alert">
 					<span className="text-destructive">

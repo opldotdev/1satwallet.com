@@ -6,6 +6,7 @@ import { PrivateKey, type WalletAction } from "@bsv/sdk";
 import {
 	checkBsvRecipient,
 	formatResolvedHandle,
+	HANDLE_MISMATCH,
 	HANDLE_SEND_EXPIRY_LABEL,
 	handleRefusal,
 	isPendingHandleSend,
@@ -108,6 +109,21 @@ describe("checkBsvRecipient", () => {
 		});
 	});
 
+	it("pays the handle typed, and refuses a host that answers for another", async () => {
+		const evil = await checkBsvRecipient("@bob@evil.com", "main", {
+			resolvePaymentHandle: async () =>
+				resolution({ handle: "alice", domain: "1sat.app" }),
+		});
+		assert.deepEqual(evil, { ok: false, message: HANDLE_MISMATCH });
+		const tagged = await checkBsvRecipient("@Bob+Tips@Example.com", "main", {
+			resolvePaymentHandle: async () => resolution({ tag: "tips" }),
+		});
+		assert.equal(
+			(tagged as { recipient: { handle: string } }).recipient.handle,
+			"@bob+tips@example.com",
+		);
+	});
+
 	it("refuses a bare name@domain whose domain offers no handles (no paymail)", async () => {
 		const check = await checkBsvRecipient("bob@example.com", "main", {
 			resolvePaymentHandle: async () => undefined,
@@ -139,7 +155,7 @@ describe("checkBsvRecipient", () => {
 
 	it("refuses a revoked handle, an http mailbox and the other chain's handle", async () => {
 		const check = (r: HandleResolution, chain: "main" | "test") =>
-			checkBsvRecipient("@bob@x.com", chain, {
+			checkBsvRecipient("@bob@example.com", chain, {
 				resolvePaymentHandle: async () => r,
 			});
 		assert.match(
@@ -175,12 +191,21 @@ describe("checkBsvRecipient", () => {
 });
 
 describe("runHandleSend", () => {
+	const base = {
+		handle: "@bob@example.com",
+		satoshis: 1500,
+		reviewed: resolution(),
+		chain: "main" as const,
+	};
+	const same = { resolveHandle: async () => resolution() };
+
 	it("sends the @ form with the memo as the only request", async () => {
 		const inputs: SendBsvInput[] = [];
 		const outcome = await runHandleSend(
 			ctx,
-			{ handle: "@bob@example.com", satoshis: 1500, memo: "  lunch  " },
+			{ ...base, memo: "  lunch  " },
 			{
+				...same,
 				send: async (_c, input) => {
 					inputs.push(input);
 					return { txid: "ab", delivered: "envelope", messageId: "m" };
@@ -206,8 +231,9 @@ describe("runHandleSend", () => {
 		const inputs: SendBsvInput[] = [];
 		await runHandleSend(
 			ctx,
-			{ handle: "@bob@example.com", satoshis: 1, memo: "   " },
+			{ ...base, satoshis: 1, memo: "   " },
 			{
+				...same,
 				send: async (_c, input) => {
 					inputs.push(input);
 					return { txid: "ab" };
@@ -220,41 +246,118 @@ describe("runHandleSend", () => {
 		});
 	});
 
-	it("keeps the txid of a payment built but not delivered", async () => {
+	it("refuses, before anything is built, a handle that changed since review", async () => {
+		const other = PrivateKey.fromRandom().toPublicKey().toString();
+		const cases: [Partial<HandleResolution>, RegExp][] = [
+			[
+				{ identityKey: other, certificate: { subject: other } },
+				/changed since you reviewed/,
+			],
+			[
+				{ messagebox: "https://elsewhere.example.com" },
+				/changed since you reviewed/,
+			],
+			[{ revoked: true }, /changed since you reviewed/],
+			[
+				{ handle: "alice", domain: "1sat.app" },
+				/answered for a different handle/,
+			],
+		];
+		for (const [change, message] of cases) {
+			let sent = false;
+			const outcome = await runHandleSend(ctx, base, {
+				resolveHandle: async () => resolution(change),
+				send: async () => {
+					sent = true;
+					return { txid: "x" };
+				},
+			});
+			assert.equal(outcome.kind, "failed");
+			assert.match(outcome.message, message);
+			assert.equal(sent, false);
+		}
+		// The checks run again on the fresh answer: an http mailbox that was
+		// reviewed as http can't slip through.
+		const http = resolution({ messagebox: "http://messagebox.example.com" });
 		const outcome = await runHandleSend(
 			ctx,
-			{ handle: "@bob@example.com", satoshis: 1 },
-			{
-				send: async (): Promise<SendBsvResponse> => ({
-					txid: "cd",
-					error: "delivery-failed: 502",
-				}),
-			},
+			{ ...base, reviewed: http },
+			{ resolveHandle: async () => http, send: async () => ({ txid: "x" }) },
 		);
+		assert.match(outcome.message, /isn't https/);
+	});
+
+	it("says nothing was sent when the lookup before the send fails", async () => {
+		const outcome = await runHandleSend(ctx, base, {
+			resolveHandle: async () => {
+				throw new TypeError("fetch failed");
+			},
+			send: async () => ({ txid: "x" }),
+		});
+		assert.deepEqual(outcome, {
+			kind: "failed",
+			message:
+				"Couldn't reach example.com to look up that handle. Nothing was sent.",
+		});
+	});
+
+	it("keeps the txid of a payment built but not delivered", async () => {
+		const outcome = await runHandleSend(ctx, base, {
+			...same,
+			send: async (): Promise<SendBsvResponse> => ({
+				txid: "cd",
+				error: "delivery-failed: 502",
+			}),
+		});
 		assert.equal(outcome.kind, "undelivered");
 		assert.equal((outcome as { txid: string }).txid, "cd");
 		assert.match(outcome.message, /Waiting to be claimed/);
 		assert.equal(ownLogs().length, 1);
 	});
 
-	it("says nothing was sent only for failures before the build", async () => {
-		const fail = (error: string) =>
-			runHandleSend(
-				ctx,
-				{ handle: "@bob@example.com", satoshis: 1 },
-				{ send: async () => ({ error }) },
-			);
-		assert.equal(
-			(await fail("WERR_INSUFFICIENT_FUNDS: Insufficient funds")).message,
-			"The wallet does not have enough spendable BSV for this amount and its fee.",
+	it("says nothing was sent only when createAction never returned", async () => {
+		const wallet = (createAction: () => Promise<unknown>) =>
+			({ wallet: { createAction } }) as unknown as typeof ctx;
+		// sendBsv calls createAction, then fails, with no txid to show for it.
+		const viaCreateAction: Parameters<typeof runHandleSend>[2] = {
+			...same,
+			send: async (c) => {
+				try {
+					await c.wallet.createAction({ description: "x", outputs: [] });
+				} catch (error) {
+					return { error: (error as Error).message };
+				}
+				return { error: "identity key unavailable" };
+			},
+		};
+		const built = await runHandleSend(
+			wallet(async () => ({ txid: "t", tx: [1] })),
+			base,
+			viaCreateAction,
 		);
 		assert.equal(
-			(await fail("example.com does not offer handle resolution")).message,
-			"That domain doesn't offer handles. Check the handle.",
-		);
-		assert.equal(
-			(await fail("something after the build")).message,
+			built.message,
 			"The payment may have been built. Check Waiting to be claimed before sending again.",
+		);
+		const refused = await runHandleSend(
+			wallet(async () => {
+				throw new Error("WERR_INSUFFICIENT_FUNDS: Insufficient funds");
+			}),
+			base,
+			viaCreateAction,
+		);
+		assert.match(
+			refused.message,
+			/not have enough spendable BSV.*Nothing was sent/,
+		);
+		const before = await runHandleSend(
+			wallet(async () => ({})),
+			base,
+			{ ...same, send: async () => ({ error: "something odd" }) },
+		);
+		assert.equal(
+			before.message,
+			"The payment couldn't be sent. Nothing was sent. Try again.",
 		);
 	});
 });

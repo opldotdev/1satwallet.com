@@ -167,6 +167,8 @@ export function WalletHomeActions() {
 								handle: target.handle,
 								satoshis,
 								memo: note,
+								reviewed: target.resolution,
+								chain,
 							})
 						: identityKey
 							? await runPeerPaySend(
@@ -194,7 +196,7 @@ export function WalletHomeActions() {
 								satoshis,
 								note: outcome.message,
 							}
-						: outcome.kind === "undelivered"
+						: outcome.kind === "undelivered" || outcome.kind === "unsaved"
 							? { status: "undelivered", message: outcome.message }
 							: { status: "error", message: outcome.message },
 				);

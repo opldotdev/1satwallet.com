@@ -194,15 +194,37 @@ function isDirectCertificate(value: unknown): value is DirectCertificate {
 	);
 }
 
-/** `AccountClient.send`'s error: the body's `error`, else the body, else `<path> <status>`. */
-async function hostError(response: Response): Promise<string> {
+export const REGISTRATION_TAKEN =
+	"That handle is taken, or this account already has one. Nothing was registered.";
+export const REGISTRATION_REFUSED_NAME = `The host refused that name. ${HANDLE_USERNAME_RULES}`;
+/** The most of a host's own text shown to the user. */
+export const HOST_TEXT_MAX = 120;
+
+/**
+ * A short message for a refused registration. Known statuses get fixed text;
+ * any other host text (`AccountClient.send`'s `error`, else the body) is
+ * shown cut to `HOST_TEXT_MAX` characters. The full body is logged.
+ */
+async function hostError(response: Response, chain: Chain): Promise<string> {
 	const text = await response.text().catch(() => "");
+	console.error("[handles] registration refused", {
+		chain,
+		status: response.status,
+		body: text,
+	});
+	if (response.status === 409) return REGISTRATION_TAKEN;
+	if (response.status === 400) return REGISTRATION_REFUSED_NAME;
 	let message = text;
 	try {
 		const parsed = JSON.parse(text) as { error?: unknown };
 		if (typeof parsed.error === "string") message = parsed.error;
 	} catch {}
-	return message || `/account/register ${response.status}`;
+	message = message.replace(/\s+/g, " ").trim();
+	if (!message)
+		return `The handle host refused the registration (${response.status}). Nothing was registered.`;
+	return message.length > HOST_TEXT_MAX
+		? `${message.slice(0, HOST_TEXT_MAX - 1)}…`
+		: message;
 }
 
 /**
@@ -242,7 +264,7 @@ export async function registerHandle(
 		);
 	}
 	if (!response.ok) {
-		throw new HandleRegistrationError(await hostError(response));
+		throw new HandleRegistrationError(await hostError(response, chain));
 	}
 	let answer: Record<string, unknown>;
 	try {

@@ -11,7 +11,10 @@ import {
 	allowsRegistration,
 	checkHandleAvailability,
 	type DirectCertificate,
+	HOST_TEXT_MAX,
 	normalizeHandleUsername,
+	REGISTRATION_REFUSED_NAME,
+	REGISTRATION_TAKEN,
 	registerHandle,
 } from "@/lib/wallet/handle-registration";
 
@@ -203,6 +206,60 @@ describe("registerHandle", () => {
 		);
 	});
 
+	it("refuses a certificate from the published certifier that was tampered with, or is for another subject", async () => {
+		const refused = async (cert: DirectCertificate) => {
+			const { wallet, acquired } = subjectWallet();
+			await assert.rejects(
+				registerHandle(
+					"alice",
+					{ wallet, chain: "test", identityKey: subject },
+					{
+						fetch: host(404).fetch,
+						post: async () => json({ certificate: cert }),
+					},
+				),
+				/didn't check out/,
+			);
+			assert.equal(acquired.length, 0);
+		};
+		const good = await directCertificate({
+			handle: "alice",
+			domain: "testnet.1sat.app",
+		});
+		// A flipped signature byte.
+		const sig = good.signature;
+		const flipped = (Number.parseInt(sig.slice(-2), 16) ^ 1)
+			.toString(16)
+			.padStart(2, "0");
+		await refused({ ...good, signature: sig.slice(0, -2) + flipped });
+		// A field swapped for another certificate's: the signature no longer covers it.
+		const other = await directCertificate({
+			handle: "mallory",
+			domain: "testnet.1sat.app",
+		});
+		await refused({
+			...good,
+			fields: { ...good.fields, handle: other.fields.handle },
+		});
+		// A genuine certificate, for someone else.
+		const stranger = PrivateKey.fromRandom().toPublicKey().toString();
+		const theirs = await MasterCertificate.issueCertificateForSubject(
+			certifier,
+			stranger,
+			{ handle: "alice", domain: "testnet.1sat.app" },
+			HANDLE_CERT_TYPE,
+		);
+		await refused({
+			...good,
+			fields: theirs.fields,
+			serialNumber: theirs.serialNumber,
+			revocationOutpoint: theirs.revocationOutpoint,
+			signature: theirs.signature as string,
+			keyringForSubject: theirs.masterKeyring,
+			subject: stranger,
+		});
+	});
+
 	it("refuses a certificate for another handle, or from another certifier", async () => {
 		const run = async (cert: DirectCertificate) => {
 			const { wallet, acquired } = subjectWallet();
@@ -233,19 +290,28 @@ describe("registerHandle", () => {
 		);
 	});
 
-	it("passes the host's own refusal through and posts nothing without a certifier key", async () => {
+	it("shows fixed text for a refusal, caps any other host text, and posts nothing without a certifier key", async () => {
 		const { wallet } = subjectWallet();
-		await assert.rejects(
+		const refusal = (status: number, error: string) =>
 			registerHandle(
 				"alice",
 				{ wallet, chain: "test", identityKey: subject },
-				{
-					fetch: host(404).fetch,
-					post: async () => json({ error: "username taken" }, 409),
-				},
-			),
-			/^HandleRegistrationError: username taken$/,
+				{ fetch: host(404).fetch, post: async () => json({ error }, status) },
+			).then(
+				() => assert.fail("registered"),
+				(e: Error) => e.message,
+			);
+		assert.equal(
+			await refusal(409, "<b>username taken</b>"),
+			REGISTRATION_TAKEN,
 		);
+		assert.equal(
+			await refusal(400, "invalid username: lowercase letters..."),
+			REGISTRATION_REFUSED_NAME,
+		);
+		const long = await refusal(503, "x".repeat(500));
+		assert.equal(long.length, HOST_TEXT_MAX);
+		assert.ok(long.endsWith("…"));
 		let posted = false;
 		await assert.rejects(
 			registerHandle(

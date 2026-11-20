@@ -14,7 +14,11 @@ import {
 	type SendBsvResponse,
 	sendBsv,
 } from "@1sat/actions";
-import { type HandleResolution, parseHandle } from "@1sat/client";
+import {
+	type HandleResolution,
+	parseHandle,
+	resolveHandle,
+} from "@1sat/client";
 import { METANET_SEND_EXPIRY_SECONDS } from "@1sat/types";
 import { PublicKey, type WalletAction, type WalletInterface } from "@bsv/sdk";
 import { isP2pkhAddressForChain } from "@/components/wallet/wallet-home-utils";
@@ -147,6 +151,17 @@ const domainOf = (input: string): string => {
 	}
 };
 
+export const HANDLE_MISMATCH =
+	"The handle's host answered for a different handle, so nothing is sent to it.";
+
+/** Whether a resolution is for the handle and domain that were typed. */
+const answersFor = (
+	resolution: Pick<HandleResolution, "handle" | "domain">,
+	typed: { handle: string; domain: string },
+): boolean =>
+	resolution.handle.toLowerCase() === typed.handle &&
+	resolution.domain.toLowerCase() === typed.domain;
+
 export interface RecipientDeps {
 	resolvePaymentHandle?: (
 		recipient: string,
@@ -187,13 +202,23 @@ export async function checkBsvRecipient(
 			};
 		}
 		if (!resolution) return { ok: false, message: PAYMAIL_REFUSED };
+		// The handle paid is the one typed, never one the host names instead.
+		const typed = parseHandle(target);
+		if (!answersFor(resolution, typed)) {
+			logFailure(
+				"handle-mismatch",
+				{ domain: typed.domain },
+				new Error("the host answered for another handle"),
+			);
+			return { ok: false, message: HANDLE_MISMATCH };
+		}
 		const refusal = handleRefusal(resolution, chain);
 		if (refusal) return { ok: false, message: refusal };
 		return {
 			ok: true,
 			recipient: {
 				kind: "handle",
-				handle: formatResolvedHandle(resolution),
+				handle: formatResolvedHandle(typed),
 				resolution,
 			},
 		};
@@ -221,8 +246,16 @@ export const handleSentMessage = (handle: string): string =>
 export const handleUndeliveredMessage = (handle: string): string =>
 	`Built, but not delivered to ${handle}. It's listed under Waiting to be claimed; cancel it there to get the coins back.`;
 
-/** Errors the toolbox or the user raise before anything is built. */
-function notBuiltMessage(error: string): string | null {
+export const HANDLE_NOT_SENT =
+	"The payment couldn't be sent. Nothing was sent. Try again.";
+export const HANDLE_MAY_BE_BUILT =
+	"The payment may have been built. Check Waiting to be claimed before sending again.";
+
+/**
+ * A short message for an error raised before anything was built: by the
+ * lookup, or by the wallet's `createAction` itself.
+ */
+function notBuiltMessage(error: string): string {
 	const lookup = handleLookupMessage(error);
 	if (lookup) return lookup;
 	const normalized = error.toLowerCase();
@@ -230,9 +263,30 @@ function notBuiltMessage(error: string): string | null {
 		return "The wallet declined this payment. Nothing was sent.";
 	}
 	if (/insufficient|not enough/.test(normalized)) {
-		return "The wallet does not have enough spendable BSV for this amount and its fee.";
+		return "The wallet does not have enough spendable BSV for this amount and its fee. Nothing was sent.";
 	}
-	return null;
+	return HANDLE_NOT_SENT;
+}
+
+/**
+ * What changed about a handle since review, or null. Everything the payment
+ * and its delivery rest on: key, mailbox, revocation, and the name answered.
+ */
+export function handleChangedSinceReview(
+	reviewed: Pick<HandleResolution, "identityKey" | "messagebox" | "revoked">,
+	fresh: HandleResolution,
+	typed: { handle: string; domain: string },
+	chain: Chain,
+): string | null {
+	if (!answersFor(fresh, typed)) return HANDLE_MISMATCH;
+	if (
+		fresh.identityKey.toLowerCase() !== reviewed.identityKey.toLowerCase() ||
+		fresh.messagebox !== reviewed.messagebox ||
+		fresh.revoked !== reviewed.revoked
+	) {
+		return "This handle changed since you reviewed it. Nothing was sent; review the payment again.";
+	}
+	return handleRefusal(fresh, chain);
 }
 
 type SendAction = (
@@ -240,23 +294,97 @@ type SendAction = (
 	input: SendBsvInput,
 ) => Promise<SendBsvResponse>;
 
+type BuildState = "not-called" | "threw" | "returned";
+
+/** The context with its wallet's `createAction` watched, to know whether a payment was built. */
+function watchBuild(ctx: Parameters<typeof sendBsv.execute>[0]): {
+	ctx: Parameters<typeof sendBsv.execute>[0];
+	state: () => BuildState;
+} {
+	let state: BuildState = "not-called";
+	const wallet = ctx.wallet;
+	const watched = new Proxy(wallet, {
+		get(target, property) {
+			if (property === "createAction") {
+				return async (...args: Parameters<typeof wallet.createAction>) => {
+					try {
+						const result = await target.createAction(...args);
+						state = "returned";
+						return result;
+					} catch (error) {
+						state = "threw";
+						throw error;
+					}
+				};
+			}
+			const value = Reflect.get(target, property, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+	return { ctx: { ...ctx, wallet: watched }, state: () => state };
+}
+
+export interface HandleSendInput {
+	/** `@handle[+tag]@domain` as typed and reviewed. */
+	handle: string;
+	satoshis: number;
+	memo?: string;
+	/** The resolution shown in review. */
+	reviewed: Pick<HandleResolution, "identityKey" | "messagebox" | "revoked">;
+	chain: Chain;
+}
+
 /**
  * Pays a handle through `sendBsv` (`handle` is the `@` form, so it is a
- * handle only, never paymail). A delivery that failed keeps its txid: the
- * payment exists as a `noSend` action and is listed as waiting. Every failure
- * is logged in full.
+ * handle only, never paymail). The handle is resolved again first, and the
+ * payment is refused if it no longer matches review. `sendBsv` resolves once
+ * more inside; it can't be pinned to this resolution without an upstream
+ * change. A delivery that failed keeps its txid: the payment exists as a
+ * `noSend` action and is listed as waiting. Every failure is logged in full.
  */
 export async function runHandleSend(
 	ctx: Parameters<typeof sendBsv.execute>[0],
-	input: { handle: string; satoshis: number; memo?: string },
-	deps: { send?: SendAction } = {},
+	input: HandleSendInput,
+	deps: {
+		send?: SendAction;
+		resolveHandle?: (handle: string) => Promise<HandleResolution>;
+	} = {},
 ): Promise<HandleSendOutcome> {
+	const typed = parseHandle(input.handle);
+	let fresh: HandleResolution;
+	try {
+		fresh = await (deps.resolveHandle ?? ((h) => resolveHandle(h)))(
+			input.handle,
+		);
+	} catch (error) {
+		logFailure("handle-lookup", { domain: typed.domain }, error);
+		return {
+			kind: "failed",
+			message: `${handleLookupMessage(error) ?? `Couldn't reach ${typed.domain} to look up that handle.`} Nothing was sent.`,
+		};
+	}
+	const changed = handleChangedSinceReview(
+		input.reviewed,
+		fresh,
+		typed,
+		input.chain,
+	);
+	if (changed) {
+		logFailure(
+			"handle-changed",
+			{ domain: typed.domain },
+			new Error("the handle no longer matches review"),
+		);
+		return { kind: "failed", message: changed };
+	}
+
 	const send: SendAction =
 		deps.send ?? ((c, i) => sendBsv.execute(c, i) as Promise<SendBsvResponse>);
 	const memo = input.memo?.trim();
+	const watched = watchBuild(ctx);
 	let result: SendBsvResponse;
 	try {
-		result = await send(ctx, {
+		result = await send(watched.ctx, {
 			requests: [
 				{
 					handle: input.handle,
@@ -288,12 +416,15 @@ export async function runHandleSend(
 		};
 	}
 	const error = result.error ?? "no-transaction";
-	logFailure("handle-send", {}, new Error(error));
+	logFailure("handle-send", { build: watched.state() }, new Error(error));
 	return {
 		kind: "failed",
+		// Only an error from before the build, or from createAction itself,
+		// leaves nothing built.
 		message:
-			notBuiltMessage(error) ??
-			"The payment may have been built. Check Waiting to be claimed before sending again.",
+			watched.state() === "returned"
+				? HANDLE_MAY_BE_BUILT
+				: notBuiltMessage(error),
 	};
 }
 

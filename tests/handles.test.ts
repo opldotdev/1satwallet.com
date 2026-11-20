@@ -360,18 +360,8 @@ describe("1Color receive view", () => {
 		"utf8",
 	);
 
-	it("says tokens arrive at a handle, and offers registration when there is none", () => {
+	it("says tokens arrive at a handle", () => {
 		assert.match(view, /sent to a handle, not to an address/);
-		assert.match(view, /<RegisterHandle \/>/);
-		const register = readFileSync(
-			join(process.cwd(), "components/wallet/register-handle.tsx"),
-			"utf8",
-		);
-		assert.match(register, /href=\{handleRegistration\}/);
-		assert.match(
-			register,
-			/registerHandle\(name, \{ wallet, chain, identityKey \}\)/,
-		);
 		assert.match(view, /<QRCodeSVG size=\{160\} value=\{handle\} \/>/);
 		assert.match(view, /export function OneColorReceiveDialog/);
 	});

@@ -38,15 +38,33 @@ export interface PeerPayOutboxEntry {
 }
 
 export interface PeerPayOutbox {
+	/** Throws `PeerPayOutboxReadError` when the stored value can't be read. */
 	list(): PeerPayOutboxEntry[];
 	put(entry: PeerPayOutboxEntry): void;
 	remove(txid: string): void;
+	/** Throws when this storage won't take a write. */
+	probe(): void;
 }
 
 const KEY_PREFIX = "1sat:peerpay-outbox:";
 
 export const peerPayOutboxKey = (chain: Chain, identityKey: string): string =>
 	`${KEY_PREFIX}${chain}:${identityKey}`;
+
+/** Where an outbox value that couldn't be read is kept before it is overwritten. */
+export const peerPayOutboxBackupKey = (
+	chain: Chain,
+	identityKey: string,
+	at: Date,
+): string =>
+	`${peerPayOutboxKey(chain, identityKey)}:backup:${at.toISOString()}`;
+
+export class PeerPayOutboxReadError extends Error {
+	constructor(cause: unknown) {
+		super("The saved PeerPay payments can't be read.", { cause });
+		this.name = "PeerPayOutboxReadError";
+	}
+}
 
 const isEntry = (value: unknown): value is PeerPayOutboxEntry => {
 	if (!value || typeof value !== "object") return false;
@@ -66,35 +84,71 @@ const isEntry = (value: unknown): value is PeerPayOutboxEntry => {
 };
 
 /**
- * The account's outbox in `storage` (localStorage in the browser). An
- * unreadable value is logged and read as empty; a write that fails throws,
- * so a payment is never reported as kept when it wasn't.
+ * The account's outbox in `storage` (localStorage in the browser). A value
+ * that can't be read, wholly or in part, is copied to a backup key before
+ * anything overwrites it, and `list` throws for a value it can't read at
+ * all. A write that fails throws, so a payment is never reported as kept
+ * when it wasn't.
  */
 export function peerPayOutbox(
 	storage: Pick<Storage, "getItem" | "setItem">,
 	chain: Chain,
 	identityKey: string,
+	now: () => Date = () => new Date(),
 ): PeerPayOutbox {
 	const key = peerPayOutboxKey(chain, identityKey);
-	const read = (): PeerPayOutboxEntry[] => {
+	const read = (): {
+		entries: PeerPayOutboxEntry[];
+		raw: string | null;
+		error: unknown;
+		damaged: boolean;
+	} => {
 		const raw = storage.getItem(key);
-		if (!raw) return [];
+		if (!raw) return { entries: [], raw, error: null, damaged: false };
 		try {
 			const parsed: unknown = JSON.parse(raw);
 			if (!Array.isArray(parsed)) throw new Error("not a list");
-			return parsed.filter(isEntry);
+			const entries = parsed.filter(isEntry);
+			if (entries.length !== parsed.length) {
+				console.error("[peerpay-send] Unknown outbox entries", {
+					chain,
+					unknown: parsed.length - entries.length,
+				});
+			}
+			return {
+				entries,
+				raw,
+				error: null,
+				damaged: entries.length !== parsed.length,
+			};
 		} catch (error) {
 			console.error("[peerpay-send] Unreadable outbox", { chain, error });
-			return [];
+			return { entries: [], raw, error, damaged: true };
 		}
 	};
-	const write = (entries: PeerPayOutboxEntry[]) =>
+	const write = (entries: PeerPayOutboxEntry[]) => {
+		const current = read();
+		if (current.damaged && current.raw !== null) {
+			storage.setItem(
+				peerPayOutboxBackupKey(chain, identityKey, now()),
+				current.raw,
+			);
+		}
 		storage.setItem(key, JSON.stringify(entries));
+	};
 	return {
-		list: () => read().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+		list: () => {
+			const { entries, error } = read();
+			if (error) throw new PeerPayOutboxReadError(error);
+			return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+		},
 		put: (entry) =>
-			write([...read().filter((e) => e.txid !== entry.txid), entry]),
-		remove: (txid) => write(read().filter((e) => e.txid !== txid)),
+			write([...read().entries.filter((e) => e.txid !== entry.txid), entry]),
+		remove: (txid) => write(read().entries.filter((e) => e.txid !== txid)),
+		probe: () => {
+			// Writing the stored value back unchanged tests the write and loses nothing.
+			storage.setItem(key, storage.getItem(key) ?? "[]");
+		},
 	};
 }
 
@@ -106,17 +160,50 @@ export interface PeerPaySendDeps {
 	deliver(recipient: string, token: PeerPayPaymentToken): Promise<void>;
 	outbox: PeerPayOutbox;
 	now?: () => Date;
+	/** Waits between in-process delivery tries when the outbox couldn't save. */
+	sleep?: (ms: number) => Promise<void>;
 }
 
 export type PeerPaySendOutcome =
 	| { kind: "sent"; txid: string; message: string }
 	| { kind: "undelivered"; txid: string; message: string }
+	/** Paid and not delivered, and not saved, so nothing can retry it later. */
+	| { kind: "unsaved"; txid: string; message: string }
 	| { kind: "failed"; message: string };
 
 export const PEERPAY_SENT_MESSAGE =
 	"Delivered to their MessageBox. They receive it when their wallet next syncs.";
 export const PEERPAY_UNDELIVERED_MESSAGE =
 	"Paid, but not delivered to their MessageBox. Retry delivery below so they can receive it.";
+
+export const PEERPAY_STORAGE_UNAVAILABLE =
+	"This browser won't save the payment for a retry, so nothing was sent. Allow this site to store data and try again.";
+export const peerPayUnsavedMessage = (txid: string): string =>
+	`Paid, but not delivered to their MessageBox, and this browser couldn't save it for a retry. Keep this transaction id: ${txid}.`;
+
+/** Delivery tries in this page when the outbox couldn't save the payment. */
+const UNSAVED_TRIES = 3;
+
+/**
+ * The server's documented code for a message it already holds. The message
+ * id is an HMAC of the body, so a resend of the same token reuses it: the
+ * first send went through.
+ */
+const isDuplicate = (error: unknown): boolean =>
+	/\(ERR_DUPLICATE_MESSAGE\)/.test(errorText(error));
+
+/** Delivers, counting the server's "already have it" as delivered. */
+async function deliverOnce(
+	deliver: PeerPaySendDeps["deliver"],
+	recipient: string,
+	token: PeerPayPaymentToken,
+): Promise<void> {
+	try {
+		await deliver(recipient, token);
+	} catch (error) {
+		if (!isDuplicate(error)) throw error;
+	}
+}
 
 const errorText = (error: unknown): string =>
 	error instanceof Error ? error.message : String(error);
@@ -141,6 +228,13 @@ export async function runPeerPaySend(
 	input: { recipient: string; satoshis: number },
 	deps: PeerPaySendDeps,
 ): Promise<PeerPaySendOutcome> {
+	// The coins leave once the token is built; build only where it can be kept.
+	try {
+		deps.outbox.probe();
+	} catch (error) {
+		logFailure("outbox-probe", {}, error);
+		return { kind: "failed", message: PEERPAY_STORAGE_UNAVAILABLE };
+	}
 	let token: PeerPayPaymentToken;
 	try {
 		token = await deps.createToken(input.recipient, input.satoshis);
@@ -176,15 +270,32 @@ export async function runPeerPaySend(
 		token,
 		createdAt: (deps.now?.() ?? new Date()).toISOString(),
 	};
+	let saved = true;
 	try {
 		deps.outbox.put(entry);
 	} catch (error) {
-		// Not kept: deliver anyway, it's the only chance the recipient has.
+		saved = false;
 		logFailure("outbox-save", { txid }, error);
 	}
 
+	if (!saved) {
+		// Not kept, so this page is the only chance: try a few times now.
+		const sleep =
+			deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
+		for (let attempt = 1; attempt <= UNSAVED_TRIES; attempt++) {
+			try {
+				await deliverOnce(deps.deliver, input.recipient, token);
+				return { kind: "sent", txid, message: PEERPAY_SENT_MESSAGE };
+			} catch (error) {
+				logFailure("deliver-unsaved", { txid, attempt }, error);
+				if (attempt < UNSAVED_TRIES) await sleep(1000 * attempt);
+			}
+		}
+		return { kind: "unsaved", txid, message: peerPayUnsavedMessage(txid) };
+	}
+
 	try {
-		await deps.deliver(input.recipient, token);
+		await deliverOnce(deps.deliver, input.recipient, token);
 	} catch (error) {
 		logFailure("deliver", { txid }, error);
 		return { kind: "undelivered", txid, message: PEERPAY_UNDELIVERED_MESSAGE };
@@ -206,7 +317,7 @@ export async function retryPeerPayDelivery(
 	deps: Pick<PeerPaySendDeps, "deliver" | "outbox">,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
 	try {
-		await deps.deliver(entry.recipient, entry.token);
+		await deliverOnce(deps.deliver, entry.recipient, entry.token);
 	} catch (error) {
 		logFailure("redeliver", { txid: entry.txid }, error);
 		return {
