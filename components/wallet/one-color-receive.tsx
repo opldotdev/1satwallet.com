@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, Copy, ExternalLink, Loader2 } from "lucide-react";
+import { ArrowDownToLine, Copy, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,8 @@ import {
 } from "@/components/ui/sound-dialog";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { useWalletHandles } from "@/hooks/use-wallet-handles";
-import { endpointsOf } from "@/lib/chain-endpoints";
 import { formatHandle } from "@/lib/wallet/handles";
-import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { RegisterHandle } from "./register-handle";
 
 export const ONE_COLOR_RECEIVE_NOTE =
 	"1Color tokens are sent to a handle, not to an address. Give the sender one of your handles below.";
@@ -77,25 +76,23 @@ function HandleList({ handles }: { handles: string[] }) {
 }
 
 /**
- * Where this wallet receives 1Color tokens: its BRC-169 handles, with copy
- * and QR, or a link to register one. Tokens sent to a handle are collected
- * by the handle inbox sync.
+ * The wallet's BRC-169 handles, with copy and QR, or registration when there
+ * is none. Read again every time it mounts, so a handle registered in another
+ * tab shows promptly.
  */
-export function OneColorReceive() {
-	const { chain } = useWalletToolbox();
+export function WalletHandles() {
 	const handles = useWalletHandles({ refetchOnMount: "always" });
-	const registration = endpointsOf(chain).handleRegistration;
 
-	let body: React.ReactNode;
 	if (handles.isPending) {
-		body = (
+		return (
 			<div className="flex items-center justify-center py-6 text-muted-foreground">
 				<Loader2 className="mr-2 size-5 animate-spin" />
 				Loading your handles…
 			</div>
 		);
-	} else if (handles.isError) {
-		body = (
+	}
+	if (handles.isError) {
+		return (
 			<div className="space-y-2 text-sm" role="alert">
 				<p className="text-destructive">
 					Your handles couldn&apos;t be read from the wallet.
@@ -109,29 +106,27 @@ export function OneColorReceive() {
 				</Button>
 			</div>
 		);
-	} else if (handles.data.length === 0) {
-		body = (
+	}
+	if (handles.data.length === 0) {
+		return (
 			<div className="space-y-3 text-sm">
-				<p className="text-muted-foreground">
-					This wallet has no handle yet. Register one, then come back here.
-				</p>
-				<Button asChild variant="outline">
-					<a href={registration} rel="noopener noreferrer" target="_blank">
-						Register a handle <ExternalLink data-icon="inline-end" />
-					</a>
-				</Button>
+				<p className="text-muted-foreground">This wallet has no handle yet.</p>
+				<RegisterHandle />
 			</div>
 		);
-	} else {
-		body = (
-			<HandleList handles={[...new Set(handles.data.map(formatHandle))]} />
-		);
 	}
+	return <HandleList handles={[...new Set(handles.data.map(formatHandle))]} />;
+}
 
+/**
+ * Where this wallet receives 1Color tokens: its BRC-169 handles. Tokens sent
+ * to a handle are collected by the handle inbox sync.
+ */
+export function OneColorReceive() {
 	return (
 		<div className="space-y-4">
 			<p className="text-muted-foreground text-sm">{ONE_COLOR_RECEIVE_NOTE}</p>
-			{body}
+			<WalletHandles />
 		</div>
 	);
 }

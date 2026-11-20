@@ -360,9 +360,8 @@ describe("1Color receive view", () => {
 		"utf8",
 	);
 
-	it("says tokens arrive at a handle, and links registration when there is none", () => {
+	it("says tokens arrive at a handle", () => {
 		assert.match(view, /sent to a handle, not to an address/);
-		assert.match(view, /endpointsOf\(chain\)\.handleRegistration/);
 		assert.match(view, /<QRCodeSVG size=\{160\} value=\{handle\} \/>/);
 		assert.match(view, /export function OneColorReceiveDialog/);
 	});

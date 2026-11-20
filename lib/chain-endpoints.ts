@@ -20,6 +20,16 @@ export interface ChainEndpoints {
 	 */
 	extraMessageboxes: string[];
 	handleRegistration: string;
+	/**
+	 * Account service (`/account/register`), which in-app handle registration
+	 * posts to. Yours `endpoints.account`, iOS `ChainEndpoints.account`.
+	 */
+	account: string;
+	/**
+	 * The domain a handle registered on this chain lives at. iOS
+	 * `HandleRegistration.handleDomain(for:)`.
+	 */
+	handleDomain: string;
 	/** 1Color (BRC-207) token overlay. None runs on mainnet yet. */
 	colorOverlay?: string;
 	/** Free test coins. Mainnet has none. */
@@ -33,6 +43,8 @@ const ENDPOINTS: Record<Chain, ChainEndpoints> = {
 		messagebox: "https://messagebox.1sat.app",
 		extraMessageboxes: ["https://messagebox.bsvblockchain.tech"],
 		handleRegistration: "https://accounts.1sat.app",
+		account: "https://accounts.1sat.app",
+		handleDomain: "1sat.app",
 	},
 	test: {
 		services: ONESAT_TESTNET_URL,
@@ -40,6 +52,8 @@ const ENDPOINTS: Record<Chain, ChainEndpoints> = {
 		messagebox: "https://testnet.messagebox.1sat.app",
 		extraMessageboxes: [],
 		handleRegistration: "https://accounts.testnet.1sat.app/",
+		account: "https://testnet.messagebox.1sat.app",
+		handleDomain: "testnet.1sat.app",
 		colorOverlay: "https://testnet.openex.dev",
 		faucet: "https://faucet.bananablocks.com",
 	},

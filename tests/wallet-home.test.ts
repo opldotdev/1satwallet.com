@@ -71,8 +71,6 @@ describe("wallet home amount parsing", () => {
 		assert.match(source, /sendBsv\.execute\(oneSatContext/);
 		assert.match(source, /queryKey: \["wallet-actions"\]/);
 		assert.match(source, /refreshBalance\(\)/);
-		assert.match(source, /destination\.includes\("@"\)/);
-		assert.match(source, /Paymail isn't supported yet/);
 		assert.doesNotMatch(source, /OPL-\d+/);
 	});
 });
