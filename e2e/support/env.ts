@@ -12,8 +12,7 @@ export const ARTIFACTS_DIR = path.join(__dirname, "..", "..", "e2e-artifacts");
 export const TESTNET_FAUCET_URL = endpointsOf("test").faucet;
 
 /** A URL's host; a bare domain (such as `handleDomain`) is already one. */
-const hostOf = (url: string) =>
-	url.includes("://") ? new URL(url).host : url;
+const hostOf = (url: string) => (url.includes("://") ? new URL(url).host : url);
 
 /** Mainnet backends a testnet account must never call. */
 export const MAINNET_ONLY_HOSTS = [
