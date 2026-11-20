@@ -71,9 +71,42 @@ describe("wallet home amount parsing", () => {
 		assert.match(source, /sendBsv\.execute\(oneSatContext/);
 		assert.match(source, /queryKey: \["wallet-actions"\]/);
 		assert.match(source, /refreshBalance\(\)/);
-		assert.match(source, /destination\.includes\("@"\)/);
-		assert.match(source, /Paymail isn't supported yet/);
+		// A typed recipient is an address, a handle or an identity key; no paymail.
+		assert.match(source, /checkBsvRecipient\(recipient, chain\)/);
+		assert.match(source, /runHandleSend\(oneSatContext, \{/);
+		assert.match(source, /runPeerPaySend\(/);
+		assert.match(source, /<BsvPendingSends \/>/);
+		assert.match(source, /Paymail isn't supported\./);
 		assert.doesNotMatch(source, /OPL-\d+/);
+	});
+});
+
+describe("receive offers every way to be paid", () => {
+	it("shows the address, the wallet's handles and its PeerPay link in the built-in wallet", () => {
+		const source = read("components/wallet/wallet-home-actions.tsx");
+		assert.match(source, /connectionMode === "built-in" && identityKey \?/);
+		for (const tab of ["address", "handle", "peerpay"]) {
+			assert.match(source, new RegExp(`<TabsTrigger value="${tab}">`));
+		}
+		// 44px tap targets on a phone.
+		assert.match(source, /\[&>\*\]:max-md:min-h-11/);
+		assert.match(source, /<WalletHandles \/>/);
+		assert.match(source, /const link = `peerpay:\$\{identityKey\}`;/);
+		// An external wallet keeps the address only.
+		assert.match(
+			source,
+			/\) : \(\s*<AddressReceive depositAddress=\{depositAddress\} \/>/,
+		);
+	});
+
+	it("asks for a memo only for a handle, and lists payments waiting to be claimed", () => {
+		const source = read("components/wallet/wallet-home-actions.tsx");
+		assert.match(source, /recipient\.includes\("@"\) \?/);
+		assert.match(
+			source,
+			/memo: checked\.recipient\.kind === "handle" \? memo\.trim\(\) : ""/,
+		);
+		assert.match(source, /status: "undelivered"/);
 	});
 });
 

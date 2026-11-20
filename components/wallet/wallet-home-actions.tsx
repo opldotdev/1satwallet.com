@@ -26,45 +26,74 @@ import {
 	DialogTrigger,
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCopyWithSound } from "@/hooks/use-copy-with-sound";
 import { useSound } from "@/hooks/use-sound";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import {
+	type BsvRecipient,
+	checkBsvRecipient,
+	runHandleSend,
+} from "@/lib/wallet/bsv-send";
+import {
+	livePeerPayDeps,
+	peerPayOutbox,
+	runPeerPaySend,
+} from "@/lib/wallet/peerpay-send";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
+import { BsvPendingSends } from "./bsv-pending-sends";
+import { WalletHandles } from "./one-color-receive";
 import { PaySuccessMark } from "./pay-success-mark";
 import {
 	formatSatoshisAsBsv,
-	isP2pkhAddressForChain,
 	parseBsvAmount,
 	sendFailureMessage,
 } from "./wallet-home-utils";
 
 interface ReviewedSend {
-	destination: string;
+	recipient: BsvRecipient;
 	satoshis: number;
+	/** Sent with a handle payment only. */
+	memo: string;
 }
 
 type SendState =
-	| { status: "idle" }
+	| { status: "idle" | "checking" }
 	| ({ status: "review" | "sending" } & ReviewedSend)
-	| { status: "success"; txid: string; satoshis: number }
+	| { status: "success"; txid: string; satoshis: number; note: string }
+	| { status: "undelivered"; message: string }
 	| { status: "error"; message: string };
+
+const ADDRESS_SENT_NOTE = "It will confirm shortly.";
+
+const shortKey = (key: string) => `${key.slice(0, 10)}…${key.slice(-8)}`;
+
+/** What review shows as the recipient. */
+const recipientLabel = (recipient: BsvRecipient): string =>
+	recipient.kind === "address"
+		? recipient.address
+		: recipient.kind === "handle"
+			? recipient.handle
+			: recipient.identityKey;
 
 export function WalletHomeActions() {
 	const {
 		chain,
 		connectionMode,
 		depositAddress,
+		identityKey,
 		oneSatContext,
 		refreshBalance,
 	} = useWalletToolbox();
 	const queryClient = useQueryClient();
-	const [, copy] = useCopyWithSound();
 	const { play, preparePayChime } = useSound();
 	const playedTxid = useRef<string | null>(null);
 	const inFlightRef = useRef(false);
 	const [sendOpen, setSendOpen] = useState(false);
 	const [recipient, setRecipient] = useState("");
 	const [amount, setAmount] = useState("");
+	const [memo, setMemo] = useState("");
+	const checkRef = useRef(0);
 	const [sendState, setSendState] = useState<SendState>({ status: "idle" });
 
 	useEffect(() => {
@@ -77,7 +106,7 @@ export function WalletHomeActions() {
 		}
 	}, [sendState, play]);
 
-	const reviewSend = () => {
+	const reviewSend = async () => {
 		const satoshis = parseBsvAmount(amount);
 		if (!satoshis) {
 			setSendState({
@@ -86,24 +115,35 @@ export function WalletHomeActions() {
 			});
 			return;
 		}
+		if (!recipient.trim()) return;
+		const check = ++checkRef.current;
+		setSendState({ status: "checking" });
+		const checked = await checkBsvRecipient(recipient, chain);
+		// A newer review, or an edit, replaced this one.
+		if (check !== checkRef.current) return;
+		if (!checked.ok) {
+			setSendState({ status: "error", message: checked.message });
+			return;
+		}
+		if (checked.recipient.kind === "identity" && !identityKey) {
+			setSendState({
+				status: "error",
+				message:
+					"PeerPay needs this wallet's identity key, which isn't available yet.",
+			});
+			return;
+		}
+		setSendState({
+			status: "review",
+			recipient: checked.recipient,
+			satoshis,
+			memo: checked.recipient.kind === "handle" ? memo.trim() : "",
+		});
+	};
 
-		const destination = recipient.trim();
-		if (!destination) return;
-		if (destination.includes("@")) {
-			setSendState({
-				status: "error",
-				message: "Paymail addresses aren't supported yet. Enter a BSV address.",
-			});
-			return;
-		}
-		if (!isP2pkhAddressForChain(destination, chain)) {
-			setSendState({
-				status: "error",
-				message: `Enter a valid ${chain === "main" ? "mainnet" : "testnet"} P2PKH address.`,
-			});
-			return;
-		}
-		setSendState({ status: "review", destination, satoshis });
+	const afterSend = () => {
+		refreshBalance();
+		void queryClient.invalidateQueries({ queryKey: ["wallet-actions"] });
 	};
 
 	const handleSend = async () => {
@@ -114,14 +154,54 @@ export function WalletHomeActions() {
 		) {
 			return;
 		}
-		const { destination, satoshis } = sendState;
+		const { recipient: target, satoshis, memo: note } = sendState;
 		preparePayChime();
 		inFlightRef.current = true;
-		setSendState({ status: "sending", destination, satoshis });
+		setSendState({ ...sendState, status: "sending" });
 
 		try {
+			if (target.kind !== "address") {
+				const outcome =
+					target.kind === "handle"
+						? await runHandleSend(oneSatContext, {
+								handle: target.handle,
+								satoshis,
+								memo: note,
+							})
+						: identityKey
+							? await runPeerPaySend(
+									{ recipient: target.identityKey, satoshis },
+									{
+										...livePeerPayDeps(oneSatContext.wallet, chain),
+										outbox: peerPayOutbox(
+											window.localStorage,
+											chain,
+											identityKey,
+										),
+									},
+								)
+							: {
+									kind: "failed" as const,
+									message:
+										"PeerPay needs this wallet's identity key, which isn't available yet.",
+								};
+				afterSend();
+				setSendState(
+					outcome.kind === "sent"
+						? {
+								status: "success",
+								txid: outcome.txid,
+								satoshis,
+								note: outcome.message,
+							}
+						: outcome.kind === "undelivered"
+							? { status: "undelivered", message: outcome.message }
+							: { status: "error", message: outcome.message },
+				);
+				return;
+			}
 			const result = await sendBsv.execute(oneSatContext, {
-				requests: [{ address: destination, satoshis }],
+				requests: [{ address: target.address, satoshis }],
 			});
 			if (result.error || !result.txid) {
 				// reportDiagnostic keeps only a sanitised code; log the full error.
@@ -144,6 +224,7 @@ export function WalletHomeActions() {
 				status: "success",
 				txid: result.txid,
 				satoshis,
+				note: ADDRESS_SENT_NOTE,
 			});
 			refreshBalance();
 			void queryClient.invalidateQueries({ queryKey: ["wallet-actions"] });
@@ -184,36 +265,39 @@ export function WalletHomeActions() {
 						<DialogTitle>Receive BSV</DialogTitle>
 						<DialogDescription>
 							{connectionMode === "built-in"
-								? "This address changes after each payment you receive."
+								? "Share an address, one of your handles, or your PeerPay link."
 								: "Your connected wallet manages this address."}
 						</DialogDescription>
 					</DialogHeader>
-					<div
-						aria-label="QR code for the wallet deposit address"
-						className="size-56 self-center overflow-hidden rounded-lg bg-white"
-						role="img"
-					>
-						{depositAddress && (
-							<QRCodeSVG marginSize={4} size={224} value={depositAddress} />
-						)}
-					</div>
-					<div className="flex gap-2">
-						<Input
-							aria-label="Deposit address"
-							className="font-mono text-xs md:text-xs"
-							readOnly
-							value={depositAddress ?? "Unavailable"}
-						/>
-						<Button
-							aria-label="Copy deposit address"
-							disabled={!depositAddress}
-							onClick={() => depositAddress && void copy(depositAddress)}
-							size="icon"
-							variant="outline"
-						>
-							<Copy />
-						</Button>
-					</div>
+					{connectionMode === "built-in" && identityKey ? (
+						<Tabs defaultValue="address">
+							<TabsList className="grid h-auto w-full grid-cols-3 [&>*]:max-md:min-h-11">
+								<TabsTrigger value="address">Address</TabsTrigger>
+								<TabsTrigger value="handle">Handle</TabsTrigger>
+								<TabsTrigger value="peerpay">PeerPay</TabsTrigger>
+							</TabsList>
+							<TabsContent
+								className="flex flex-col gap-(--dialog-gap) pt-2"
+								value="address"
+							>
+								<p className="text-muted-foreground text-sm">
+									This address changes after each payment you receive.
+								</p>
+								<AddressReceive depositAddress={depositAddress} />
+							</TabsContent>
+							<TabsContent className="space-y-3 pt-2" value="handle">
+								<p className="text-muted-foreground text-sm">
+									Wallets that support handles can pay your handle directly.
+								</p>
+								<WalletHandles />
+							</TabsContent>
+							<TabsContent className="space-y-3 pt-2" value="peerpay">
+								<PeerPayReceive identityKey={identityKey} />
+							</TabsContent>
+						</Tabs>
+					) : (
+						<AddressReceive depositAddress={depositAddress} />
+					)}
 				</DialogContent>
 			</SoundDialog>
 
@@ -221,9 +305,14 @@ export function WalletHomeActions() {
 				onOpenChange={(open) => {
 					if (!open && inFlightRef.current) return;
 					setSendOpen(open);
-					if (!open && sendState.status === "success") {
+					if (
+						!open &&
+						(sendState.status === "success" ||
+							sendState.status === "undelivered")
+					) {
 						setRecipient("");
 						setAmount("");
+						setMemo("");
 						setSendState({ status: "idle" });
 					}
 				}}
@@ -258,9 +347,7 @@ export function WalletHomeActions() {
 									<DialogTitle className="text-2xl leading-tight">
 										Payment sent
 									</DialogTitle>
-									<DialogDescription>
-										It will confirm shortly.
-									</DialogDescription>
+									<DialogDescription>{sendState.note}</DialogDescription>
 									<p className="font-mono font-semibold text-3xl wrap-anywhere">
 										{formatSatoshisAsBsv(sendState.satoshis)} BSV
 									</p>
@@ -293,7 +380,7 @@ export function WalletHomeActions() {
 							<DialogDescription>
 								{sendState.status === "review" || sendState.status === "sending"
 									? "Check the amount and recipient."
-									: "Enter a BSV address and the amount to send."}
+									: "Pay a BSV address, a handle or an identity key."}
 							</DialogDescription>
 						</DialogHeader>
 					)}
@@ -301,8 +388,25 @@ export function WalletHomeActions() {
 						<>
 							<DetailList>
 								<DetailRow label="Recipient" stack>
-									{sendState.destination}
+									{recipientLabel(sendState.recipient)}
 								</DetailRow>
+								{sendState.recipient.kind === "handle" ? (
+									<DetailRow label="Identity key">
+										{shortKey(sendState.recipient.resolution.identityKey)}
+									</DetailRow>
+								) : null}
+								{sendState.memo ? (
+									<DetailRow label="Memo" mono={false} stack>
+										{sendState.memo}
+									</DetailRow>
+								) : null}
+								{sendState.recipient.kind !== "address" ? (
+									<DetailRow label="Delivery" mono={false} stack>
+										{sendState.recipient.kind === "handle"
+											? "To the handle's mailbox. They claim it when their wallet next syncs."
+											: "Through MessageBox (PeerPay). They need a PeerPay-compatible wallet."}
+									</DetailRow>
+								) : null}
 								<DetailRow label="Amount">
 									{formatSatoshisAsBsv(sendState.satoshis)} BSV
 								</DetailRow>
@@ -334,23 +438,44 @@ export function WalletHomeActions() {
 								</Button>
 							</DialogFooter>
 						</>
-					) : sendState.status === "idle" || sendState.status === "error" ? (
+					) : sendState.status === "undelivered" ? (
+						<>
+							<Notice tone="warning">
+								<span className="wrap-anywhere">{sendState.message}</span>
+							</Notice>
+							<BsvPendingSends />
+							<DialogFooter>
+								<DialogClose asChild>
+									<Button>Done</Button>
+								</DialogClose>
+							</DialogFooter>
+						</>
+					) : (
 						<>
 							<div className="flex flex-col gap-2">
 								<Label htmlFor="wallet-home-recipient">Recipient</Label>
 								<Input
+									autoCapitalize="none"
 									autoComplete="off"
 									aria-describedby="wallet-home-recipient-hint"
 									id="wallet-home-recipient"
-									onChange={(event) => setRecipient(event.target.value)}
-									placeholder="1A1z…"
+									onChange={(event) => {
+										checkRef.current += 1;
+										setRecipient(event.target.value);
+										if (sendState.status === "checking") {
+											setSendState({ status: "idle" });
+										}
+									}}
+									placeholder="1A1z…, @name@domain or 02…"
+									spellCheck={false}
 									value={recipient}
 								/>
 								<p
 									className="text-muted-foreground text-xs"
 									id="wallet-home-recipient-hint"
 								>
-									BSV addresses only. Paymail isn't supported yet.
+									A BSV address, a handle like @name@domain, or an identity key
+									for PeerPay. Paymail isn't supported.
 								</p>
 							</div>
 							<div className="flex flex-col gap-2">
@@ -364,6 +489,24 @@ export function WalletHomeActions() {
 									value={amount}
 								/>
 							</div>
+							{recipient.includes("@") ? (
+								<div className="flex flex-col gap-2">
+									<Label htmlFor="wallet-home-memo">Memo (optional)</Label>
+									<Input
+										aria-describedby="wallet-home-memo-hint"
+										autoComplete="off"
+										id="wallet-home-memo"
+										onChange={(event) => setMemo(event.target.value)}
+										value={memo}
+									/>
+									<p
+										className="text-muted-foreground text-xs"
+										id="wallet-home-memo-hint"
+									>
+										Delivered with a payment to a handle.
+									</p>
+								</div>
+							) : null}
 							{sendState.status === "error" && (
 								<Notice tone="danger">
 									<span className="wrap-anywhere">{sendState.message}</span>
@@ -371,16 +514,100 @@ export function WalletHomeActions() {
 							)}
 							<DialogFooter>
 								<Button
-									disabled={!recipient.trim() || !amount.trim()}
-									onClick={reviewSend}
+									disabled={
+										sendState.status === "checking" ||
+										!recipient.trim() ||
+										!amount.trim()
+									}
+									onClick={() => void reviewSend()}
 								>
-									Review payment
+									{sendState.status === "checking" && (
+										<Loader2
+											className="animate-spin"
+											data-icon="inline-start"
+										/>
+									)}
+									{sendState.status === "checking"
+										? "Looking up…"
+										: "Review payment"}
 								</Button>
 							</DialogFooter>
+							<BsvPendingSends />
 						</>
-					) : null}
+					)}
 				</DialogContent>
 			</SoundDialog>
 		</div>
+	);
+}
+
+/** BRC-125 `peerpay:` link of this wallet's identity key (iOS Receive > PeerPay). */
+function PeerPayReceive({ identityKey }: { identityKey: string }) {
+	const [, copy] = useCopyWithSound();
+	const link = `peerpay:${identityKey}`;
+	return (
+		<>
+			<p className="text-muted-foreground text-sm">
+				Wallets that support PeerPay can pay this identity key. Payments arrive
+				in your incoming payments.
+			</p>
+			<div
+				aria-label="QR code for this wallet's PeerPay link"
+				className="mx-auto w-fit rounded-lg bg-white p-4"
+				role="img"
+			>
+				<QRCodeSVG size={160} value={link} />
+			</div>
+			<div className="flex gap-2">
+				<Input
+					aria-label="Identity key"
+					className="font-mono text-xs md:text-xs"
+					readOnly
+					value={identityKey}
+				/>
+				<Button
+					aria-label="Copy PeerPay link"
+					onClick={() => void copy(link)}
+					size="icon"
+					variant="outline"
+				>
+					<Copy />
+				</Button>
+			</div>
+		</>
+	);
+}
+
+function AddressReceive({ depositAddress }: { depositAddress: string | null }) {
+	const [, copy] = useCopyWithSound();
+	return (
+		<>
+			<div
+				aria-label="QR code for the wallet deposit address"
+				className="size-56 self-center overflow-hidden rounded-lg bg-white"
+				role="img"
+			>
+				{depositAddress && (
+					<QRCodeSVG marginSize={4} size={224} value={depositAddress} />
+				)}
+			</div>
+			<div className="flex gap-2">
+				<Input
+					aria-label="Deposit address"
+					className="font-mono text-xs md:text-xs"
+					readOnly
+					value={depositAddress ?? "Unavailable"}
+				/>
+				<Button
+					aria-label="Copy deposit address"
+					disabled={!depositAddress}
+					onClick={() => depositAddress && void copy(depositAddress)}
+					size="icon"
+					variant="outline"
+				>
+					<Copy />
+				</Button>
+			</div>
+		</>
 	);
 }
