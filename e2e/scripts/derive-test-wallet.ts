@@ -139,14 +139,18 @@ function gh(args: string[], input?: string): Promise<void> {
 }
 
 async function setGitHubSecrets(backup: string, passphrase: string) {
-	// Creates the environment if it is missing; changes nothing if it exists.
-	await gh([
-		"api",
-		"--method",
-		"PUT",
-		`repos/${REPO}/environments/${ENVIRONMENT}`,
-		"--silent",
-	]);
+	// PUT replaces an environment's settings, so only create a missing one.
+	try {
+		await gh(["api", `repos/${REPO}/environments/${ENVIRONMENT}`, "--silent"]);
+	} catch {
+		await gh([
+			"api",
+			"--method",
+			"PUT",
+			`repos/${REPO}/environments/${ENVIRONMENT}`,
+			"--silent",
+		]);
+	}
 	await gh(
 		["secret", "set", "E2E_WALLET_A_BACKUP", "--env", ENVIRONMENT, "-R", REPO],
 		backup,
@@ -222,3 +226,6 @@ if (toGitHub) {
 console.log(`Wallet A ("${WALLET_LABEL}")`);
 console.log(`  testnet deposit address: ${address}`);
 console.log(`  identity key:            ${identityKey}`);
+console.log(
+	"\nFund the deposit address with testnet sats (at least 50,000; the preflight test checks). If a gh step failed, run the script again: it sets a new backup and passphrase together.",
+);

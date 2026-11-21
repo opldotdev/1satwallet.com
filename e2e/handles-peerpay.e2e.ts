@@ -23,9 +23,11 @@ const { handleDomain, handleRegistration } = endpointsOf("test");
 
 /** A per-run number, so this run's payments are told from earlier runs'. */
 const runId = process.env.GITHUB_RUN_ID ?? String(Date.now());
-const runNumber = Number.isSafeInteger(Number(runId))
-	? Number(runId)
-	: Date.now();
+/** "Re-run failed jobs" keeps GITHUB_RUN_ID, so the attempt is mixed in too. */
+const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT ?? "1");
+const runNumber =
+	(Number.isSafeInteger(Number(runId)) ? Number(runId) : Date.now()) +
+	(Number.isSafeInteger(runAttempt) ? runAttempt * 7 : 0);
 
 /** At most 1,000 sats each, and never the same amount for both payments. */
 const HANDLE_SATS = 600 + (runNumber % 300);
@@ -428,7 +430,19 @@ async function syncUntilOnHistory<A>(
 			null,
 		);
 		try {
-			await browser.waitFor(description, done, arg, SYNC_TRY);
+			try {
+				await browser.waitFor(description, done, arg, SYNC_TRY);
+			} catch (error) {
+				if (!(error instanceof Error && error.message.startsWith("Timed out")))
+					throw error;
+				// History loads when it opens, which can be before the sync
+				// finished: read it again once before syncing again.
+				await browser.click({
+					role: "button",
+					name: "Refresh history",
+				});
+				await browser.waitFor(description, done, arg, SYNC_TRY);
+			}
 			return;
 		} catch (error) {
 			const notYet =
