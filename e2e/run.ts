@@ -25,6 +25,9 @@ const SUITES = {
 			"./e2e/mobile-lists.e2e.ts",
 			"./e2e/tokens-section-wallet.e2e.ts",
 		],
+		// After the batch above: these payments spend from wallet A and wait
+		// for its inboxes, so they don't run beside the other spending tests.
+		["./e2e/handles-peerpay.e2e.ts"],
 	],
 	mainnet: [
 		[
