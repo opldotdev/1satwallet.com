@@ -23,6 +23,8 @@ export async function withRateLimitRetry<T>(
 		delays?: readonly number[];
 		sleep?: (ms: number) => Promise<void>;
 		log?: (message: string) => void;
+		/** Checked before each retry; false stops and throws the 429. */
+		shouldContinue?: () => boolean;
 	} = {},
 ): Promise<T> {
 	const delays = deps.delays ?? RATE_LIMIT_DELAYS_MS;
@@ -36,10 +38,12 @@ export async function withRateLimitRetry<T>(
 		} catch (error) {
 			const delay = delays[attempt];
 			if (delay === undefined || !isRateLimited(error)) throw error;
+			if (deps.shouldContinue && !deps.shouldContinue()) throw error;
 			log(
 				`[${operation}] The server answered HTTP 429 (too many requests); retry ${attempt + 1} of ${delays.length} in ${delay / 1000} s.`,
 			);
 			await sleep(delay);
+			if (deps.shouldContinue && !deps.shouldContinue()) throw error;
 		}
 	}
 }

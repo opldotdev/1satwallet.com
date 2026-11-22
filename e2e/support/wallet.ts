@@ -240,7 +240,7 @@ export function walletTest(
 			return {
 				url: new URL("/wallet", origin).href,
 				initScript: walletInitScript(origin, wallet),
-				secrets: [wallet.passphrase, wallet.backup],
+				secrets: [wallet.passphrase, wallet.backup, ...wallet.keySecrets],
 				forbiddenHosts: MAINNET_ONLY_HOSTS,
 				beforeScreenshot: async (browser) => {
 					await clearPassphrase(browser);

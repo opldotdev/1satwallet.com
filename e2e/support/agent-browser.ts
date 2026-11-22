@@ -85,11 +85,13 @@ const stringField = (
 /**
  * The console errors and warnings, then the uncaught page errors, from
  * agent-browser's `console --json` and `errors --json` data, as one line each
- * ("[error] …", "[page error] …"). Not redacted: callers redact.
+ * ("[error] …", "[page error] …"). `redact` runs on each whole line before
+ * it is collapsed and cut to length.
  */
 export function consoleProblemLines(
 	consoleData: unknown,
 	errorsData: unknown,
+	redact: (line: string) => string,
 ): string[] {
 	const lines: string[] = [];
 	for (const raw of entriesOf(consoleData)) {
@@ -114,7 +116,10 @@ export function consoleProblemLines(
 					: String(raw);
 		lines.push(`[page error] ${text}`);
 	}
+	// Redacted before it is cut, so a secret straddling the cut is still
+	// matched whole.
 	return lines
+		.map(redact)
 		.map((line) => line.replace(/\s+/g, " ").trim())
 		.map((line) =>
 			line.length > CONSOLE_MAX_CHARS
@@ -220,10 +225,9 @@ export class Browser {
 		const lines = consoleProblemLines(
 			await this.run(["console"]),
 			await this.run(["errors"]),
+			(line) => this.redactConsoleLine(line),
 		);
-		const shown = lines
-			.slice(-CONSOLE_MAX_ENTRIES)
-			.map((line) => this.redactConsoleLine(line));
+		const shown = lines.slice(-CONSOLE_MAX_ENTRIES);
 		const dropped = lines.length - shown.length;
 		return dropped > 0
 			? [`(${dropped} older lines not shown)`, ...shown]

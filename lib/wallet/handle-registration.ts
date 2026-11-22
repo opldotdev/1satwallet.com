@@ -392,7 +392,13 @@ const noCertificate = (username: string) =>
  * shown cut to `HOST_TEXT_MAX` characters. The full body is logged.
  */
 async function hostError(response: Response, chain: Chain): Promise<string> {
-	const text = await response.text().catch(() => "");
+	const text = await response.text().catch((error: unknown) => {
+		console.error("[handles] reading a refused registration failed", {
+			chain,
+			error,
+		});
+		return "";
+	});
 	console.error("[handles] registration refused", {
 		chain,
 		status: response.status,
@@ -571,7 +577,9 @@ export function directFromSkeinCertificate(
 	) {
 		console.error("[handles] the skein certificate's type or subject differs", {
 			type: certificate.type,
-			subject,
+			subjectIsThisWallet:
+				typeof subject === "string" &&
+				subject.toLowerCase() === identityKey.toLowerCase(),
 		});
 		throw new HandleRegistrationError(BAD_CERTIFICATE);
 	}
@@ -728,7 +736,7 @@ async function verifyAndFile(
 	try {
 		if (
 			cert.type !== HANDLE_CERT_TYPE ||
-			cert.certifier !== certifier ||
+			cert.certifier.toLowerCase() !== certifier.toLowerCase() ||
 			cert.subject.toLowerCase() !== identityKey.toLowerCase()
 		) {
 			throw new Error("type, certifier or subject differs");
@@ -773,7 +781,7 @@ async function verifyAndFile(
 			return (await list(wallet)).some(
 				(h) =>
 					h.serialNumber === cert.serialNumber &&
-					h.certifier === cert.certifier,
+					h.certifier.toLowerCase() === cert.certifier.toLowerCase(),
 			);
 		} catch (error) {
 			// A listing that fails reads as not held; storage has the last word.

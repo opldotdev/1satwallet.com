@@ -53,6 +53,7 @@ test("reads console errors and warnings and page errors, not info or logs", () =
 			],
 		},
 		{ errors: [{ message: "TypeError: x is undefined" }, "Uncaught boom"] },
+		(line) => line,
 	);
 	assert.deepEqual(lines, [
 		"[warning] slow storage",
@@ -61,10 +62,14 @@ test("reads console errors and warnings and page errors, not info or logs", () =
 		"[page error] Uncaught boom",
 	]);
 	// A bare list, a level field and an entry with no text all still read.
-	assert.deepEqual(consoleProblemLines([{ level: "warn", args: [1] }], null), [
-		'[warn] {"level":"warn","args":[1]}',
-	]);
-	assert.deepEqual(consoleProblemLines(null, undefined), []);
+	assert.deepEqual(
+		consoleProblemLines([{ level: "warn", args: [1] }], null, (line) => line),
+		['[warn] {"level":"warn","args":[1]}'],
+	);
+	assert.deepEqual(
+		consoleProblemLines(null, undefined, (line) => line),
+		[],
+	);
 });
 
 test("console lines never carry a secret, whole or in part", () => {
@@ -84,4 +89,17 @@ test("console lines never carry a secret, whole or in part", () => {
 		),
 		`[error] Unlocked. Transaction ${"ab".repeat(32)}`,
 	);
+});
+
+test("a secret straddling the length cut is redacted before the line is cut", () => {
+	const secret = "Zq7Yx2Wv9Ut4Sr6Qp1On3Ml8Kj5Ih0Gf";
+	const browser = new Browser([secret]);
+	const long = `${"x".repeat(590)}${secret} tail`;
+	const [line] = consoleProblemLines(
+		[{ type: "error", text: long }],
+		null,
+		(text) => browser.redactConsoleLine(text),
+	);
+	assert.ok(line);
+	assert.ok(!line.includes(secret.slice(0, 8)), line.slice(-40));
 });

@@ -66,6 +66,31 @@ describe("withRateLimitRetry", () => {
 	});
 });
 
+describe("withRateLimitRetry cancel", () => {
+	it("stops retrying once shouldContinue turns false", async () => {
+		let calls = 0;
+		let live = true;
+		await assert.rejects(
+			withRateLimitRetry(
+				"op",
+				async () => {
+					calls += 1;
+					throw tooMany();
+				},
+				{
+					sleep: async () => {
+						live = false;
+					},
+					log: () => {},
+					shouldContinue: () => live,
+				},
+			),
+			/HTTP 429/,
+		);
+		assert.equal(calls, 1);
+	});
+});
+
 describe("isRateLimited", () => {
 	it("reads the status or the message", () => {
 		assert.equal(isRateLimited(tooMany()), true);

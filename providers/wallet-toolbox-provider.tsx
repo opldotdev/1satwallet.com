@@ -1026,13 +1026,20 @@ export function WalletToolboxProvider({
 
 				const activeRemote = walletStorageUrl(chain);
 				// The wallet server rate-limits; a busy moment shouldn't fail the open.
-				const result = await withRateLimitRetry("wallet.initialize", () =>
-					createWebWallet({
-						privateKey: rootKey,
-						chain,
-						activeRemote,
-						storageIdentityKey,
-					}),
+				// Stops once the wallet is locked or reopened meanwhile.
+				const result = await withRateLimitRetry(
+					"wallet.initialize",
+					() =>
+						createWebWallet({
+							privateKey: rootKey,
+							chain,
+							activeRemote,
+							storageIdentityKey,
+						}),
+					{
+						shouldContinue: () =>
+							generation === connectionGenerationRef.current,
+					},
 				);
 				pendingResult = result;
 				if (generation !== connectionGenerationRef.current) {

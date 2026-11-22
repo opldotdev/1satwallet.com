@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { PrivateKey } from "@bsv/sdk";
 import { endpointsOf } from "@/lib/chain-endpoints";
 import { openTestnetBackup } from "./test-network";
 
@@ -92,6 +93,8 @@ export interface TestWallet {
 	backup: string;
 	passphrase: string;
 	identityKey: string;
+	/** The decrypted private keys, as WIF and hex: redacted from all output. */
+	keySecrets: string[];
 }
 
 let walletA: Promise<TestWallet> | undefined;
@@ -104,7 +107,7 @@ let walletA: Promise<TestWallet> | undefined;
 export function testWalletA(): Promise<TestWallet> {
 	walletA ??= (async () => {
 		const env = requireEnv(["E2E_WALLET_A_BACKUP", "E2E_WALLET_PASSPHRASE"]);
-		const { identityKey } = await openTestnetBackup(
+		const { identityKey, keys } = await openTestnetBackup(
 			env.E2E_WALLET_A_BACKUP,
 			env.E2E_WALLET_PASSPHRASE,
 			"E2E_WALLET_A_BACKUP",
@@ -113,6 +116,9 @@ export function testWalletA(): Promise<TestWallet> {
 			backup: env.E2E_WALLET_A_BACKUP,
 			passphrase: env.E2E_WALLET_PASSPHRASE,
 			identityKey,
+			keySecrets: [keys.payPk, keys.ordPk, keys.identityPk]
+				.filter((wif): wif is string => typeof wif === "string" && !!wif)
+				.flatMap((wif) => [wif, PrivateKey.fromWif(wif).toHex()]),
 		};
 	})();
 	return walletA;
