@@ -223,7 +223,8 @@ export class Browser {
 		expression: string,
 		timeout: number,
 	) {
-		const deadline = Math.min(Date.now() + timeout, this.budgetEnd);
+		const started = Date.now();
+		const deadline = Math.min(started + timeout, this.budgetEnd);
 		for (;;) {
 			if (Date.now() >= this.budgetEnd) {
 				throw new Error(
@@ -237,9 +238,12 @@ export class Browser {
 				// Only agent-browser's own wait timeout means "not yet".
 				if (!isWaitTimeout(error)) throw error;
 				if (Date.now() >= deadline) {
-					throw new Error(`Timed out after ${timeout} ms: ${description}`, {
-						cause: error,
-					});
+					// The time actually waited: one agent-browser wait can outlast
+					// a short `timeout` (with 0, exactly one wait runs).
+					throw new Error(
+						`Timed out after ${Date.now() - started} ms: ${description}`,
+						{ cause: error },
+					);
 				}
 			}
 		}
@@ -308,13 +312,37 @@ export class Browser {
 	/**
 	 * Clicks the element `locator` finds, with agent-browser's own click.
 	 *
-	 * The element is first scrolled just far enough to show it whole, as a
-	 * person would before tapping. agent-browser (0.43) scrolls only an element
-	 * wholly off screen: one that peeks in at the bottom edge with its centre
-	 * below the fold is refused as "outside the viewport".
+	 * As a person would before tapping, it waits for the element to stop
+	 * moving, then scrolls it just far enough to show it whole and checks that
+	 * its centre is inside the window. A bottom sheet slides up from below the
+	 * window (the unlock screen on phones), and scrolling can't bring a
+	 * transformed element into view. agent-browser (0.43) scrolls only an
+	 * element wholly off screen: one that peeks in at the bottom edge with its
+	 * centre below the fold is refused as "outside the viewport".
 	 */
 	async click(locator: Locator, timeout?: number) {
 		const target = await this.mark(locator, timeout);
+		const what = describe(locator);
+		await this.waitFor(
+			`${what} to stop moving (no enter animation running on it or a container)`,
+			(selector: string) => {
+				const el = document.querySelector(selector);
+				if (!el) return false;
+				return !document.getAnimations().some((animation) => {
+					const effect = animation.effect;
+					if (!(effect instanceof KeyframeEffect)) return false;
+					const { target } = effect;
+					return (
+						animation.playState === "running" &&
+						target instanceof Element &&
+						target.contains(el) &&
+						// A looping animation (a pulse, a spinner) never ends.
+						effect.getComputedTiming().iterations !== Number.POSITIVE_INFINITY
+					);
+				});
+			},
+			target,
+		);
 		await this.evaluate((selector: string) => {
 			document.querySelector(selector)?.scrollIntoView({
 				block: "nearest",
@@ -322,6 +350,37 @@ export class Browser {
 				behavior: "instant",
 			});
 		}, target);
+		try {
+			await this.waitFor(
+				`${what} to have its centre inside the window`,
+				(selector: string) => {
+					const box = document.querySelector(selector)?.getBoundingClientRect();
+					if (!box) return false;
+					const x = box.left + box.width / 2;
+					const y = box.top + box.height / 2;
+					return (
+						x >= 0 &&
+						y >= 0 &&
+						x <= window.innerWidth &&
+						y <= window.innerHeight
+					);
+				},
+				target,
+			);
+		} catch (error) {
+			const box = await this.evaluate((selector: string) => {
+				const rect = document.querySelector(selector)?.getBoundingClientRect();
+				return rect
+					? `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)} in a ${window.innerWidth}x${window.innerHeight} window`
+					: "gone";
+			}, target).catch(
+				(measureError: unknown) =>
+					`(not measured: ${measureError instanceof Error ? measureError.message : String(measureError)})`,
+			);
+			throw new Error(`${what} is outside the window after scrolling: ${box}`, {
+				cause: error,
+			});
+		}
 		await this.run(["click", target]);
 	}
 

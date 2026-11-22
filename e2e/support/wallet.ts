@@ -95,23 +95,57 @@ const walletBalance = (browser: Browser) =>
 	);
 
 /**
+ * What wallet home shows, for a failure message: the unlock screen, or the
+ * start of the page's text (a loading status, "Wallet data could not be
+ * refreshed", "Wallet could not be opened" and the like). A field's value is
+ * not part of the text read, so no passphrase can reach it.
+ */
+function describeWalletHome(browser: Browser): Promise<string> {
+	return browser.evaluate(() => {
+		const clean = (text: string | null | undefined) =>
+			(text ?? "").replace(/\s+/g, " ").trim();
+		if (document.querySelector('[role="dialog"][aria-label="Unlock wallet"]')) {
+			return "the unlock screen";
+		}
+		const busy = Array.from(document.querySelectorAll('[role="status"]'))
+			.map((el) => clean(el.textContent))
+			.filter(Boolean);
+		const main = document.querySelector("main");
+		const text = main ? clean(main.textContent) : "(no <main> on the page)";
+		return `${text.slice(0, 300) || "(an empty page)"}${busy.length ? `; status: ${busy.join(" | ").slice(0, 200)}` : ""}`;
+	}, null);
+}
+
+/**
  * Wallet home is usable: balance rendered and the first sync of both address
  * kinds done: the legacy deposit addresses ("addresses") and the built-in
  * wallet's own BRC-29 Receive addresses ("receive-addresses"), where a fresh
  * deposit to the shown address lands.
  */
 export async function waitForWalletReady(browser: Browser) {
-	await browser.waitFor(
-		"the wallet balance",
-		() =>
-			/^\d+$/.test(
-				document
-					.querySelector('[data-testid="wallet-balance"]')
-					?.getAttribute("data-sats") ?? "",
-			),
-		null,
-		CHAIN_TIMEOUT,
-	);
+	try {
+		await browser.waitFor(
+			"the wallet balance",
+			() =>
+				/^\d+$/.test(
+					document
+						.querySelector('[data-testid="wallet-balance"]')
+						?.getAttribute("data-sats") ?? "",
+				),
+			null,
+			CHAIN_TIMEOUT,
+		);
+	} catch (error) {
+		// Name what wallet home shows instead: still loading, the balance
+		// error, a wallet that could not be opened, or the lock screen.
+		const shown = await describeWalletHome(browser).catch(
+			(readError: unknown) =>
+				`(could not be read: ${readError instanceof Error ? readError.message : String(readError)})`,
+		);
+		throw new Error(`Wallet home shows no balance. It shows: ${shown}`, {
+			cause: error,
+		});
+	}
 	for (const task of ["addresses", "receive-addresses"]) {
 		const selector = `[data-testid="wallet-sync-state"][data-task="${task}"]`;
 		await browser.waitFor(

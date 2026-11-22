@@ -1,4 +1,4 @@
-import type { Browser } from "./support/agent-browser";
+import { ACTION_TIMEOUT, type Browser } from "./support/agent-browser";
 import { type Locator, pattern } from "./support/page-query";
 import {
 	CHAIN_TIMEOUT,
@@ -77,12 +77,26 @@ function readLockHeights(browser: Browser) {
 		);
 		const number = (text: string | undefined) =>
 			text ? Number(text.replaceAll(",", "")) : null;
+		// Each figure is read from its own element: a row's textContent runs
+		// "Unlock block 1,770,641" straight into "1 block left".
+		const ownText = (el: Element) =>
+			(el.textContent ?? "").replace(/\s+/g, " ").trim();
 		const current = number(
-			section?.textContent?.match(/· block ([\d,]+)/)?.[1],
+			Array.from(
+				section?.querySelectorAll('[data-slot="section-header"] p') ?? [],
+				(p) => ownText(p).match(/· block ([\d,]+)$/)?.[1],
+			).find(Boolean),
 		);
 		const pending = Array.from(section?.querySelectorAll("li") ?? [])
 			.filter((li) => /blocks? left/.test(li.textContent ?? ""))
-			.map((li) => number(li.textContent?.match(/Unlock block ([\d,]+)/)?.[1]))
+			.map((li) =>
+				number(
+					Array.from(
+						li.querySelectorAll("p"),
+						(p) => ownText(p).match(/^Unlock block ([\d,]+)$/)?.[1],
+					).find(Boolean),
+				),
+			)
 			.filter((until): until is number => until !== null);
 		return { current, pending };
 	}, null);
@@ -200,33 +214,48 @@ walletTest("locks 0.00001 BSV for one block", async (browser) => {
 	}
 	await browser.click({ role: "button", name: "Done", within: locked });
 
-	// The new coin shows once the locks list refreshes.
+	// The new coin shows once the locks list refreshes. Its row's own line
+	// reads "Unlock block 1,770,641"; the row's whole text runs that straight
+	// into "1 block left" or "Spendable", so the line is matched, not the row.
+	const coinDescription = `the coin unlocking at block ${until}`;
 	const coin: Locator = {
 		role: "listitem",
 		within: locks,
-		text: pattern(new RegExp(`Unlock block ${until}\\b`)),
+		has: {
+			role: "any",
+			text: pattern(new RegExp(`^Unlock block ${until}$`)),
+		},
 	};
 	// The list refreshes itself after a lock; Refresh is only clicked after a
 	// wait comes up empty, and only once it is enabled again.
 	const deadline = Date.now() + CHAIN_TIMEOUT;
+	let refreshes = 0;
 	for (;;) {
 		try {
+			// One agent-browser wait per round.
 			await browser.waitUntil(
-				`the coin unlocking at block ${until}`,
+				coinDescription,
 				coin,
 				undefined,
 				undefined,
-				0,
+				ACTION_TIMEOUT,
 			);
 			return;
 		} catch (error) {
 			const notYet =
 				error instanceof Error && error.message.startsWith("Timed out");
-			if (!notYet || Date.now() >= deadline) throw error;
+			if (!notYet) throw error;
+			if (Date.now() >= deadline) {
+				throw new Error(
+					`Timed out after ${CHAIN_TIMEOUT} ms: ${coinDescription} (Refresh locks clicked ${refreshes} times)`,
+					{ cause: error },
+				);
+			}
 			await browser.click(
 				{ role: "button", name: "Refresh locks", within: locks },
 				CHAIN_TIMEOUT,
 			);
+			refreshes++;
 		}
 	}
 });
