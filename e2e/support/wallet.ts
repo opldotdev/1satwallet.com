@@ -94,7 +94,12 @@ const walletBalance = (browser: Browser) =>
 		null,
 	);
 
-/** Wallet home is usable: balance rendered and the first address sync done. */
+/**
+ * Wallet home is usable: balance rendered and the first sync of both address
+ * kinds done: the legacy deposit addresses ("addresses") and the built-in
+ * wallet's own BRC-29 Receive addresses ("receive-addresses"), where a fresh
+ * deposit to the shown address lands.
+ */
 export async function waitForWalletReady(browser: Browser) {
 	await browser.waitFor(
 		"the wallet balance",
@@ -107,23 +112,25 @@ export async function waitForWalletReady(browser: Browser) {
 		null,
 		CHAIN_TIMEOUT,
 	);
-	const selector = '[data-testid="wallet-sync-state"][data-task="addresses"]';
-	await browser.waitFor(
-		"the first address sync to finish",
-		(css: string) =>
-			["succeeded", "failed"].includes(
-				document.querySelector(css)?.getAttribute("data-state") ?? "",
-			),
-		selector,
-		CHAIN_TIMEOUT,
-	);
-	const failed = await browser.evaluate((css: string) => {
-		const sync = document.querySelector(css);
-		return sync?.getAttribute("data-state") === "failed"
-			? (sync.parentElement?.textContent ?? "").trim()
-			: null;
-	}, selector);
-	if (failed !== null) throw new Error(`Address sync failed: ${failed}`);
+	for (const task of ["addresses", "receive-addresses"]) {
+		const selector = `[data-testid="wallet-sync-state"][data-task="${task}"]`;
+		await browser.waitFor(
+			`the first ${task} sync to finish`,
+			(css: string) =>
+				["succeeded", "failed"].includes(
+					document.querySelector(css)?.getAttribute("data-state") ?? "",
+				),
+			selector,
+			CHAIN_TIMEOUT,
+		);
+		const failed = await browser.evaluate((css: string) => {
+			const sync = document.querySelector(css);
+			return sync?.getAttribute("data-state") === "failed"
+				? (sync.parentElement?.textContent ?? "").trim()
+				: null;
+		}, selector);
+		if (failed !== null) throw new Error(`${task} sync failed: ${failed}`);
+	}
 }
 
 /** Spendable balance in satoshis, as wallet home shows it. */
