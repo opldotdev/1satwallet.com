@@ -505,6 +505,14 @@ export class Browser {
 				cause: error,
 			});
 		}
+		// A dialog or sheet that is closing keeps its overlay over the page
+		// until its exit animation ends, and a click then lands on the overlay.
+		await this.waitFor(
+			"a closing dialog's overlay to go away before clicking",
+			() =>
+				!document.querySelector('[data-slot$="-overlay"][data-state="closed"]'),
+			null,
+		);
 		await this.run(["click", target]);
 	}
 
