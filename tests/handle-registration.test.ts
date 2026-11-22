@@ -42,17 +42,22 @@ const json = (body: unknown, status = 200) =>
 		headers: { "Content-Type": "application/json" },
 	});
 
-/** The handle host for `domain` (testnet.1sat.app), as fetch answers it. */
+/**
+ * The handle host for `domain` (testnet.1sat.app), as fetch answers it. Its
+ * certifier manifest is at `manifestOrigin`: the domain itself, or for
+ * mainnet the wallet-server's accounts host.
+ */
 function host(
 	resolveStatus: number,
 	identityKey = subject,
 	domain = "testnet.1sat.app",
+	manifestOrigin = `https://${domain}`,
 ) {
 	const urls: string[] = [];
 	const answer = (async (input: string | URL | Request) => {
 		const url = String(input);
 		urls.push(url);
-		if (url === `https://${domain}/manifest.json`) {
+		if (url === `${manifestOrigin}/manifest.json`) {
 			return json({
 				metanet: {
 					handles: { version: "1.0" },
@@ -183,7 +188,12 @@ describe("checkHandleAvailability", () => {
 	});
 });
 
-const mainHost = host(404, subject, "1sat.app").fetch;
+const mainHost = host(
+	404,
+	subject,
+	"1sat.app",
+	"https://accounts.1sat.app",
+).fetch;
 
 describe("registerHandle on mainnet (wallet-server)", () => {
 	it("posts to the chain's account host and files a certificate that checks out", async () => {

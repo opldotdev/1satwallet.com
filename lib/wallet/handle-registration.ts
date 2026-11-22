@@ -167,27 +167,28 @@ const unknownCertifier = (name: string) =>
 	`${name} doesn't say which key certifies its handles, so the certificate couldn't be checked. Try again later.`;
 
 /**
- * The key that certifies handles at `domain`: its `manifest.json`
- * `metanet.trust.publicKey`.
+ * The key that certifies the wallet-server's handles: the `manifest.json`
+ * `metanet.trust.publicKey` of its accounts host (iOS `HandleHost.discover`,
+ * `.walletServer`). The handle domain itself (1sat.app) serves no manifest.
  */
 export async function certifierKeyOf(
-	domain: string,
+	accounts: string,
 	deps: { fetch?: Fetch } = {},
 ): Promise<string> {
+	const origin = accounts.replace(/\/$/, "");
+	const name = new URL(origin).host;
 	let body: unknown;
 	try {
-		const response = await (deps.fetch ?? fetch)(
-			`https://${domain}/manifest.json`,
-		);
+		const response = await (deps.fetch ?? fetch)(`${origin}/manifest.json`);
 		if (!response.ok) throw new Error(`manifest ${response.status}`);
 		body = await response.json();
 	} catch (error) {
-		throw new HandleRegistrationError(unknownCertifier(domain), {
+		throw new HandleRegistrationError(unknownCertifier(name), {
 			cause: error,
 		});
 	}
 	const key = manifestCertifier(body, false);
-	if (!key) throw new HandleRegistrationError(unknownCertifier(domain));
+	if (!key) throw new HandleRegistrationError(unknownCertifier(name));
 	return key;
 }
 
@@ -498,7 +499,7 @@ async function registerAtWalletServer(
 ): Promise<string> {
 	const { chain, wallet } = account;
 	const { domain } = host;
-	const certifier = await certifierKeyOf(domain, deps);
+	const certifier = await certifierKeyOf(host.accounts, deps);
 
 	const url = `${host.accounts.replace(/\/$/, "")}/account/register`;
 	const response = await postRegistration(
