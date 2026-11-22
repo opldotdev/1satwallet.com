@@ -1,3 +1,4 @@
+import { LOCK_NOT_FINAL_YET } from "@/lib/wallet/lock-actions";
 import { ACTION_TIMEOUT, type Browser } from "./support/agent-browser";
 import { type Locator, pattern } from "./support/page-query";
 import {
@@ -141,7 +142,9 @@ function unlockOutcome(pendingAsNull: boolean): UnlockOutcome | null {
  * the app's error in Locks, which fails the test at once with the app's own
  * words (the full reason is in the console, printed with the failure).
  */
-async function waitForUnlockOutcome(browser: Browser) {
+async function waitForUnlockOutcome(
+	browser: Browser,
+): Promise<"unlocked" | "not-final-yet"> {
 	try {
 		await browser.waitFor(
 			"the unlock to end (its transaction, or an error in Locks)",
@@ -159,10 +162,14 @@ async function waitForUnlockOutcome(browser: Browser) {
 		);
 	}
 	const shown = await browser.evaluate(unlockOutcome, false);
+	// The lock matured at the wallet's chain tip, but the broadcaster's node
+	// is a block behind: the same "not matured yet" as no coin being ready.
+	if (shown?.failed === LOCK_NOT_FINAL_YET) return "not-final-yet";
 	if (shown?.failed) throw new Error(`Unlocking failed: "${shown.failed}"`);
 	if (!shown?.unlocked) {
 		throw new Error("The unlock transaction went away before it was read.");
 	}
+	return "unlocked";
 }
 
 // Runs first: locks from earlier runs whose block has passed are unlocked
@@ -197,7 +204,17 @@ walletTest("unlocks matured locks from earlier runs", async (browser, t) => {
 			? { role: "button", name: `Unlock all (${count})`, within: locks }
 			: { role: "button", name: "Unlock", within: maturedCoin },
 	);
-	await waitForUnlockOutcome(browser);
+	if ((await waitForUnlockOutcome(browser)) === "not-final-yet") {
+		if (process.env.E2E_REQUIRE_UNLOCK === "1") {
+			throw new Error(
+				`E2E_REQUIRE_UNLOCK=1, and the network refused the unlock as not final yet: "${LOCK_NOT_FINAL_YET}"`,
+			);
+		}
+		t.skip(
+			"the newest lock matured at the wallet's chain tip, but the network hasn't reached that block yet",
+		);
+		return;
+	}
 	await browser.waitUntil(
 		"the unlocked coins to leave the list",
 		maturedCoin,

@@ -93,6 +93,10 @@ export function lockRequestProblem(input: {
 	return null;
 }
 
+/** Shown when the network refuses an unlock as not final yet. */
+export const LOCK_NOT_FINAL_YET =
+	"The network hasn't reached this unlock block yet. Nothing was unlocked; try again after the next block.";
+
 // Error codes returned by @1sat/actions lockBsv/unlockBsv as `result.error`.
 const LOCK_ERROR_MESSAGES: Record<string, string> = {
 	"no-lock-requests": "Enter an amount and an unlock block.",
@@ -133,6 +137,11 @@ export function lockActionFailureMessage(error: unknown): string {
 		normalized.includes("not enough")
 	) {
 		return "The wallet does not have enough spendable BSV for this amount and its fee.";
+	}
+	// The broadcaster's node hasn't reached the unlock block yet, though the
+	// wallet's chain tip has (nLockTime is the lock's block).
+	if (normalized.includes("transaction is not final")) {
+		return LOCK_NOT_FINAL_YET;
 	}
 	return "The lock action failed. Check the wallet connection and try again.";
 }

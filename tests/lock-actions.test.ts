@@ -7,6 +7,7 @@ import {
 	approximateBlockDuration,
 	executeLock,
 	executeUnlock,
+	LOCK_NOT_FINAL_YET,
 	LOCKTIME_THRESHOLD,
 	type LockActionSet,
 	type LockedCoin,
@@ -283,6 +284,17 @@ describe("lock failure messages", () => {
 		assert.match(
 			lockActionFailureMessage(new Error("locks-missing-id-or-ci")),
 			/no wallet tracking record/,
+		);
+	});
+
+	it("says the network hasn't reached the block when an unlock isn't final", () => {
+		assert.equal(
+			lockActionFailureMessage(
+				new Error(
+					"This transaction is not final. Ensure that the transaction meets the rules for being a finalized",
+				),
+			),
+			LOCK_NOT_FINAL_YET,
 		);
 	});
 
