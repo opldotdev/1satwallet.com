@@ -22,7 +22,9 @@ export interface ChainEndpoints {
 	handleRegistration: string;
 	/**
 	 * Account service (`/account/register`), which in-app handle registration
-	 * posts to. Yours `endpoints.account`, iOS `ChainEndpoints.account`.
+	 * posts to on mainnet; testnet registers at the skein host its handle
+	 * domain names (`handleHostKindOf`). Yours `endpoints.account`, iOS
+	 * `ChainEndpoints.account`.
 	 */
 	account: string;
 	/**
