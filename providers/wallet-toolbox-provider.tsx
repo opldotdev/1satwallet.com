@@ -87,6 +87,7 @@ import {
 	providerCapability,
 	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
+import { isRateLimited, withRateLimitRetry } from "@/lib/wallet/rate-limit";
 import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
 import {
 	hasStoredWallet,
@@ -1024,12 +1025,15 @@ export function WalletToolboxProvider({
 					await loadOrCreateWalletStorageIdentity(chain);
 
 				const activeRemote = walletStorageUrl(chain);
-				const result = await createWebWallet({
-					privateKey: rootKey,
-					chain,
-					activeRemote,
-					storageIdentityKey,
-				});
+				// The wallet server rate-limits; a busy moment shouldn't fail the open.
+				const result = await withRateLimitRetry("wallet.initialize", () =>
+					createWebWallet({
+						privateKey: rootKey,
+						chain,
+						activeRemote,
+						storageIdentityKey,
+					}),
+				);
 				pendingResult = result;
 				if (generation !== connectionGenerationRef.current) {
 					await result.destroy();
@@ -1162,7 +1166,9 @@ export function WalletToolboxProvider({
 					error,
 				);
 				setInitError(
-					"Built-in wallet initialization failed. Lock and unlock the wallet, then try again.",
+					isRateLimited(error)
+						? "The wallet server is busy (too many requests). Wait a minute, then lock and unlock the wallet."
+						: "Built-in wallet initialization failed. Lock and unlock the wallet, then try again.",
 				);
 				setConnectionStatus("disconnected");
 				setIsInitialized(false);
