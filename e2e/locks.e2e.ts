@@ -102,6 +102,69 @@ function readLockHeights(browser: Browser) {
 	}, null);
 }
 
+interface UnlockOutcome {
+	unlocked: string | null;
+	failed: string | null;
+	/** An Unlock button still shows its spinner. */
+	busy: boolean;
+}
+
+/**
+ * What Locks shows of an unlock. With `pendingAsNull`, null until it ended
+ * (for a wait). Runs in the page, so it is self-contained.
+ */
+function unlockOutcome(pendingAsNull: boolean): UnlockOutcome | null {
+	const section = document.querySelector(
+		'section[aria-labelledby="wallet-locks-heading"]',
+	);
+	const clean = (el: Element) =>
+		(el.textContent ?? "").replace(/\s+/g, " ").trim();
+	const unlocked =
+		Array.from(section?.querySelectorAll('[role="status"]') ?? [], clean).find(
+			(text) => /^Unlocked\. Transaction [0-9a-f]{64}$/.test(text),
+		) ?? null;
+	const failed =
+		Array.from(section?.querySelectorAll('[role="alert"]') ?? [], clean).find(
+			Boolean,
+		) ?? null;
+	const busy = Array.from(section?.querySelectorAll("button") ?? []).some(
+		(button) =>
+			/^Unlock( all \(\d+\))?$/.test(clean(button)) &&
+			button.querySelector(".animate-spin") !== null,
+	);
+	if (pendingAsNull && unlocked === null && failed === null) return null;
+	return { unlocked, failed, busy };
+}
+
+/**
+ * Waits for the unlock to end: its "Unlocked. Transaction <txid>" status, or
+ * the app's error in Locks, which fails the test at once with the app's own
+ * words (the full reason is in the console, printed with the failure).
+ */
+async function waitForUnlockOutcome(browser: Browser) {
+	try {
+		await browser.waitFor(
+			"the unlock to end (its transaction, or an error in Locks)",
+			unlockOutcome,
+			true,
+			CHAIN_TIMEOUT,
+		);
+	} catch (error) {
+		const now = await browser.evaluate(unlockOutcome, false);
+		throw new Error(
+			now?.busy
+				? `The unlock is still running after ${CHAIN_TIMEOUT} ms: its button shows the spinner, and no transaction or error came.`
+				: "The unlock ended with neither its transaction nor an error in Locks.",
+			{ cause: error },
+		);
+	}
+	const shown = await browser.evaluate(unlockOutcome, false);
+	if (shown?.failed) throw new Error(`Unlocking failed: "${shown.failed}"`);
+	if (!shown?.unlocked) {
+		throw new Error("The unlock transaction went away before it was read.");
+	}
+}
+
 // Runs first: locks from earlier runs whose block has passed are unlocked
 // before this run adds its own one-block lock.
 walletTest("unlocks matured locks from earlier runs", async (browser, t) => {
@@ -134,17 +197,7 @@ walletTest("unlocks matured locks from earlier runs", async (browser, t) => {
 			? { role: "button", name: `Unlock all (${count})`, within: locks }
 			: { role: "button", name: "Unlock", within: maturedCoin },
 	);
-	await browser.waitUntil(
-		"the unlock transaction",
-		{
-			role: "any",
-			text: pattern(/^Unlocked\. Transaction [0-9a-f]{64}$/),
-			within: locks,
-		},
-		undefined,
-		undefined,
-		CHAIN_TIMEOUT,
-	);
+	await waitForUnlockOutcome(browser);
 	await browser.waitUntil(
 		"the unlocked coins to leave the list",
 		maturedCoin,

@@ -53,8 +53,15 @@ function HistorySkeleton() {
  * is mined, one status badge.
  */
 const HistoryList = () => {
-	const { chain, identityKey, isInitialized, services, wallet } =
-		useWalletToolbox();
+	const {
+		chain,
+		connectionStatus,
+		identityKey,
+		isInitialized,
+		isInitializing,
+		services,
+		wallet,
+	} = useWalletToolbox();
 	const [history, setHistory] = useState<ActionHistoryState>({
 		identityKey: null,
 		actions: null,
@@ -138,9 +145,15 @@ const HistoryList = () => {
 
 	const refresh = () => setRefreshRevision((revision) => revision + 1);
 	const loading = !!wallet && !error && (!isInitialized || actions === null);
+	// Unlocked and still opening (as wallet home's "Authenticating wallet…"):
+	// a skeleton, not "Wallet locked".
+	const opening =
+		!wallet && (isInitializing || connectionStatus === "authenticating");
 
 	let body: React.ReactNode;
-	if (!wallet) {
+	if (opening) {
+		body = <HistorySkeleton />;
+	} else if (!wallet) {
 		body = (
 			<EmptyState
 				icon={History}

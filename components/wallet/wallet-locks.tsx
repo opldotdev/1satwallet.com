@@ -55,8 +55,9 @@ function errorCode(cause: unknown): string {
 }
 
 function reportLockFailure(operation: string, cause: unknown) {
-	// reportDiagnostic keeps only a sanitised code; keep the full error in the log.
-	console.error(`[${operation}]`, cause);
+	// reportDiagnostic keeps only a sanitised code; keep the full error in the
+	// log, its reason leading the line.
+	console.error(`[${operation}] ${errorCode(cause)}`, cause);
 	reportDiagnostic({
 		category: "action",
 		code: "action.failed",
