@@ -178,7 +178,8 @@ export function SwapPanel({
 	me: SwapSide;
 	myIdentity: string;
 }) {
-	const { wallet, oneSatContext, connectionMode } = useWalletToolbox();
+	const { wallet, oneSatContext, connectionMode, refreshBalance } =
+		useWalletToolbox();
 	const settle = useMutation(api.p2p.settle);
 	const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 	const attempted = useRef(new Set<string>());
@@ -400,6 +401,8 @@ export function SwapPanel({
 				}
 				clearPendingSwap(myIdentity, sessionId);
 				clearSentSwap(sessionId);
+				// Both sides' balances and ordinals change with the swap.
+				refreshBalance();
 				setReceived(true);
 			},
 		);
@@ -414,6 +417,7 @@ export function SwapPanel({
 		myIdentity,
 		sessionId,
 		iBuild,
+		refreshBalance,
 	]);
 
 	// A build left over from a swap that was cancelled or reset is released.

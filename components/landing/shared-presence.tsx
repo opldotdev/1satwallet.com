@@ -520,9 +520,11 @@ function LiveFloor({
 
 	return (
 		<>
+			{/* Above the hero content (z-20), so a peer's cursor stays clickable
+			    over the logo; the layer itself lets clicks through. */}
 			<div
 				ref={containerRef}
-				className="absolute inset-0 z-10 overflow-hidden pointer-events-none"
+				className="absolute inset-0 z-30 overflow-hidden pointer-events-none"
 			>
 				{peers.map((peer, index) => {
 					const data = isCursorData(peer.data) ? peer.data : { x: 50, y: 50 };
