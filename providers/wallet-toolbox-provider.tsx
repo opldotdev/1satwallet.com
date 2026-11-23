@@ -55,7 +55,11 @@ import {
 	type ReceiveAddressState,
 	saveReceiveAddressState,
 } from "@/lib/receive-address-state";
-import { reportDiagnostic, reportFailure } from "@/lib/runtime-diagnostics";
+import {
+	errorNameOf,
+	reportDiagnostic,
+	reportFailure,
+} from "@/lib/runtime-diagnostics";
 import { createStackServices } from "@/lib/stack";
 import type { AssetSurfaceState } from "@/lib/wallet/asset-query-state";
 import {
@@ -913,7 +917,7 @@ export function WalletToolboxProvider({
 				session.start();
 
 				return true;
-			} catch {
+			} catch (error) {
 				if (generation !== connectionGenerationRef.current) return false;
 				connectionGenerationRef.current += 1;
 				reportDiagnostic({
@@ -921,7 +925,12 @@ export function WalletToolboxProvider({
 					code: "provider.failed",
 					operation: "wallet.connect.external",
 					recoverable: true,
-					context: { mode: "external", retryable: true },
+					context: {
+						mode: "external",
+						provider: option ?? "auto-detect",
+						errorName: errorNameOf(error),
+						retryable: true,
+					},
 				});
 				walletSessionCleanupRef.current();
 				walletSessionCleanupRef.current = () => {};
