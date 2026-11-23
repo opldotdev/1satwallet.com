@@ -219,9 +219,7 @@ export function TradeDialog({
 								P2P Trade Session
 							</DialogTitle>
 							<Badge variant={myLocked && peerLocked ? "default" : "secondary"}>
-								{myLocked && peerLocked
-									? "Ready for settlement"
-									: "Negotiating"}
+								{myLocked && peerLocked ? "Both offers locked" : "Negotiating"}
 							</Badge>
 						</div>
 						<DialogDescription className="flex flex-wrap items-center gap-2">
@@ -320,19 +318,23 @@ export function TradeDialog({
 									negotiation
 								</div>
 								Every offer change and lock is signed by its BRC-100 wallet.
-								Assets do not move until atomic settlement.
+								Nothing moves until both wallets sign one swap transaction.
 							</div>
 						</section>
 					</div>
 
 					<div className="flex flex-col gap-3 border-t bg-muted/30 px-4 pt-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6">
-						<p className="text-muted-foreground text-xs">
-							Session expires automatically. Closing cancels it for both
-							parties.
+						<p
+							className="text-muted-foreground text-xs"
+							data-testid="trade-settlement-note"
+						>
+							{myLocked && peerLocked
+								? "You both locked your offers. Swapping them in one transaction isn't live yet, so nothing has moved. Closing cancels the session for both of you."
+								: "The session expires on its own. Closing cancels it for both of you."}
 						</p>
 						<Button className="w-full sm:w-auto" disabled variant="secondary">
 							{myLocked && peerLocked
-								? "Settlement handoff pending"
+								? "Swap not live yet"
 								: "Lock both offers to continue"}
 						</Button>
 					</div>

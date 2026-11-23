@@ -1,31 +1,24 @@
 "use client";
 
-import { ArrowRight, CircleHelp, Wallet } from "lucide-react";
+import { ArrowRight, Lock, Users, Wallet } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { useMediaQuery } from "usehooks-ts";
 import { ThreeBoundary } from "@/components/landing/three-boundary";
 import { Button } from "@/components/ui/button";
-import {
-	Popover,
-	PopoverContent,
-	PopoverDescription,
-	PopoverHeader,
-	PopoverTitle,
-	PopoverTrigger,
-} from "@/components/ui/popover";
 import { useSound } from "@/hooks/use-sound";
-import { useWallet } from "@/providers/wallet-provider";
-import { SharedPresence } from "./shared-presence";
+import type { FloorState } from "@/lib/p2p-floor";
+import { SharedPresence, useLandingFloor } from "./shared-presence";
 import { TradeRequestListener } from "./trade-request-listener";
 
 function StaticLogo() {
 	return (
-		<div className="flex h-[280px] items-center justify-center md:h-[360px]">
+		<div className="flex h-[200px] items-center justify-center sm:h-[280px] md:h-[360px]">
 			<Image
 				alt="1Sat Wallet"
 				fetchPriority="high"
+				className="size-[120px] sm:size-[160px]"
 				height={160}
 				priority
 				src="/oneSatLogoDark.svg"
@@ -40,16 +33,48 @@ const Logo3D = dynamic(
 	{ ssr: false, loading: StaticLogo },
 );
 
+/** What the floor means for this visitor, said under the tagline. */
+function floorCallToAction(state: FloorState): {
+	label: string;
+	icon: "wallet" | "lock";
+	note: string | null;
+} {
+	switch (state.kind) {
+		case "signed-out":
+			return {
+				label: "Connect wallet to enter",
+				icon: "wallet",
+				note: "The live P2P trading floor opens when you connect a wallet. Until then you're not on it, and no one on it is shown here.",
+			};
+		case "locked":
+			return {
+				label: "Unlock wallet to enter",
+				icon: "lock",
+				note: "Unlock your wallet to join the live P2P trading floor.",
+			};
+		default:
+			return { label: "Open wallet", icon: "wallet", note: null };
+	}
+}
+
 export function LandingHero() {
-	const { hasWallet } = useWallet();
+	const floor = useLandingFloor();
 	const { play } = useSound();
 	const useStaticLogo = useMediaQuery(
 		"(max-width: 767px), (prefers-reduced-motion: reduce)",
 		{ initializeWithValue: false },
 	);
+	const cta = floorCallToAction(floor.state);
+	const barShown =
+		floor.state.kind === "live" ||
+		floor.state.kind === "joining" ||
+		floor.state.kind === "error" ||
+		floor.state.kind === "left";
 
 	return (
-		<div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden bg-background pb-28 selection:bg-primary/20 md:pb-8">
+		<div
+			className={`relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-x-hidden overflow-y-auto bg-background selection:bg-primary/20 ${barShown ? "pb-28" : "pb-8"}`}
+		>
 			<div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/10 via-background to-background" />
 			<div
 				aria-hidden="true"
@@ -74,7 +99,7 @@ export function LandingHero() {
 						</ThreeBoundary>
 					</div>
 
-					<p className="mx-auto max-w-3xl text-xl font-light leading-relaxed text-muted-foreground md:text-2xl">
+					<p className="mx-auto max-w-3xl text-lg font-light leading-relaxed text-muted-foreground sm:text-xl md:text-2xl">
 						Satoshi's favorite asset wallet.
 						<br />
 						Trade with peers.{" "}
@@ -82,79 +107,45 @@ export function LandingHero() {
 					</p>
 				</div>
 
-				<div className="mx-auto mt-7 max-w-6xl">
-					<div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
-						<Button
-							className="scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
-							asChild
-							onClick={() => play("click")}
-						>
-							{hasWallet ? (
-								<Link href="/wallet">
-									<Wallet className="size-6" data-icon="inline-start" /> Browser
-									Wallet
-								</Link>
+				<div className="mx-auto mt-7 flex max-w-md flex-col items-center gap-4">
+					<Button
+						className="min-h-11 scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
+						asChild
+						onClick={() => play("click")}
+					>
+						<Link href="/wallet">
+							{cta.icon === "lock" ? (
+								<Lock className="size-5" data-icon="inline-start" />
 							) : (
-								<Link href="/wallet">
-									<Wallet className="size-6" data-icon="inline-start" /> Choose
-									Wallet
-								</Link>
+								<Wallet className="size-5" data-icon="inline-start" />
 							)}
-						</Button>
-						<Button
-							variant="outline"
-							className="border-primary/20 bg-background/50 backdrop-blur-sm transition-colors duration-300 hover:border-primary/50 hover:bg-primary/10"
-							asChild
-							onClick={() => play("click")}
+							{cta.label}
+						</Link>
+					</Button>
+					{cta.note ? (
+						<p
+							className="flex items-start gap-2 text-left text-sm leading-relaxed text-muted-foreground"
+							data-testid="floor-note"
 						>
-							<Link href="/download">
-								Apple App
-								<ArrowRight className="w-6 h-6" data-icon="inline-end" />
-							</Link>
-						</Button>
-					</div>
+							<Users
+								aria-hidden="true"
+								className="mt-0.5 size-4 shrink-0 text-primary"
+							/>
+							{cta.note}
+						</p>
+					) : null}
+					<Link
+						className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+						href="/download"
+						onClick={() => play("click")}
+					>
+						Get the Apple app
+						<ArrowRight aria-hidden="true" className="size-4" />
+					</Link>
 				</div>
 			</div>
 
-			<Popover>
-				<PopoverTrigger asChild>
-					<Button
-						aria-label="How the P2P trading floor works"
-						className="fixed bottom-[max(--spacing(4),env(safe-area-inset-bottom))] left-4 z-[60] rounded-full border-primary/20 bg-background/70 text-muted-foreground backdrop-blur-sm hover:border-primary/40 hover:bg-background hover:text-foreground"
-						size="icon"
-						type="button"
-						variant="outline"
-					>
-						<CircleHelp aria-hidden="true" className="size-4" />
-					</Button>
-				</PopoverTrigger>
-				<PopoverContent
-					aria-describedby="hero-p2p-popover-description"
-					aria-labelledby="hero-p2p-popover-title"
-					align="start"
-					className="z-[70] w-72 border-primary/20 bg-background/95 backdrop-blur-md"
-					side="top"
-				>
-					<PopoverHeader>
-						<PopoverTitle id="hero-p2p-popover-title">
-							P2P trading floor
-						</PopoverTitle>
-						<PopoverDescription
-							className="leading-relaxed"
-							id="hero-p2p-popover-description"
-						>
-							Styled pointers belong to other people here. Connect a BRC-100
-							wallet, then select or right-click a connected peer to request a
-							trade. Guests can browse but must connect before trading. Your own
-							pointer stays native.
-						</PopoverDescription>
-					</PopoverHeader>
-				</PopoverContent>
-			</Popover>
-
-			<div className="absolute inset-0 z-10 pointer-events-none">
-				<SharedPresence />
-			</div>
+			<SharedPresence floor={floor} />
 			<TradeRequestListener />
 		</div>
 	);

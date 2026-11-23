@@ -22,8 +22,14 @@ describe("landing hero copy", () => {
 		assert.doesNotMatch(heroSource, /Feature Grid/);
 		assert.doesNotMatch(heroSource, /min-h-\[100dvh\]/);
 		assert.match(heroSource, /min-h-0 flex-1/);
-		assert.match(heroSource, /P2P trading floor/);
-		assert.match(heroSource, /pb-28/);
-		assert.match(heroSource, /left-4/);
+		assert.match(
+			heroSource,
+			/P2P trading floor opens when you connect a wallet/,
+		);
+		assert.match(heroSource, /Connect wallet to enter/);
+		assert.match(heroSource, /Unlock wallet to enter/);
+		assert.match(heroSource, /barShown \? "pb-28" : "pb-8"/);
+		assert.match(heroSource, /overflow-y-auto/);
+		assert.doesNotMatch(heroSource, /Popover/);
 	});
 });

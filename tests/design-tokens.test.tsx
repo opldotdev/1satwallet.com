@@ -91,12 +91,14 @@ describe("safe areas", () => {
 	});
 
 	it("keeps fixed landing controls clear of the home indicator", () => {
-		const bottom = "bottom-[max(--spacing(4),env(safe-area-inset-bottom))]";
 		const hero = read("components/landing/hero.tsx");
 		const presence = read("components/landing/shared-presence.tsx");
-		assert.ok(hero.includes(`fixed ${bottom} left-4`));
-		assert.ok(presence.includes(`md:${bottom}`));
-		assert.ok(presence.includes(`fixed ${bottom} left-1/2`));
+		// The floor bar sits on the bottom edge and pads itself above the
+		// home indicator.
+		assert.ok(presence.includes("fixed inset-x-0 bottom-0"));
+		assert.ok(
+			presence.includes("pb-[max(--spacing(3),env(safe-area-inset-bottom))]"),
+		);
 		for (const src of [hero, presence]) {
 			assert.doesNotMatch(src, /[\s"]bottom-4[\s"]/);
 		}

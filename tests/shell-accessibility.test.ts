@@ -72,21 +72,12 @@ describe("landing hero accessibility", () => {
 		assert.equal(source.match(/<h1/g)?.length, 1);
 		assert.match(source, /<h1 className="sr-only">/);
 		assert.match(source, /aria-hidden="true"/);
-		// The control keeps its own accessible name.
-		assert.match(source, /aria-label="How the P2P trading floor works"/);
 	});
-	it("names the P2P popover dialog via its visible title and description", () => {
+	it("says in visible text what the P2P trading floor needs", () => {
 		const source = read("components/landing/hero.tsx");
-		// PopoverContent (dialog) references the visible title and description.
-		assert.match(source, /aria-labelledby="hero-p2p-popover-title"/);
-		assert.match(source, /aria-describedby="hero-p2p-popover-description"/);
-		// The referenced Title element exists with the matching id.
-		assert.match(source, /<PopoverTitle id="hero-p2p-popover-title">/);
+		// The floor is explained under the button, not behind an icon.
+		assert.match(source, /data-testid="floor-note"/);
 		assert.match(source, /P2P trading floor/);
-		// The referenced Description element exists with the matching id.
-		assert.match(
-			source,
-			/<PopoverDescription[^>]*id="hero-p2p-popover-description"/,
-		);
+		assert.doesNotMatch(source, /Popover/);
 	});
 });

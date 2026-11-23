@@ -8,6 +8,7 @@ import {
 	publicPresenceIdentity,
 } from "../lib/p2p-presence";
 import { components } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import {
 	internalMutation,
 	type MutationCtx,
@@ -20,18 +21,18 @@ const ROOM_ID = PRESENCE_ROOM_ID;
 const HEARTBEAT_INTERVAL = 10_000;
 const WALLET_USER_ID =
 	/^wallet:(main|test):(02|03)[0-9a-f]{64}:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const ANONYMOUS_USER_ID =
-	/^anon:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const presence = new Presence(components.presence);
 const signedArgs = { body: v.string(), signature: v.string() };
 
+// Only a signed-in wallet joins the floor: a visitor without one is not on it
+// and cannot see who is.
 function assertVisualPresenceInput(roomId: string, userId: string) {
 	if (
 		roomId !== ROOM_ID ||
 		userId.length > 256 ||
-		(!WALLET_USER_ID.test(userId) && !ANONYMOUS_USER_ID.test(userId))
+		!WALLET_USER_ID.test(userId)
 	) {
-		throw new Error("Invalid visual presence identity");
+		throw new Error("Connect a wallet to join the trading floor");
 	}
 }
 
@@ -40,7 +41,6 @@ async function requireActiveWalletAnnouncement(
 	userId: string,
 	now = Date.now(),
 ) {
-	if (!WALLET_USER_ID.test(userId)) return;
 	const announcement = await ctx.db
 		.query("p2pPresenceAnnouncements")
 		.withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -107,32 +107,33 @@ export const announce = mutation({
 	},
 });
 
+function publicIdentityOf(announcement: Doc<"p2pPresenceAnnouncements">) {
+	return {
+		userId: announcement.userId,
+		identityKey: announcement.identityKey,
+		chain: announcement.chain,
+		label: `${announcement.identityKey.slice(0, 6)}…${announcement.identityKey.slice(-4)}`,
+		verification: "wallet-signature" as const,
+		expiresAt: announcement.expiresAt,
+		...(announcement.profile
+			? {
+					profile: {
+						...announcement.profile,
+						verification: announcement.profileVerification ?? "unverified",
+					},
+				}
+			: {}),
+	};
+}
+
+/**
+ * Retired: it showed the floor's wallets to anyone. Identities now come with
+ * the floor list, which only a wallet on the floor can read. Kept for one
+ * release so a page loaded before the change gets an empty list, not an error.
+ */
 export const listPublicIdentities = query({
 	args: { roomId: v.string() },
-	handler: async (ctx, { roomId }) => {
-		if (roomId !== ROOM_ID) throw new Error("Invalid presence room");
-		const now = Date.now();
-		const announcements = await ctx.db
-			.query("p2pPresenceAnnouncements")
-			.withIndex("by_expiresAt", (q) => q.gt("expiresAt", now))
-			.take(104);
-		return announcements.map((announcement) => ({
-			userId: announcement.userId,
-			identityKey: announcement.identityKey,
-			chain: announcement.chain,
-			label: `${announcement.identityKey.slice(0, 6)}…${announcement.identityKey.slice(-4)}`,
-			verification: "wallet-signature" as const,
-			expiresAt: announcement.expiresAt,
-			...(announcement.profile
-				? {
-						profile: {
-							...announcement.profile,
-							verification: announcement.profileVerification ?? "unverified",
-						},
-					}
-				: {}),
-		}));
-	},
+	handler: async () => [],
 });
 
 export const deleteExpiredAnnouncements = internalMutation({
@@ -170,13 +171,35 @@ export const heartbeat = mutation({
 	},
 });
 
+// The room token comes only from a wallet's heartbeat, so only a wallet on
+// the floor reads who else is on it, each with its signed public identity.
 export const list = query({
 	args: { roomToken: v.string() },
 	handler: async (ctx, { roomToken }) => {
 		if (!roomToken || roomToken.length > 512) {
 			throw new Error("Invalid presence token");
 		}
-		return await presence.list(ctx, roomToken);
+		const entries = await presence.list(ctx, roomToken);
+		const now = Date.now();
+		return await Promise.all(
+			entries.map(async (entry) => {
+				if (!entry.online || !WALLET_USER_ID.test(entry.userId)) {
+					return { ...entry, identity: null };
+				}
+				const announcement = await ctx.db
+					.query("p2pPresenceAnnouncements")
+					.withIndex("by_userId", (q) => q.eq("userId", entry.userId))
+					.unique();
+				return {
+					...entry,
+					identity:
+						announcement &&
+						isActiveWalletPresence(entry.userId, announcement, now)
+							? publicIdentityOf(announcement)
+							: null,
+				};
+			}),
+		);
 	},
 });
 

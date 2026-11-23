@@ -80,6 +80,15 @@ jobs:
           path: e2e-artifacts/*.png
           if-no-files-found: ignore
           retention-days: 7
+      # Phone screenshots of the landing page, for review on every run.
+      - name: Upload review screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-visitor-review
+          path: e2e-artifacts/review/*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
   testnet:
     name: Testnet (local build)
@@ -149,6 +158,7 @@ jobs:
       # Fails the job if the passphrase reached agent-browser's state, a temp
       # file or a screenshot. It runs before any upload.
       - name: Passphrase leak guard
+        id: leak-guard
         if: always()
         env:
           E2E_WALLET_PASSPHRASE: ${{ secrets.E2E_WALLET_PASSPHRASE }}
@@ -175,6 +185,16 @@ jobs:
         with:
           name: e2e-testnet-screenshots
           path: e2e-artifacts/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # Uploaded only when the leak guard above passed.
+      - name: Upload review screenshots
+        if: ${{ !cancelled() && steps.leak-guard.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-testnet-review
+          path: e2e-artifacts/review/*.png
           if-no-files-found: ignore
           retention-days: 7
 
