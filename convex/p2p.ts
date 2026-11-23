@@ -14,7 +14,7 @@ import {
 	type SwapSide,
 	swapBuilder,
 } from "../lib/p2p-swap/wire";
-import { parseP2PTradeItems } from "../lib/p2p-trade-items";
+import { parseP2PTradeItems, sameTradeTerms } from "../lib/p2p-trade-items";
 import type { P2PTradeItem } from "../lib/types/p2p";
 import {
 	internalMutation,
@@ -156,10 +156,6 @@ function effectiveSessionStatus(
 	return isOpenStatus(session.status) && session.expiresAt <= now
 		? "expired"
 		: session.status;
-}
-
-function sameItems(left: unknown, right: unknown): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export const openInbox = mutation({
@@ -426,7 +422,9 @@ export const updateOffer = mutation({
 				}
 				const gift = allowGift === true;
 				const lockOnly =
-					locked && !currentLocked && sameItems(currentItems, items);
+					locked &&
+					!currentLocked &&
+					sameTradeTerms(currentItems as P2PTradeItem[], items);
 				const nextPeerLocked = lockOnly ? peerLocked : false;
 				const status = locked && nextPeerLocked ? "ready" : "negotiating";
 				if (status === "ready") {

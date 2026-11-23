@@ -186,3 +186,33 @@ export function parseP2PTradeItems(value: unknown): P2PTradeItem[] {
 	}
 	return items;
 }
+
+/**
+ * What an offer item commits to: the asset and the amount. Display fields
+ * (name, image, decimals, an ordinal's satoshis) and field order don't count.
+ */
+function tradeTermKey(item: P2PTradeItem): string {
+	switch (item.type) {
+		case "ordinal":
+			return `ordinal:${item.txid}_${item.vout}`;
+		case "bsv21":
+			return `bsv21:${item.id}:${item.amount}`;
+		case "satoshis":
+			return `satoshis:${item.satoshis}`;
+	}
+}
+
+/**
+ * Whether two offers commit to the same assets and amounts, in any order.
+ * A lock that sends the same terms keeps the peer's lock; any real change
+ * clears it.
+ */
+export function sameTradeTerms(
+	left: readonly P2PTradeItem[],
+	right: readonly P2PTradeItem[],
+): boolean {
+	if (left.length !== right.length) return false;
+	const keys = (items: readonly P2PTradeItem[]) =>
+		items.map(tradeTermKey).sort().join("|");
+	return keys(left) === keys(right);
+}

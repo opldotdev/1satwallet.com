@@ -526,6 +526,88 @@ describe("signed P2P negotiation lifecycle", () => {
 		assert.equal(context.db.table("p2pRequests").length, 0);
 	});
 
+	test("keeps the peer's lock when stored items come back with sorted keys", async () => {
+		Date.now = () => 1_800_100_000_000;
+		const context = { db: new TestDatabase() };
+		const initiator = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const participant = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const requestId = crypto.randomUUID();
+		const sessionId = crypto.randomUUID();
+		await invoke(
+			sendRequest,
+			context,
+			await signed(initiator, "request.create", {
+				requestId,
+				toIdentity: await identity(participant),
+			}),
+		);
+		await invoke(
+			acceptRequest,
+			context,
+			await signed(participant, "request.accept", { requestId, sessionId }),
+		);
+		const txid = "b".repeat(64);
+		const ordinals = [0, 1].map((vout) => ({
+			type: "ordinal",
+			id: `${txid}_${vout}`,
+			name: `Ordinal ${vout}`,
+			txid,
+			vout,
+		}));
+		const bsv = { type: "satoshis", id: "bsv", name: "BSV", satoshis: 5000 };
+		const offer = (
+			wallet: WalletInterface,
+			revision: number,
+			locked: boolean,
+			items: unknown[],
+		) =>
+			signed(wallet, "session.offer", { sessionId, revision, locked, items });
+		await invoke(
+			updateOffer,
+			context,
+			await offer(initiator, 1, false, ordinals),
+		);
+		await invoke(
+			updateOffer,
+			context,
+			await offer(participant, 1, false, [bsv]),
+		);
+		// Convex returns stored objects with their keys sorted, so the items a
+		// side locks with never match the stored ones byte for byte.
+		const rawSession = context.db.table("p2pSessions")[0] as unknown as {
+			initiatorItems: Record<string, unknown>[];
+			participantItems: Record<string, unknown>[];
+			initiatorLocked: boolean;
+			participantLocked: boolean;
+		};
+		const sortKeys = (items: Record<string, unknown>[]) =>
+			items.map((item) =>
+				Object.fromEntries(
+					Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+				),
+			);
+		rawSession.initiatorItems = sortKeys(rawSession.initiatorItems);
+		rawSession.participantItems = sortKeys(rawSession.participantItems);
+		await invoke(
+			updateOffer,
+			context,
+			await offer(participant, 2, true, [bsv]),
+		);
+		// The initiator locks its ordinals listed in another order.
+		const ready = await invoke<SignedP2PCommand, { status: string }>(
+			updateOffer,
+			context,
+			await offer(initiator, 2, true, [...ordinals].reverse()),
+		);
+		assert.equal(ready.status, "ready");
+		assert.equal(rawSession.participantLocked, true);
+		assert.equal(rawSession.initiatorLocked, true);
+	});
+
 	test("allows only a peer to cancel and keeps terminal transitions monotonic", async () => {
 		let now = 1_800_200_000_000;
 		Date.now = () => now;
