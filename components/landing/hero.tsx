@@ -109,7 +109,7 @@ export function LandingHero() {
 
 				<div className="mx-auto mt-7 flex max-w-md flex-col items-center gap-4">
 					<Button
-						className="min-h-11 scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
+						className="scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
 						asChild
 						onClick={() => play("click")}
 					>

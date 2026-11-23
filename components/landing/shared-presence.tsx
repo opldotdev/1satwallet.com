@@ -589,7 +589,7 @@ function LiveFloor({
 					</p>
 				</div>
 				<Button
-					className="min-h-11 shrink-0"
+					className="shrink-0"
 					onClick={() => setPeersOpen(true)}
 					size="sm"
 					variant="secondary"
@@ -599,7 +599,7 @@ function LiveFloor({
 				</Button>
 				<Button
 					aria-label="Leave the floor"
-					className="min-h-11 min-w-11 shrink-0"
+					className="max-md:min-w-11 shrink-0"
 					onClick={onLeave}
 					size="sm"
 					variant="ghost"
@@ -655,18 +655,14 @@ function LiveFloor({
 										</div>
 										<Button
 											aria-label={`Copy ${name}'s identity key`}
-											className="min-h-11 min-w-11"
+											className="max-md:min-w-11"
 											onClick={() => copyIdentityKey(peer.identity.identityKey)}
 											size="icon"
 											variant="ghost"
 										>
 											<Copy className="size-4" />
 										</Button>
-										<Button
-											className="min-h-11"
-											onClick={() => askToTrade(peer.identity)}
-											size="sm"
-										>
+										<Button onClick={() => askToTrade(peer.identity)} size="sm">
 											<ArrowRightLeft
 												className="size-4"
 												data-icon="inline-start"
@@ -751,7 +747,7 @@ export function SharedPresence({ floor }: { floor: LandingFloor }) {
 						{state.message}
 					</p>
 				</div>
-				<Button className="min-h-11 shrink-0" onClick={floor.retry} size="sm">
+				<Button className="shrink-0" onClick={floor.retry} size="sm">
 					Try again
 				</Button>
 			</FloorBar>
@@ -763,7 +759,7 @@ export function SharedPresence({ floor }: { floor: LandingFloor }) {
 				<p className="min-w-0 flex-1 text-left text-sm text-muted-foreground">
 					You left the floor. No one can see you.
 				</p>
-				<Button className="min-h-11 shrink-0" onClick={floor.rejoin} size="sm">
+				<Button className="shrink-0" onClick={floor.rejoin} size="sm">
 					Rejoin
 				</Button>
 			</FloorBar>
