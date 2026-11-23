@@ -1,5 +1,6 @@
 /**
- * Derives the e2e tests' testnet wallet A from the QA root secret, the same
+ * Derives an e2e testnet wallet (A, or B for two-wallet trades) from the QA
+ * root secret, the same
  * way the QA wallets of the other 1Sat test suites are derived, and hands its
  * encrypted backup and passphrase to the e2e tests. No new root or random key
  * is ever made: the same root and label always give the same wallet.
@@ -13,6 +14,10 @@
  *   bun run e2e:wallet:derive            writes .env.e2e.local (gitignored)
  *   bun run e2e:wallet:derive --github   sets the e2e-testnet environment's
  *                                        secrets and turns the testnet job on
+ *   ... --wallet B                       wallet B ("web/B"): writes
+ *                                        .env.e2e.b.local, or with --github
+ *                                        sets E2E_WALLET_B_BACKUP and
+ *                                        E2E_WALLET_B_PASSPHRASE
  *
  * ONESAT_QA_ROOT (32 bytes as 64 hex characters) comes from the environment,
  * or on macOS from the keychain item onesat-qa-root. The root, the keys, the
@@ -35,7 +40,22 @@ import {
 
 const ROOT_ENV = "ONESAT_QA_ROOT";
 const KEYCHAIN_ITEM = "onesat-qa-root";
-const WALLET_LABEL = "web/A";
+const WALLET = (() => {
+	const at = process.argv.indexOf("--wallet");
+	const name = at === -1 ? "A" : process.argv[at + 1];
+	if (name !== "A" && name !== "B") {
+		throw new Error('--wallet takes "A" or "B".');
+	}
+	return name;
+})();
+const WALLET_LABEL = `web/${WALLET}`;
+const BACKUP_SECRET = `E2E_WALLET_${WALLET}_BACKUP`;
+const PASSPHRASE_SECRET =
+	WALLET === "A" ? "E2E_WALLET_PASSPHRASE" : "E2E_WALLET_B_PASSPHRASE";
+const OUT_FILE =
+	WALLET === "A"
+		? ENV_FILE
+		: ENV_FILE.replace(/\.env\.e2e\.local$/, ".env.e2e.b.local");
 const REPO = "opldotdev/1satwallet.com";
 const ENVIRONMENT = "e2e-testnet";
 const PASSPHRASE_LENGTH = 32;
@@ -152,19 +172,11 @@ async function setGitHubSecrets(backup: string, passphrase: string) {
 		]);
 	}
 	await gh(
-		["secret", "set", "E2E_WALLET_A_BACKUP", "--env", ENVIRONMENT, "-R", REPO],
+		["secret", "set", BACKUP_SECRET, "--env", ENVIRONMENT, "-R", REPO],
 		backup,
 	);
 	await gh(
-		[
-			"secret",
-			"set",
-			"E2E_WALLET_PASSPHRASE",
-			"--env",
-			ENVIRONMENT,
-			"-R",
-			REPO,
-		],
+		["secret", "set", PASSPHRASE_SECRET, "--env", ENVIRONMENT, "-R", REPO],
 		passphrase,
 	);
 	await gh([
@@ -180,21 +192,21 @@ async function setGitHubSecrets(backup: string, passphrase: string) {
 
 async function writeEnvFile(backup: string, passphrase: string) {
 	const lines = [
-		`# Testnet wallet A for the 1satwallet.com e2e tests, derived from ${ROOT_ENV} ("${WALLET_LABEL}").`,
+		`# Testnet wallet ${WALLET} for the 1satwallet.com e2e tests, derived from ${ROOT_ENV} ("${WALLET_LABEL}").`,
 		"# Written by `bun run e2e:wallet:derive`. Never commit or share this file.",
-		`E2E_WALLET_A_BACKUP='${backup}'`,
-		`E2E_WALLET_PASSPHRASE=${passphrase}`,
+		`${BACKUP_SECRET}='${backup}'`,
+		`${PASSPHRASE_SECRET}=${passphrase}`,
 	];
 	try {
 		// "wx": never overwrite an existing file, which may hold another wallet.
-		await writeFile(ENV_FILE, `${lines.join("\n")}\n`, {
+		await writeFile(OUT_FILE, `${lines.join("\n")}\n`, {
 			flag: "wx",
 			mode: 0o600,
 		});
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "EEXIST") {
 			throw new Error(
-				`${ENV_FILE} already exists; nothing was written. Move it away first if you want it replaced.`,
+				`${OUT_FILE} already exists; nothing was written. Move it away first if you want it replaced.`,
 			);
 		}
 		throw error;
@@ -206,7 +218,11 @@ const keys = deriveKeys(await readRoot());
 const passphrase = randomPassphrase();
 const backup = await createTestnetBackup(keys, passphrase);
 // Read it back through the same guard the tests use.
-const { identityKey } = await openTestnetBackup(backup, passphrase, "wallet A");
+const { identityKey } = await openTestnetBackup(
+	backup,
+	passphrase,
+	`wallet ${WALLET}`,
+);
 const { address } = await deriveReceiveAddress({
 	wallet: new ProtoWallet(PrivateKey.fromWif(keys.identityPk as string)),
 	chain: "test",
@@ -217,13 +233,13 @@ const { address } = await deriveReceiveAddress({
 if (toGitHub) {
 	await setGitHubSecrets(backup, passphrase);
 	console.log(
-		`Set ${ENVIRONMENT} secrets E2E_WALLET_A_BACKUP and E2E_WALLET_PASSPHRASE and E2E_TESTNET_ENABLED=true on ${REPO}.\n`,
+		`Set ${ENVIRONMENT} secrets ${BACKUP_SECRET} and ${PASSPHRASE_SECRET} and E2E_TESTNET_ENABLED=true on ${REPO}.\n`,
 	);
 } else {
 	await writeEnvFile(backup, passphrase);
-	console.log(`Wrote ${ENV_FILE}\n`);
+	console.log(`Wrote ${OUT_FILE}\n`);
 }
-console.log(`Wallet A ("${WALLET_LABEL}")`);
+console.log(`Wallet ${WALLET} ("${WALLET_LABEL}")`);
 console.log(`  testnet deposit address: ${address}`);
 console.log(`  identity key:            ${identityKey}`);
 console.log(

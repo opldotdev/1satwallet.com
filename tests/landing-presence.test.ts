@@ -212,7 +212,9 @@ describe("landing presence restoration", () => {
 		assert.match(dialog, /overflow-y-auto/);
 		assert.match(dialog, /max-h-\[90dvh\]/);
 		assert.match(dialog, /w-\[calc\(100vw-2rem\)\]/);
-		assert.match(dialog, /flex-col[\s\S]*sm:flex-row/);
+		// The swap footer stacks on phones and sits in one row from sm up.
+		const footer = read("components/landing/trade-settlement.tsx");
+		assert.match(footer, /flex-col[\s\S]*sm:flex-row/);
 	});
 
 	it("owns recurring timers and binds authentication to the wallet that signed it", () => {

@@ -13,6 +13,10 @@ import {
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	formatSatoshisAsBsv,
+	parseBsvAmount,
+} from "@/components/wallet/wallet-home-utils";
 import { useSound } from "@/hooks/use-sound";
 import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { createBsv21OfferItem, toBsv21OfferToken } from "@/lib/p2p-bsv21-offer";
@@ -31,7 +35,7 @@ interface InventorySelectorProps {
 	onSelect: (item: P2PTradeItem) => void;
 }
 
-type InventoryKind = "ordinal" | "bsv21";
+type InventoryKind = "ordinal" | "bsv21" | "bsv";
 
 export function InventorySelector({
 	open,
@@ -39,12 +43,13 @@ export function InventorySelector({
 	onSelect,
 }: InventorySelectorProps) {
 	const { play } = useSound();
-	const { bsv21Tokens, ordinals, isInitialized } = useWalletToolbox();
+	const { bsv21Tokens, ordinals, isInitialized, balance } = useWalletToolbox();
 	const [kind, setKind] = useState<InventoryKind>("ordinal");
 	const [search, setSearch] = useState("");
 	const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
 	const [tokenAmount, setTokenAmount] = useState("");
 	const [tokenError, setTokenError] = useState<string | null>(null);
+	const [bsvAmount, setBsvAmount] = useState("");
 	const offerTokens = bsv21Tokens.flatMap((token) => {
 		const offerToken = toBsv21OfferToken(token);
 		return offerToken ? [offerToken] : [];
@@ -71,6 +76,7 @@ export function InventorySelector({
 		setSelectedTokenId(null);
 		setTokenAmount("");
 		setTokenError(null);
+		setBsvAmount("");
 	};
 
 	const changeOpen = (next: boolean) => {
@@ -91,6 +97,28 @@ export function InventorySelector({
 		changeOpen(false);
 	};
 
+	const selectBsvAmount = () => {
+		const satoshis = parseBsvAmount(bsvAmount);
+		if (!satoshis) {
+			setTokenError("Enter an amount of BSV above zero.");
+			play("error");
+			return;
+		}
+		if (balance && satoshis > balance.total) {
+			setTokenError("That's more BSV than this wallet holds.");
+			play("error");
+			return;
+		}
+		play("click");
+		onSelect({
+			type: "satoshis",
+			id: "bsv",
+			name: `${formatSatoshisAsBsv(satoshis)} BSV`,
+			satoshis,
+		});
+		changeOpen(false);
+	};
+
 	return (
 		<SoundDialog open={open} onOpenChange={changeOpen}>
 			<DialogContent className="flex h-[min(640px,85dvh)] max-w-3xl flex-col overflow-hidden pb-0 [--dialog-spacing:0px]">
@@ -105,16 +133,17 @@ export function InventorySelector({
 						}}
 						value={kind}
 					>
-						<TabsList className="grid w-full grid-cols-2">
+						<TabsList className="grid w-full grid-cols-3">
 							<TabsTrigger value="ordinal">
 								Ordinals <span className="tabular-nums">{ordinals.length}</span>
 							</TabsTrigger>
 							<TabsTrigger value="bsv21">
 								BSV21 <span className="tabular-nums">{offerTokens.length}</span>
 							</TabsTrigger>
+							<TabsTrigger value="bsv">BSV</TabsTrigger>
 						</TabsList>
 					</Tabs>
-					<div className="relative mt-4">
+					<div className={kind === "bsv" ? "hidden" : "relative mt-4"}>
 						<Search className="absolute top-2.5 left-2 h-4 w-4 text-muted-foreground" />
 						<Input
 							aria-label={`Search wallet ${kind === "ordinal" ? "ordinals" : "BSV21 tokens"}`}
@@ -129,7 +158,7 @@ export function InventorySelector({
 				    shows, the list otherwise. */}
 				<div
 					className={
-						kind === "bsv21" && selectedToken
+						(kind === "bsv21" && selectedToken) || kind === "bsv"
 							? "flex-1 overflow-y-auto p-6"
 							: "flex-1 overflow-y-auto p-6 pb-[max(--spacing(6),env(safe-area-inset-bottom))]"
 					}
@@ -149,6 +178,11 @@ export function InventorySelector({
 					{isInitialized && kind === "bsv21" && filteredTokens.length === 0 && (
 						<p className="py-10 text-center text-muted-foreground">
 							No matching BSV21 tokens found.
+						</p>
+					)}
+					{kind === "bsv" && (
+						<p className="py-10 text-center text-muted-foreground">
+							BSV you offer is paid in the same transaction as the swap.
 						</p>
 					)}
 					{kind === "ordinal" && (
@@ -249,6 +283,49 @@ export function InventorySelector({
 						</div>
 					)}
 				</div>
+				{kind === "bsv" && (
+					<form
+						className="border-t bg-muted/20 p-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))]"
+						onSubmit={(event) => {
+							event.preventDefault();
+							selectBsvAmount();
+						}}
+					>
+						<div className="flex items-end gap-3">
+							<div className="min-w-0 flex-1 space-y-1.5">
+								<Label htmlFor="p2p-bsv-amount">Amount of BSV</Label>
+								<Input
+									aria-describedby="p2p-bsv-balance"
+									autoComplete="off"
+									id="p2p-bsv-amount"
+									inputMode="decimal"
+									onChange={(event) => {
+										setBsvAmount(event.target.value);
+										setTokenError(null);
+									}}
+									placeholder="0.001"
+									value={bsvAmount}
+								/>
+							</div>
+							<Button disabled={!bsvAmount.trim()} type="submit">
+								Add to offer
+							</Button>
+						</div>
+						<p
+							className="mt-2 text-muted-foreground text-xs"
+							id="p2p-bsv-balance"
+						>
+							{balance
+								? `Available: ${formatSatoshisAsBsv(balance.total)} BSV. Only one of you can offer BSV.`
+								: "Only one of you can offer BSV."}
+						</p>
+						{tokenError && (
+							<p className="mt-2 text-destructive text-sm" role="alert">
+								{tokenError}
+							</p>
+						)}
+					</form>
+				)}
 				{kind === "bsv21" && selectedToken && (
 					<form
 						className="border-t bg-muted/20 p-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))]"

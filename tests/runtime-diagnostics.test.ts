@@ -31,6 +31,7 @@ describe("runtime diagnostics", () => {
 			"app/(main)/inscribe/page.tsx",
 			"app/(main)/wallet/opns/page.tsx",
 			"app/(main)/wallet/permissions/page.tsx",
+			"lib/p2p-swap/wallet.ts",
 		];
 
 		for (const file of auditedFiles) {

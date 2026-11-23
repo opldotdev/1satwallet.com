@@ -12,7 +12,7 @@ import {
 	XCircle,
 } from "lucide-react";
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
 	DialogTitle,
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
+import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { signP2PCommand } from "@/lib/p2p-auth";
 import type { P2PTradeItem } from "@/lib/types/p2p";
 import { formatBsv21Amount } from "@/lib/wallet/bsv21-actions";
@@ -32,6 +33,12 @@ import { getDisplayOutpoint } from "@/lib/wallet/wallet-output-utils";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
 import { InventorySelector } from "./inventory-selector";
+import {
+	AllowGiftsSwitch,
+	readAllowGifts,
+	SwapPanel,
+	writeAllowGifts,
+} from "./trade-settlement";
 
 interface TradeDialogProps {
 	open: boolean;
@@ -54,17 +61,25 @@ function OfferItem({
 	canRemove?: boolean;
 	onRemove?: () => void;
 }) {
+	// The preview comes from the ordinal's own outpoint, never from the image
+	// URL the other side sent.
+	const image =
+		item.type === "ordinal"
+			? getOrdinalThumbnail(item.id, 96)
+			: item.type === "bsv21"
+				? item.image
+				: undefined;
 	return (
 		<Card className="overflow-hidden py-0">
 			<CardContent className="flex items-center gap-3 p-3">
-				{item.image ? (
+				{image ? (
 					<div className="relative size-12 shrink-0 overflow-hidden rounded-md bg-muted">
 						<Image
 							alt={item.name}
 							className="object-cover"
 							fill
 							sizes="48px"
-							src={item.image}
+							src={image}
 						/>
 					</div>
 				) : (
@@ -79,9 +94,11 @@ function OfferItem({
 							{formatBsv21Amount(item.amount, item.decimals ?? 0)} units
 						</p>
 					)}
-					<p className="truncate font-mono text-muted-foreground text-xs">
-						{item.id}
-					</p>
+					{item.type !== "satoshis" && (
+						<p className="truncate font-mono text-muted-foreground text-xs">
+							{item.id}
+						</p>
+					)}
 				</div>
 				{canRemove && onRemove && (
 					<Button
@@ -112,6 +129,8 @@ export function TradeDialog({
 	const [busy, setBusy] = useState(false);
 	const [verifyingAssets, setVerifyingAssets] = useState(false);
 	const [lockError, setLockError] = useState<string | null>(null);
+	const [allowGifts, setAllowGifts] = useState(false);
+	useEffect(() => setAllowGifts(readAllowGifts()), []);
 
 	const initiator = session?.initiatorIdentity === myIdentity;
 	const myItems = ((initiator
@@ -129,6 +148,8 @@ export function TradeDialog({
 	const myRevision = initiator
 		? (session?.initiatorRevision ?? 0)
 		: (session?.participantRevision ?? 0);
+	const swapping =
+		session?.status === "settling" || session?.status === "settled";
 	const ownedOrdinals = new Set(
 		ordinals.map((ordinal) => getDisplayOutpoint(ordinal)),
 	);
@@ -167,6 +188,7 @@ export function TradeDialog({
 				revision: myRevision + 1,
 				items,
 				locked,
+				allowGift: allowGifts,
 			});
 			await updateOffer(signed);
 		} catch (error) {
@@ -218,8 +240,18 @@ export function TradeDialog({
 								<ArrowRightLeft className="size-5 text-primary" />
 								P2P Trade Session
 							</DialogTitle>
-							<Badge variant={myLocked && peerLocked ? "default" : "secondary"}>
-								{myLocked && peerLocked ? "Both offers locked" : "Negotiating"}
+							<Badge
+								variant={
+									session.status === "negotiating" ? "secondary" : "default"
+								}
+							>
+								{session.status === "settled"
+									? "Swapped"
+									: session.status === "settling"
+										? "Swapping"
+										: myLocked && peerLocked
+											? "Both offers locked"
+											: "Negotiating"}
 							</Badge>
 						</div>
 						<DialogDescription className="flex flex-wrap items-center gap-2">
@@ -243,7 +275,7 @@ export function TradeDialog({
 							<div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
 								{myItems.map((item) => (
 									<OfferItem
-										canRemove={!myLocked && !busy}
+										canRemove={!myLocked && !busy && !swapping}
 										item={item}
 										key={`${item.type}:${item.id}`}
 										onRemove={() =>
@@ -264,15 +296,29 @@ export function TradeDialog({
 								)}
 							</div>
 							<div className="mt-4 grid gap-2">
+								{peerItems.length === 0 && myItems.length > 0 && (
+									<AllowGiftsSwitch
+										checked={allowGifts}
+										disabled={myLocked || busy || swapping}
+										onCheckedChange={(checked) => {
+											setAllowGifts(checked);
+											writeAllowGifts(checked);
+										}}
+									/>
+								)}
 								<Button
-									disabled={myLocked || busy}
+									disabled={myLocked || busy || swapping}
 									onClick={() => setInventoryOpen(true)}
 									variant="outline"
 								>
 									<Plus className="size-4" data-icon="inline-start" /> Add item
 								</Button>
 								<Button
-									disabled={busy || myItems.length === 0}
+									disabled={
+										busy ||
+										swapping ||
+										(myItems.length === 0 && peerItems.length === 0)
+									}
 									onClick={() => void publishOffer(myItems, !myLocked)}
 								>
 									{myLocked ? (
@@ -318,26 +364,17 @@ export function TradeDialog({
 									negotiation
 								</div>
 								Every offer change and lock is signed by its BRC-100 wallet.
-								Nothing moves until both wallets sign one swap transaction.
+								Nothing moves until both wallets confirm one swap transaction,
+								and each wallet checks it matches both offers first.
 							</div>
 						</section>
 					</div>
 
-					<div className="flex flex-col gap-3 border-t bg-muted/30 px-4 pt-4 pb-[max(--spacing(4),env(safe-area-inset-bottom))] sm:flex-row sm:items-center sm:justify-between sm:px-6">
-						<p
-							className="text-muted-foreground text-xs"
-							data-testid="trade-settlement-note"
-						>
-							{myLocked && peerLocked
-								? "You both locked your offers. Swapping them in one transaction isn't live yet, so nothing has moved. Closing cancels the session for both of you."
-								: "The session expires on its own. Closing cancels it for both of you."}
-						</p>
-						<Button className="w-full sm:w-auto" disabled variant="secondary">
-							{myLocked && peerLocked
-								? "Swap not live yet"
-								: "Lock both offers to continue"}
-						</Button>
-					</div>
+					<SwapPanel
+						me={initiator ? "initiator" : "participant"}
+						myIdentity={myIdentity}
+						session={session}
+					/>
 				</DialogContent>
 			</SoundDialog>
 		</>

@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/sound-alert-dialog";
 import { useSound } from "@/hooks/use-sound";
 import { signP2PCommand } from "@/lib/p2p-auth";
+import { abandonSwapBuild, reportSwapFailure } from "@/lib/p2p-swap/wallet";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { api } from "../../convex/_generated/api";
 import { TradeDialog } from "./trade-dialog";
@@ -24,6 +25,7 @@ import {
 	inboxRenewalDelay,
 	recoverActiveSession,
 } from "./trade-request-lifecycle";
+import { useSwapRecovery } from "./trade-settlement";
 
 function shortIdentity(value: string): string {
 	return `${value.slice(0, 8)}…${value.slice(-6)}`;
@@ -39,6 +41,8 @@ function ConnectedTradeRequestListener({
 	wallet: WalletInterface;
 }) {
 	const { play } = useSound();
+	const { oneSatContext } = useWalletToolbox();
+	useSwapRecovery(identityKey);
 	const openInbox = useMutation(api.p2p.openInbox);
 	const acceptRequest = useMutation(api.p2p.acceptRequest);
 	const declineRequest = useMutation(api.p2p.declineRequest);
@@ -234,6 +238,11 @@ function ConnectedTradeRequestListener({
 
 	const handleCloseTrade = async (open: boolean) => {
 		if (open || !activeSession) return;
+		if (activeTrade?.status === "settled") {
+			terminalSession.current = activeSession.sessionId;
+			setActiveSession(null);
+			return;
+		}
 		try {
 			await signAndRun(
 				"session.cancel",
@@ -247,6 +256,12 @@ function ConnectedTradeRequestListener({
 					: "The session could not be cancelled.",
 			);
 			return;
+		}
+		// A swap this wallet prepared but never sent releases its funding.
+		if (oneSatContext) {
+			abandonSwapBuild(oneSatContext, activeSession.sessionId).catch((error) =>
+				reportSwapFailure("abandon", error),
+			);
 		}
 		// Keep rendering the authoritative session until the reactive query observes
 		// its terminal state. Clearing early can recover the same stale active row.

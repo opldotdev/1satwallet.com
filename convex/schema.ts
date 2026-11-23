@@ -28,6 +28,46 @@ const p2pTradeItem = v.union(
 	}),
 );
 
+const swapScriptFor = v.object({ id: v.string(), script: v.string() });
+
+// One swap attempt for a ready session (docs/p2p-settlement-protocol.md).
+// Holds only public transaction data: never an action reference or a key.
+const p2pSettlement = v.object({
+	builder: v.union(v.literal("initiator"), v.literal("participant")),
+	initiatorRevision: v.number(),
+	participantRevision: v.number(),
+	contribution: v.object({
+		initiatorRevision: v.number(),
+		participantRevision: v.number(),
+		inputs: v.array(v.string()),
+		receive: v.object({
+			nft: v.array(swapScriptFor),
+			token: v.array(swapScriptFor),
+			change: v.array(swapScriptFor),
+			satoshis: v.union(v.string(), v.null()),
+		}),
+	}),
+	candidate: v.optional(
+		v.object({ txHex: v.string(), hash: v.string(), postedAt: v.number() }),
+	),
+	signatures: v.optional(
+		v.object({
+			candidateHash: v.string(),
+			entries: v.array(
+				v.object({ vin: v.number(), unlockingScript: v.string() }),
+			),
+		}),
+	),
+	outcome: v.optional(
+		v.union(
+			v.object({ kind: v.literal("txid"), txid: v.string() }),
+			v.object({ kind: v.literal("failed"), reason: v.string() }),
+			v.object({ kind: v.literal("unknown") }),
+		),
+	),
+	startedAt: v.number(),
+});
+
 export default defineSchema({
 	p2pInboxTokens: defineTable({
 		identityKey: v.string(),
@@ -119,12 +159,18 @@ export default defineSchema({
 		participantRevision: v.number(),
 		initiatorLocked: v.boolean(),
 		participantLocked: v.boolean(),
+		initiatorAllowsGift: v.optional(v.boolean()),
+		participantAllowsGift: v.optional(v.boolean()),
 		status: v.union(
 			v.literal("negotiating"),
 			v.literal("ready"),
+			v.literal("settling"),
+			v.literal("settled"),
 			v.literal("cancelled"),
 			v.literal("expired"),
 		),
+		settlement: v.optional(p2pSettlement),
+		lastSettlementError: v.optional(v.string()),
 		expiresAt: v.number(),
 		createdAt: v.number(),
 		updatedAt: v.number(),
