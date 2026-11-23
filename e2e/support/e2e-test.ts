@@ -56,9 +56,10 @@ async function assertNoForbiddenHosts(
 }
 
 /**
- * One test in its own agent-browser session. On failure it clears secrets
- * from the page, saves a screenshot to e2e-artifacts/, and always closes the
- * session. Every error is kept: several are thrown as one AggregateError.
+ * One test in its own agent-browser session. On failure it prints the page's
+ * console errors and warnings (redacted), clears secrets from the page, saves
+ * a screenshot to e2e-artifacts/, and always closes the session. Every error
+ * is kept: several are thrown as one AggregateError.
  */
 export function e2eTest(
 	name: string,
@@ -99,6 +100,17 @@ export function e2eTest(
 			);
 		}
 		if (launched && errors.length > 0) {
+			// What the app logged: the reason behind a short message on the page
+			// goes to console.error. Redacted, and read before anything else
+			// touches the page.
+			await attempt(async () => {
+				const lines = await browser.consoleProblems();
+				console.error(
+					lines.length > 0
+						? `Browser console errors and warnings for "${name}":\n  ${lines.join("\n  ")}`
+						: `Browser console for "${name}": no errors or warnings.`,
+				);
+			});
 			const before = errors.length;
 			const { beforeScreenshot } = session;
 			if (beforeScreenshot) await attempt(() => beforeScreenshot(browser));

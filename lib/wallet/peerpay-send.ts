@@ -220,7 +220,12 @@ function logFailure(
 		recoverable: true,
 		context: { retryable: true },
 	});
-	console.error(`[wallet.peerpay.${operation}]`, { ...detail, error });
+	// The reason leads the line, so a log reader that keeps only the text
+	// (the e2e harness, a browser's copied console) still has it.
+	console.error(`[wallet.peerpay.${operation}] ${errorText(error)}`, {
+		...detail,
+		error,
+	});
 }
 
 /** Builds the token and delivers it, keeping it in the outbox until delivered. */

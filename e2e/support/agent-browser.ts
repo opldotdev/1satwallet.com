@@ -48,6 +48,86 @@ const isWaitTimeout = (error: unknown) =>
 const shorten = (arg: string) =>
 	arg.length > 120 ? `${arg.slice(0, 117)}…` : arg;
 
+/** Console levels a failed test prints; info and debug are left out. */
+const CONSOLE_LEVELS = /^(error|warn|warning|assert)$/i;
+/** The newest entries printed, each cut to this many characters. */
+const CONSOLE_MAX_ENTRIES = 40;
+const CONSOLE_MAX_CHARS = 600;
+/**
+ * A line sharing a run this long with a long secret (the encrypted backup)
+ * is withheld whole, so not even part of a secret is printed.
+ */
+const SECRET_FRAGMENT = 24;
+
+/** The entries of `console --json` or `errors --json`, whatever wraps them. */
+function entriesOf(data: unknown): unknown[] {
+	if (Array.isArray(data)) return data;
+	if (data && typeof data === "object") {
+		for (const key of ["messages", "errors", "logs", "entries"]) {
+			const value = (data as Record<string, unknown>)[key];
+			if (Array.isArray(value)) return value;
+		}
+	}
+	return [];
+}
+
+const stringField = (
+	entry: Record<string, unknown>,
+	keys: readonly string[],
+): string | undefined => {
+	for (const key of keys) {
+		const value = entry[key];
+		if (typeof value === "string" && value.trim()) return value;
+	}
+	return undefined;
+};
+
+/**
+ * The console errors and warnings, then the uncaught page errors, from
+ * agent-browser's `console --json` and `errors --json` data, as one line each
+ * ("[error] …", "[page error] …"). `redact` runs on each whole line before
+ * it is collapsed and cut to length.
+ */
+export function consoleProblemLines(
+	consoleData: unknown,
+	errorsData: unknown,
+	redact: (line: string) => string,
+): string[] {
+	const lines: string[] = [];
+	for (const raw of entriesOf(consoleData)) {
+		if (!raw || typeof raw !== "object") continue;
+		const entry = raw as Record<string, unknown>;
+		const level = stringField(entry, ["level", "type"]) ?? "log";
+		if (!CONSOLE_LEVELS.test(level)) continue;
+		const text =
+			stringField(entry, ["text", "message"]) ?? JSON.stringify(entry);
+		lines.push(`[${level.toLowerCase()}] ${text}`);
+	}
+	for (const raw of entriesOf(errorsData)) {
+		const text =
+			typeof raw === "string"
+				? raw
+				: raw && typeof raw === "object"
+					? (stringField(raw as Record<string, unknown>, [
+							"message",
+							"text",
+							"description",
+						]) ?? JSON.stringify(raw))
+					: String(raw);
+		lines.push(`[page error] ${text}`);
+	}
+	// Redacted before it is cut, so a secret straddling the cut is still
+	// matched whole.
+	return lines
+		.map(redact)
+		.map((line) => line.replace(/\s+/g, " ").trim())
+		.map((line) =>
+			line.length > CONSOLE_MAX_CHARS
+				? `${line.slice(0, CONSOLE_MAX_CHARS - 1)}…`
+				: line,
+		);
+}
+
 /**
  * The environment for agent-browser, its daemon and Chrome: without the e2e
  * wallet settings, so they can't reach those processes even by accident.
@@ -104,6 +184,54 @@ export class Browser {
 		return this.secrets
 			.filter((secret) => secret.length > 0)
 			.reduce((out, secret) => out.split(secret).join("[redacted]"), text);
+	}
+
+	private secretFragments: Set<string> | null = null;
+
+	/** True when `text` holds a SECRET_FRAGMENT-long run of a long secret. */
+	private holdsSecretFragment(text: string): boolean {
+		if (!this.secretFragments) {
+			const fragments = new Set<string>();
+			for (const secret of this.secrets) {
+				for (let i = 0; i + SECRET_FRAGMENT <= secret.length; i++) {
+					fragments.add(secret.slice(i, i + SECRET_FRAGMENT));
+				}
+			}
+			this.secretFragments = fragments;
+		}
+		if (this.secretFragments.size === 0) return false;
+		for (let i = 0; i + SECRET_FRAGMENT <= text.length; i++) {
+			if (this.secretFragments.has(text.slice(i, i + SECRET_FRAGMENT))) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** One console line, safe to print. */
+	redactConsoleLine(line: string): string {
+		const redacted = this.redact(line);
+		return this.holdsSecretFragment(redacted)
+			? "[withheld: the line held part of a secret]"
+			: redacted;
+	}
+
+	/**
+	 * The page's console errors and warnings and its uncaught errors since the
+	 * session started, newest last, redacted: a whole secret is replaced, and
+	 * a line holding any long run of one is withheld whole.
+	 */
+	async consoleProblems(): Promise<string[]> {
+		const lines = consoleProblemLines(
+			await this.run(["console"]),
+			await this.run(["errors"]),
+			(line) => this.redactConsoleLine(line),
+		);
+		const shown = lines.slice(-CONSOLE_MAX_ENTRIES);
+		const dropped = lines.length - shown.length;
+		return dropped > 0
+			? [`(${dropped} older lines not shown)`, ...shown]
+			: shown;
 	}
 
 	/** Runs one command; throws with the CLI's own error when it fails. */
@@ -223,7 +351,8 @@ export class Browser {
 		expression: string,
 		timeout: number,
 	) {
-		const deadline = Math.min(Date.now() + timeout, this.budgetEnd);
+		const started = Date.now();
+		const deadline = Math.min(started + timeout, this.budgetEnd);
 		for (;;) {
 			if (Date.now() >= this.budgetEnd) {
 				throw new Error(
@@ -237,9 +366,12 @@ export class Browser {
 				// Only agent-browser's own wait timeout means "not yet".
 				if (!isWaitTimeout(error)) throw error;
 				if (Date.now() >= deadline) {
-					throw new Error(`Timed out after ${timeout} ms: ${description}`, {
-						cause: error,
-					});
+					// The time actually waited: one agent-browser wait can outlast
+					// a short `timeout` (with 0, exactly one wait runs).
+					throw new Error(
+						`Timed out after ${Date.now() - started} ms: ${description}`,
+						{ cause: error },
+					);
 				}
 			}
 		}
@@ -308,13 +440,37 @@ export class Browser {
 	/**
 	 * Clicks the element `locator` finds, with agent-browser's own click.
 	 *
-	 * The element is first scrolled just far enough to show it whole, as a
-	 * person would before tapping. agent-browser (0.43) scrolls only an element
-	 * wholly off screen: one that peeks in at the bottom edge with its centre
-	 * below the fold is refused as "outside the viewport".
+	 * As a person would before tapping, it waits for the element to stop
+	 * moving, then scrolls it just far enough to show it whole and checks that
+	 * its centre is inside the window. A bottom sheet slides up from below the
+	 * window (the unlock screen on phones), and scrolling can't bring a
+	 * transformed element into view. agent-browser (0.43) scrolls only an
+	 * element wholly off screen: one that peeks in at the bottom edge with its
+	 * centre below the fold is refused as "outside the viewport".
 	 */
 	async click(locator: Locator, timeout?: number) {
 		const target = await this.mark(locator, timeout);
+		const what = describe(locator);
+		await this.waitFor(
+			`${what} to stop moving (no enter animation running on it or a container)`,
+			(selector: string) => {
+				const el = document.querySelector(selector);
+				if (!el) return false;
+				return !document.getAnimations().some((animation) => {
+					const effect = animation.effect;
+					if (!(effect instanceof KeyframeEffect)) return false;
+					const { target } = effect;
+					return (
+						animation.playState === "running" &&
+						target instanceof Element &&
+						target.contains(el) &&
+						// A looping animation (a pulse, a spinner) never ends.
+						effect.getComputedTiming().iterations !== Number.POSITIVE_INFINITY
+					);
+				});
+			},
+			target,
+		);
 		await this.evaluate((selector: string) => {
 			document.querySelector(selector)?.scrollIntoView({
 				block: "nearest",
@@ -322,6 +478,45 @@ export class Browser {
 				behavior: "instant",
 			});
 		}, target);
+		try {
+			await this.waitFor(
+				`${what} to have its centre inside the window`,
+				(selector: string) => {
+					const box = document.querySelector(selector)?.getBoundingClientRect();
+					if (!box) return false;
+					const x = box.left + box.width / 2;
+					const y = box.top + box.height / 2;
+					return (
+						x >= 0 &&
+						y >= 0 &&
+						x <= window.innerWidth &&
+						y <= window.innerHeight
+					);
+				},
+				target,
+			);
+		} catch (error) {
+			const box = await this.evaluate((selector: string) => {
+				const rect = document.querySelector(selector)?.getBoundingClientRect();
+				return rect
+					? `${Math.round(rect.left)},${Math.round(rect.top)} ${Math.round(rect.width)}x${Math.round(rect.height)} in a ${window.innerWidth}x${window.innerHeight} window`
+					: "gone";
+			}, target).catch(
+				(measureError: unknown) =>
+					`(not measured: ${measureError instanceof Error ? measureError.message : String(measureError)})`,
+			);
+			throw new Error(`${what} is outside the window after scrolling: ${box}`, {
+				cause: error,
+			});
+		}
+		// A dialog or sheet that is closing keeps its overlay over the page
+		// until its exit animation ends, and a click then lands on the overlay.
+		await this.waitFor(
+			"a closing dialog's overlay to go away before clicking",
+			() =>
+				!document.querySelector('[data-slot$="-overlay"][data-state="closed"]'),
+			null,
+		);
 		await this.run(["click", target]);
 	}
 

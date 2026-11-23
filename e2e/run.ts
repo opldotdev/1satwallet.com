@@ -25,6 +25,9 @@ const SUITES = {
 			"./e2e/mobile-lists.e2e.ts",
 			"./e2e/tokens-section-wallet.e2e.ts",
 		],
+		// After the batch above: these payments spend from wallet A and wait
+		// for its inboxes, so they don't run beside the other spending tests.
+		["./e2e/handles-peerpay.e2e.ts"],
 	],
 	mainnet: [
 		[
@@ -39,6 +42,16 @@ const SUITES = {
 } as const;
 
 type Suite = keyof typeof SUITES;
+
+/**
+ * A suite's preflight batch. If it fails, the run stops there: the rest
+ * would only fail too. Any other failed batch fails the run, but the later
+ * batches still run, so one failure hides no other results.
+ */
+const PREFLIGHT: Readonly<Record<Suite, string | null>> = {
+	testnet: "./e2e/preflight.e2e.ts",
+	mainnet: null,
+};
 
 function parseArgs(argv: string[]) {
 	let suite: Suite = "testnet";
@@ -136,11 +149,28 @@ async function main() {
 				mode: 0o600,
 			});
 		}
-		for (const files of SUITES[suite]) {
+		const batches: readonly (readonly string[])[] = SUITES[suite];
+		const failed: string[] = [];
+		let exitCode = 0;
+		for (const files of batches) {
 			const code = await bunTest(files, env);
-			if (code !== 0) return code;
+			if (code === 0) continue;
+			const preflight = PREFLIGHT[suite];
+			if (preflight !== null && files.includes(preflight)) {
+				console.error(
+					`e2e: the preflight failed (exit ${code}); the other batches were not run.`,
+				);
+				return code;
+			}
+			failed.push(`${files.join(", ")} (exit ${code})`);
+			exitCode ||= code;
 		}
-		return 0;
+		if (failed.length > 0) {
+			console.error(
+				`e2e: ${failed.length} of ${batches.length} batches failed:\n- ${failed.join("\n- ")}`,
+			);
+		}
+		return exitCode;
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}

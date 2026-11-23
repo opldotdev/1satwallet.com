@@ -53,10 +53,17 @@ function measureOverview(browser: Browser): Promise<OverviewGeometry> {
 			'section[aria-labelledby="wallet-locks-heading"]',
 		);
 		const radar = hero?.querySelector("img");
+		// Every button, not only [data-slot="button"]: a Button that is a
+		// dialog trigger (Send, Receive, Lock BSV) carries the trigger's
+		// data-slot="dialog-trigger" instead.
 		const buttons = [hero, locks]
 			.flatMap((section) =>
 				section
-					? Array.from(section.querySelectorAll('[data-slot="button"]'))
+					? Array.from(
+							section.querySelectorAll(
+								'button,[role="button"],[data-slot="button"]',
+							),
+						)
 					: [],
 			)
 			.filter(

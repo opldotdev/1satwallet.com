@@ -36,11 +36,55 @@ async function openWalletPage(
 const HISTORY_READY =
 	'[data-slot="history-row"], section[aria-label="Transaction history"] [data-slot="empty-state"]';
 
+/** What the History section shows, for a failure message. */
+function describeHistory(browser: Browser): Promise<string> {
+	return browser.evaluate(() => {
+		const section = document.querySelector(
+			'section[aria-label="Transaction history"]',
+		);
+		if (!section) return "no Transaction history section";
+		const text = (section.textContent ?? "").replace(/\s+/g, " ").trim();
+		return `"${text.slice(0, 160)}"`;
+	}, null);
+}
+
+/**
+ * Waits until History has read the wallet's transactions: rows, its "No
+ * transactions yet" state or its load error. Not "Wallet locked": once the
+ * unlock screen closes, the wallet is still opening, and that state is not a
+ * loaded list.
+ */
+async function waitForHistory(browser: Browser) {
+	try {
+		await browser.waitFor(
+			"History to list the wallet's transactions",
+			() => {
+				const section = document.querySelector(
+					'section[aria-label="Transaction history"]',
+				);
+				if (!section) return false;
+				if (section.querySelector('[data-slot="history-row"]')) return true;
+				if (section.querySelector('[role="alert"]')) return true;
+				const empty = section.querySelector('[data-slot="empty-state"]');
+				return empty !== null && !/Wallet locked/.test(empty.textContent ?? "");
+			},
+			null,
+			CHAIN_TIMEOUT,
+		);
+	} catch (error) {
+		throw new Error(
+			`History did not list the wallet's transactions. It shows: ${await describeHistory(browser)}`,
+			{ cause: error },
+		);
+	}
+}
+
 walletTest(
 	"mobile lists: history rows are two lines, at most 72px tall",
 	async (browser) => {
 		const problems = new LayoutProblems();
 		await openWalletPage(browser, "/wallet/history", HISTORY_READY);
+		await waitForHistory(browser);
 
 		for (const viewport of PHONE_VIEWPORTS) {
 			const where = `/wallet/history at ${describeViewport(viewport)}`;
@@ -51,6 +95,7 @@ walletTest(
 				HISTORY_READY,
 				CHAIN_TIMEOUT,
 			);
+			await waitForHistory(browser);
 			const rows = await browser.evaluate(
 				() =>
 					Array.from(
@@ -67,7 +112,7 @@ walletTest(
 			);
 			if (rows.length === 0) {
 				problems.add(
-					`${where}: found no [data-slot="history-row"], expected wallet A's transactions to measure.`,
+					`${where}: found no [data-slot="history-row"], expected wallet A's transactions to measure. History shows: ${await describeHistory(browser)}`,
 				);
 			}
 			for (const row of rows) {

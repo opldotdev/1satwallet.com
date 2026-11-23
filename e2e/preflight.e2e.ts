@@ -4,6 +4,7 @@ import {
 	readBalanceSats,
 	readDepositAddress,
 	TESTNET_BADGE_LABEL,
+	waitForBalanceAbove,
 	walletTest,
 } from "./support/wallet";
 
@@ -23,6 +24,13 @@ walletTest("wallet A is a funded testnet account", async (browser) => {
 	const address = await readDepositAddress(browser);
 	assert.match(address, /^[mn]/, "testnet deposit address");
 
+	// A deposit synced just now can reach the balance a moment after the sync.
+	try {
+		await waitForBalanceAbove(browser, MINIMUM_SATS - 1);
+	} catch (error) {
+		if (!(error instanceof Error && error.message.startsWith("Timed out")))
+			throw error;
+	}
 	const balance = await readBalanceSats(browser);
 	if (balance < MINIMUM_SATS) {
 		throw new Error(
