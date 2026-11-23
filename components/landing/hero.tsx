@@ -93,7 +93,7 @@ export function LandingHero() {
 			<div className="relative z-20 w-full px-6 text-center">
 				<h1 className="sr-only">1Sat Wallet</h1>
 				<div>
-					<div aria-hidden="true">
+					<div aria-hidden="true" data-testid="hero-logo">
 						<ThreeBoundary>
 							{useStaticLogo ? <StaticLogo /> : <Logo3D />}
 						</ThreeBoundary>

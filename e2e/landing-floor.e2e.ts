@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { e2eTest } from "./support/e2e-test";
 import { baseUrl, TESTNET_HOSTS } from "./support/env";
-import { visitorInitScript } from "./support/init-script";
+import { DOM_MISSES_KEY, visitorInitScript } from "./support/init-script";
 import {
 	checkNoSidewaysScroll,
 	describeViewport,
@@ -81,5 +81,48 @@ e2eTest(
 			);
 		}
 		problems.throwIfAny("Landing page for a new visitor");
+	},
+);
+
+// A fresh load of the landing page on a desktop window, where the 3D logo
+// renders, must not throw. React's "removeChild" error shows up as a removal
+// of a node that isn't a child of its parent, which the init script records.
+e2eTest(
+	"landing page loads without a DOM error for a visitor on desktop",
+	async () => {
+		const origin = baseUrl().origin;
+		return {
+			url: new URL("/", origin).href,
+			initScript: visitorInitScript(origin),
+			secrets: [],
+			forbiddenHosts: TESTNET_HOSTS,
+		};
+	},
+	async (browser) => {
+		await waitForSettledPage(browser, "/", '[data-testid="floor-note"]');
+		// The logo is done once it shows the 3D canvas, or nothing at all (the
+		// 3D failed and its boundary dropped it), or a removal already failed.
+		await browser.waitFor(
+			"the hero logo to finish loading",
+			(key) => {
+				const logo = document.querySelector('[data-testid="hero-logo"]');
+				const misses = (window as unknown as Record<string, unknown[]>)[key];
+				return (
+					misses.length > 0 ||
+					Boolean(logo?.querySelector("canvas")) ||
+					(logo !== null && logo.children.length === 0)
+				);
+			},
+			DOM_MISSES_KEY,
+		);
+		const misses = await browser.evaluate(
+			(key) => (window as unknown as Record<string, unknown[]>)[key],
+			DOM_MISSES_KEY,
+		);
+		if (misses.length > 0) {
+			throw new Error(
+				`The landing page removed ${misses.length} node(s) that weren't children of their parent:\n${JSON.stringify(misses, null, 2)}`,
+			);
+		}
 	},
 );
