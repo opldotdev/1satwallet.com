@@ -16,6 +16,15 @@ import {
 	isConnectionAvailable,
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
+import {
+	isWalletAppBrowser,
+	markHostWalletConnectTried,
+	shouldConnectHostWallet,
+} from "@/lib/wallet/host-wallet";
+import {
+	hasStoredWallet,
+	WALLET_CONNECTION_MODE_KEY,
+} from "@/lib/wallet-chain";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import styles from "./wallet-connect-carousel.module.css";
 
@@ -45,6 +54,23 @@ const options = [
 ] as const;
 type Availability = Record<WalletConnectionOption, boolean | null>;
 
+function savedConnectionMode(): string | null {
+	try {
+		return window.localStorage.getItem(WALLET_CONNECTION_MODE_KEY);
+	} catch (error) {
+		console.warn(
+			"[wallet-connect] could not read the saved connection; not connecting the wallet app on its own",
+			error instanceof Error ? error.message : String(error),
+		);
+		return "unreadable";
+	}
+}
+const walletAppSlide = {
+	name: "Your wallet app",
+	description:
+		"This page is open in your wallet app. Connect it to use it here.",
+};
+
 export function WalletConnectCarousel() {
 	const { isInitializing, initError, connectExternalWallet } =
 		useWalletToolbox();
@@ -60,6 +86,10 @@ export function WalletConnectCarousel() {
 	const start = useRef<number | null>(null);
 	const move = (step: number) =>
 		setActive((value) => (value + step + options.length) % options.length);
+	const connectRef = useRef(connectExternalWallet);
+	connectRef.current = connectExternalWallet;
+	const initializingRef = useRef(isInitializing);
+	initializingRef.current = isInitializing;
 	const check = useCallback(async () => {
 		if (checkingRef.current) return;
 		checkingRef.current = true;
@@ -70,12 +100,36 @@ export function WalletConnectCarousel() {
 					async ({ id }) => [id, await isConnectionAvailable(id)] as const,
 				),
 			);
-			if (mounted.current)
-				setAvailability(Object.fromEntries(results) as Availability);
+			if (!mounted.current) return;
+			setAvailability(Object.fromEntries(results) as Availability);
+			// Opened in a wallet app's browser (Metanet / bsv-browser) whose
+			// wallet answered: connect it, as other BRC-100 apps do there. Once
+			// per tab session, so a disconnect or a declined prompt leaves this
+			// picker in place.
+			const injected = results.some(([id, ok]) => id === "injected" && ok);
+			if (
+				injected &&
+				!initializingRef.current &&
+				shouldConnectHostWallet({
+					savedConnectionMode: savedConnectionMode(),
+					hasStoredWallet: hasStoredWallet(),
+				})
+			) {
+				markHostWalletConnectTried();
+				void connectRef.current("injected");
+			}
 		} finally {
 			checkingRef.current = false;
 			if (mounted.current) setChecking(false);
 		}
+	}, []);
+	// In a wallet app's browser, open on that app's wallet rather than on
+	// creating a separate one here.
+	const [walletApp, setWalletApp] = useState(false);
+	useEffect(() => {
+		if (!isWalletAppBrowser()) return;
+		setWalletApp(true);
+		setActive(options.findIndex(({ id }) => id === "injected"));
 	}, []);
 	useEffect(() => {
 		mounted.current = true;
@@ -110,7 +164,10 @@ export function WalletConnectCarousel() {
 					start.current = null;
 				}}
 			>
-				{options.map(({ id, name, icon: Icon, description, hint }, index) => {
+				{options.map((option, index) => {
+					const { id, icon: Icon, hint } = option;
+					const { name, description } =
+						walletApp && id === "injected" ? walletAppSlide : option;
 					const offset =
 						index === active
 							? 0
@@ -147,9 +204,7 @@ export function WalletConnectCarousel() {
 										}
 									/>
 									{id === "embedded"
-										? available
-											? "Mobile wallet available"
-											: "Built-in wallet available"
+										? "Built-in wallet available"
 										: checking
 											? "Checking availability…"
 											: available
