@@ -4,11 +4,14 @@
  * connected and unlocked; then the wallet signs its presence and the floor
  * shows the peers on the same network.
  */
+import { WALLET_CONNECTION_MODE_KEY } from "@/lib/wallet-chain";
 import type { WalletConnectionStatus } from "@/lib/wallet-connection-status";
 
 export type FloorState =
 	/** This build has no live relay (no Convex URL). */
 	| { kind: "unavailable" }
+	/** The page is still loading the wallet it may already have. */
+	| { kind: "checking" }
 	/** No wallet connected: not on the floor, sees no one. */
 	| { kind: "signed-out"; hasBuiltInWallet: boolean }
 	/** A wallet is chosen but locked or waiting for approval. */
@@ -22,6 +25,7 @@ export type FloorState =
 
 export function landingFloorState(input: {
 	convexConfigured: boolean;
+	resolving: boolean;
 	connectionStatus: WalletConnectionStatus;
 	hasIdentity: boolean;
 	hasBuiltInWallet: boolean;
@@ -30,7 +34,9 @@ export function landingFloorState(input: {
 	announce: "pending" | "ok" | { error: string };
 }): FloorState {
 	if (!input.convexConfigured) return { kind: "unavailable" };
-	if (input.connectionStatus === "authenticating") return { kind: "joining" };
+	if (input.connectionStatus === "authenticating") {
+		return input.left ? { kind: "left" } : { kind: "joining" };
+	}
 	if (input.connectionStatus !== "ready" || !input.hasIdentity) {
 		if (
 			input.connectionStatus === "locked" ||
@@ -39,6 +45,7 @@ export function landingFloorState(input: {
 		) {
 			return { kind: "locked" };
 		}
+		if (input.resolving) return { kind: "checking" };
 		return { kind: "signed-out", hasBuiltInWallet: input.hasBuiltInWallet };
 	}
 	if (input.left) return { kind: "left" };
@@ -128,5 +135,18 @@ export function writeFloorLeft(
 			"[p2p-floor] could not save the left-the-floor flag",
 			error instanceof Error ? error.message : String(error),
 		);
+	}
+}
+
+/** Whether this device reconnects an external wallet on load. */
+export function readSavedExternalWallet(): boolean {
+	try {
+		return localStorage.getItem(WALLET_CONNECTION_MODE_KEY) === "external";
+	} catch (error) {
+		console.warn(
+			"[p2p-floor] localStorage is not readable; not waiting for a saved wallet",
+			error instanceof Error ? error.message : String(error),
+		);
+		return false;
 	}
 }

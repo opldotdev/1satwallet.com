@@ -10,8 +10,9 @@ import { walletTest } from "./support/wallet";
 
 // The landing page as testnet wallet A, signed in: the primary action opens
 // the wallet and the floor bar shows (live, or joining while the wallet
-// signs). CI builds against a placeholder relay, so the bar may stay on
-// joining there; a preview or production build shows it live. A screenshot
+// signs). CI builds against a placeholder relay, so there the bar shows
+// joining and then that the floor isn't responding; a preview or production
+// build shows it live. A screenshot
 // per phone size goes to e2e-artifacts/review/.
 
 const REVIEW_DIR = "e2e-artifacts/review";
@@ -57,7 +58,11 @@ walletTest("landing floor opens for a signed-in wallet", async (browser) => {
 		if (!page.openWallet) {
 			problems.add(`${where}: no "Open wallet" action.`);
 		}
-		if (!/Live floor|Joining the floor/.test(page.barText)) {
+		// CI's placeholder relay never answers, so there the bar ends on its
+		// "isn't responding" error with Try again.
+		if (
+			!/Live floor|Joining the floor|Couldn't join the floor/.test(page.barText)
+		) {
 			problems.add(`${where}: the floor bar reads "${page.barText}".`);
 		}
 		if (page.barBottom > page.innerHeight) {

@@ -76,6 +76,14 @@ export default defineSchema({
 		.index("by_userId", ["userId"])
 		.index("by_expiresAt", ["expiresAt"]),
 
+	// The presence room's read token, kept server-side so only the floor
+	// query uses it. The component hands the same token to every heartbeat
+	// and never rotates it, so clients get nothing from it.
+	p2pFloorRooms: defineTable({
+		roomId: v.literal("landing"),
+		roomToken: v.string(),
+	}).index("by_roomId", ["roomId"]),
+
 	p2pRequests: defineTable({
 		requestId: v.string(),
 		fromIdentity: v.string(),

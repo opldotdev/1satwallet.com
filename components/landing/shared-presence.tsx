@@ -1,7 +1,7 @@
 "use client";
 
 import usePresence from "@convex-dev/presence/react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import {
 	ArrowRightLeft,
 	Copy,
@@ -52,6 +52,7 @@ import {
 	floorPeers,
 	landingFloorState,
 	readFloorLeft,
+	readSavedExternalWallet,
 	writeFloorLeft,
 } from "@/lib/p2p-floor";
 import {
@@ -81,6 +82,10 @@ interface PeerIdentity {
 
 const ROOM_ID = PRESENCE_ROOM_ID;
 const HEARTBEAT_INTERVAL = 10_000;
+/** How long the relay may take to record a signed announcement. */
+const ANNOUNCE_TIMEOUT_MS = 15_000;
+/** How long a saved external wallet gets to start reconnecting on load. */
+const RESUME_GRACE_MS = 3_000;
 const CURSOR_COLORS = [
 	"var(--chart-1)",
 	"var(--chart-2)",
@@ -128,6 +133,26 @@ function copyIdentityKey(identityKey: string) {
 	);
 }
 
+class FloorUnreachableError extends Error {
+	constructor() {
+		super(
+			"The trading floor isn't responding. Check your connection and try again.",
+		);
+		this.name = "FloorUnreachableError";
+	}
+}
+
+/** Convex queues a mutation while offline and never rejects it; this does. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	return Promise.race([
+		promise,
+		new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new FloorUnreachableError()), ms);
+		}),
+	]).finally(() => clearTimeout(timer));
+}
+
 function shortReason(error: unknown, fallback: string): string {
 	const message = error instanceof Error ? error.message.trim() : "";
 	return message ? message.slice(0, 160) : fallback;
@@ -149,9 +174,16 @@ export interface LandingFloor {
  * unlocked wallet nothing is announced, joined or read.
  */
 export function useLandingFloor(): LandingFloor {
-	const { chain, connectionStatus, identityKey, oneSatContext, wallet } =
-		useWalletToolbox();
-	const { hasWallet, isWalletLocked } = useWallet();
+	const {
+		chain,
+		connectionStatus,
+		identityKey,
+		isInitialized,
+		isInitializing,
+		oneSatContext,
+		wallet,
+	} = useWalletToolbox();
+	const { hasWallet, isWalletInitialized, isWalletLocked } = useWallet();
 	const announce = useMutation(api.presence.announce);
 	const [sessionId, setSessionId] = useState<string | null>(null);
 	const [left, setLeft] = useState(false);
@@ -161,12 +193,21 @@ export function useLandingFloor(): LandingFloor {
 		wallet: unknown;
 		displayName: string | null;
 	} | null>(null);
-	const [announceError, setAnnounceError] = useState<string | null>(null);
+	const [announceError, setAnnounceError] = useState<{
+		userId: string;
+		wallet: unknown;
+		message: string;
+	} | null>(null);
+	const [savedExternal, setSavedExternal] = useState(false);
+	const [resumeGrace, setResumeGrace] = useState(true);
 
-	// react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- the session id and the Leave flag are read after hydration so server and client markup match.
+	// react-doctor-disable-next-line react-hooks-js/set-state-in-effect -- the session id, the Leave flag and the saved wallet mode are read after hydration so server and client markup match.
 	useEffect(() => {
 		setSessionId(crypto.randomUUID());
 		setLeft(readFloorLeft());
+		setSavedExternal(readSavedExternalWallet());
+		const timer = setTimeout(() => setResumeGrace(false), RESUME_GRACE_MS);
+		return () => clearTimeout(timer);
 	}, []);
 
 	const convexConfigured = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
@@ -207,7 +248,7 @@ export function useLandingFloor(): LandingFloor {
 					userId,
 					...(publicProfile ? { publicProfile } : {}),
 				});
-				await announce(signed);
+				await withTimeout(announce(signed), ANNOUNCE_TIMEOUT_MS);
 				if (!cancelled) {
 					setAnnounceError(null);
 					setAnnounced({
@@ -228,9 +269,14 @@ export function useLandingFloor(): LandingFloor {
 				);
 				if (!cancelled) {
 					setAnnounced(null);
-					setAnnounceError(
-						shortReason(error, "Your wallet did not sign your presence."),
-					);
+					setAnnounceError({
+						userId,
+						wallet,
+						message: shortReason(
+							error,
+							"Your wallet did not sign your presence.",
+						),
+					});
 				}
 				// A failed signature is not retried on its own: the user may have
 				// declined it. Try again asks again.
@@ -258,8 +304,20 @@ export function useLandingFloor(): LandingFloor {
 
 	const isAnnounced =
 		announced?.wallet === wallet && announced.userId === userId;
+	// An error belongs to the wallet and session that hit it; a new wallet or
+	// an unlock starts over at joining.
+	const currentError =
+		announceError?.wallet === wallet && announceError.userId === userId
+			? announceError.message
+			: null;
 	const state = landingFloorState({
 		convexConfigured,
+		// Until the built-in wallet has loaded, or a saved external wallet has
+		// had its moment to reconnect, it is too early to say "connect".
+		resolving:
+			!sessionId ||
+			!isWalletInitialized ||
+			(savedExternal && !isInitialized && (isInitializing || resumeGrace)),
 		connectionStatus,
 		// Before hydration there is no session id yet; a ready wallet is joining.
 		hasIdentity: Boolean(userId && wallet && oneSatContext) || !sessionId,
@@ -268,8 +326,8 @@ export function useLandingFloor(): LandingFloor {
 		left,
 		announce: isAnnounced
 			? "ok"
-			: announceError
-				? { error: announceError }
+			: currentError
+				? { error: currentError }
 				: "pending",
 	});
 
@@ -365,12 +423,12 @@ function LiveFloor({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const lastUpdateRef = useRef(0);
 	const updateInFlightRef = useRef(false);
-	const presenceState = usePresence(
-		api.presence,
-		ROOM_ID,
-		userId,
-		HEARTBEAT_INTERVAL,
-	) as FloorEntry[] | undefined;
+	// The hook keeps this tab on the floor (heartbeats); the floor query reads
+	// who else is on it, for this wallet only.
+	usePresence(api.presence, ROOM_ID, userId, HEARTBEAT_INTERVAL);
+	const floorEntries = useQuery(api.presence.floor, { userId }) as
+		| FloorEntry[]
+		| undefined;
 	const updateCursor = useMutation(api.presence.updateCursor);
 	const sendRequest = useMutation(api.p2p.sendRequest);
 	const { play } = useSound();
@@ -378,12 +436,6 @@ function LiveFloor({
 	const [peersOpen, setPeersOpen] = useState(false);
 	const [confirming, setConfirming] = useState<PeerIdentity | null>(null);
 	const [requesting, setRequesting] = useState(false);
-	const [clock, setClock] = useState(() => Date.now());
-
-	useEffect(() => {
-		const timer = setInterval(() => setClock(Date.now()), HEARTBEAT_INTERVAL);
-		return () => clearInterval(timer);
-	}, []);
 
 	const handlePointerMove = useCallback(
 		(event: PointerEvent) => {
@@ -428,14 +480,7 @@ function LiveFloor({
 	}, [handlePointerMove]);
 
 	const peers = identityKey
-		? floorPeers(
-				presenceState?.map((entry) =>
-					entry.identity && entry.identity.expiresAt <= clock
-						? { ...entry, identity: null }
-						: entry,
-				),
-				{ userId, identityKey, chain },
-			)
+		? floorPeers(floorEntries, { userId, identityKey, chain })
 		: [];
 
 	const sendTradeRequest = async (peer: PeerIdentity) => {

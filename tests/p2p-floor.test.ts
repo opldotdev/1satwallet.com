@@ -12,6 +12,7 @@ import {
 
 const base = {
 	convexConfigured: true,
+	resolving: false,
 	connectionStatus: "ready" as const,
 	hasIdentity: true,
 	hasBuiltInWallet: false,
@@ -82,6 +83,29 @@ describe("landing floor state", () => {
 		assert.deepEqual(
 			landingFloorState({ ...base, announce: { error: "Declined" } }),
 			{ kind: "error", message: "Declined" },
+		);
+	});
+
+	it("says nothing about connecting while a wallet may still load", () => {
+		assert.equal(
+			landingFloorState({
+				...base,
+				connectionStatus: "no-wallet",
+				hasIdentity: false,
+				resolving: true,
+			}).kind,
+			"checking",
+		);
+	});
+
+	it("stays left while a saved wallet reconnects", () => {
+		assert.equal(
+			landingFloorState({
+				...base,
+				connectionStatus: "authenticating",
+				left: true,
+			}).kind,
+			"left",
 		);
 	});
 

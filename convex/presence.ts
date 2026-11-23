@@ -161,44 +161,84 @@ export const heartbeat = mutation({
 			throw new Error("Invalid visual presence session");
 		}
 		await requireActiveWalletAnnouncement(ctx, userId);
-		return await presence.heartbeat(
+		const tokens = await presence.heartbeat(
 			ctx,
 			roomId,
 			userId,
 			sessionId,
 			HEARTBEAT_INTERVAL,
 		);
+		const room = await ctx.db
+			.query("p2pFloorRooms")
+			.withIndex("by_roomId", (q) => q.eq("roomId", ROOM_ID))
+			.unique();
+		if (!room) {
+			await ctx.db.insert("p2pFloorRooms", {
+				roomId: ROOM_ID,
+				roomToken: tokens.roomToken,
+			});
+		} else if (room.roomToken !== tokens.roomToken) {
+			await ctx.db.patch(room._id, { roomToken: tokens.roomToken });
+		}
+		// The room token stays server-side: the floor query reads the room for
+		// a wallet that is on it. Visitors who were given it before keep
+		// nothing: list below returns no one.
+		return { roomToken: "", sessionToken: tokens.sessionToken };
 	},
 });
 
-// The room token comes only from a wallet's heartbeat, so only a wallet on
-// the floor reads who else is on it, each with its signed public identity.
+/**
+ * The presence hook's own room read. The room token is the same for every
+ * caller and was handed to guests before the floor needed a wallet, so this
+ * returns no one; the floor query below is the read.
+ */
 export const list = query({
 	args: { roomToken: v.string() },
-	handler: async (ctx, { roomToken }) => {
-		if (!roomToken || roomToken.length > 512) {
-			throw new Error("Invalid presence token");
-		}
-		const entries = await presence.list(ctx, roomToken);
+	handler: async () => [],
+});
+
+/**
+ * Who is on the floor, each with the signed public identity, for a wallet
+ * that is on it now: its announcement is current and its session is online
+ * in the room. Anyone else gets an empty list.
+ */
+export const floor = query({
+	args: { userId: v.string() },
+	handler: async (ctx, { userId }) => {
+		if (userId.length > 256 || !WALLET_USER_ID.test(userId)) return [];
 		const now = Date.now();
+		const own = await ctx.db
+			.query("p2pPresenceAnnouncements")
+			.withIndex("by_userId", (q) => q.eq("userId", userId))
+			.unique();
+		if (!isActiveWalletPresence(userId, own, now)) return [];
+		const rooms = await presence.listUser(ctx, userId, true);
+		if (!rooms.some((room) => room.roomId === ROOM_ID)) return [];
+		const room = await ctx.db
+			.query("p2pFloorRooms")
+			.withIndex("by_roomId", (q) => q.eq("roomId", ROOM_ID))
+			.unique();
+		if (!room) return [];
+		const entries = await presence.list(ctx, room.roomToken);
 		return await Promise.all(
-			entries.map(async (entry) => {
-				if (!entry.online || !WALLET_USER_ID.test(entry.userId)) {
-					return { ...entry, identity: null };
-				}
-				const announcement = await ctx.db
-					.query("p2pPresenceAnnouncements")
-					.withIndex("by_userId", (q) => q.eq("userId", entry.userId))
-					.unique();
-				return {
-					...entry,
-					identity:
-						announcement &&
-						isActiveWalletPresence(entry.userId, announcement, now)
-							? publicIdentityOf(announcement)
-							: null,
-				};
-			}),
+			entries
+				.filter((entry) => entry.online && WALLET_USER_ID.test(entry.userId))
+				.map(async (entry) => {
+					const announcement = await ctx.db
+						.query("p2pPresenceAnnouncements")
+						.withIndex("by_userId", (q) => q.eq("userId", entry.userId))
+						.unique();
+					return {
+						userId: entry.userId,
+						online: true,
+						data: entry.data,
+						identity:
+							announcement &&
+							isActiveWalletPresence(entry.userId, announcement, now)
+								? publicIdentityOf(announcement)
+								: null,
+					};
+				}),
 		);
 	},
 });

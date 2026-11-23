@@ -133,6 +133,18 @@ describe("landing presence restoration", () => {
 		assert.match(server, /const WALLET_USER_ID/);
 		assert.doesNotMatch(server, /anon:/);
 		assert.match(server, /Connect a wallet to join the trading floor/);
+		// The room token never reaches a client; only a wallet on the floor
+		// reads who is on it.
+		assert.match(
+			server,
+			/return \{ roomToken: "", sessionToken: tokens\.sessionToken \}/,
+		);
+		assert.match(
+			server,
+			/export const list = query\(\{\s*args: \{ roomToken: v\.string\(\) \},\s*handler: async \(\) => \[\]/,
+		);
+		assert.match(server, /export const floor = query/);
+		assert.match(server, /presence\.listUser\(ctx, userId, true\)/);
 		assert.match(
 			server,
 			/export const listPublicIdentities = query[\s\S]*handler: async \(\) => \[\]/,
