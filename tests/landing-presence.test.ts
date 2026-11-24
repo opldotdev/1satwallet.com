@@ -29,8 +29,8 @@ describe("landing presence restoration", () => {
 		assert.match(schema, /p2pSessions:\s*defineTable/);
 	});
 
-	it("derives stable, distinct anonymous and connected session identities", async () => {
-		const { getPresenceLabel, getPresenceUserId } = await import(
+	it("derives a floor identity only for a valid wallet key", async () => {
+		const { getPresenceUserId } = await import(
 			"../components/landing/shared-presence"
 		);
 		const identityKey = `02${"AB".repeat(32)}`;
@@ -46,26 +46,11 @@ describe("landing presence restoration", () => {
 			getPresenceUserId(identityKey, firstDocumentId, "test"),
 			`wallet:test:${canonicalIdentityKey}:${firstDocumentId}`,
 		);
-		assert.equal(
-			getPresenceUserId(null, firstDocumentId),
-			`anon:${firstDocumentId}`,
-		);
-		assert.equal(
-			getPresenceUserId("not-a-key", firstDocumentId),
-			`anon:${firstDocumentId}`,
-		);
-		assert.notEqual(
-			getPresenceUserId(null, firstDocumentId),
-			getPresenceUserId(null, secondDocumentId),
-		);
+		assert.equal(getPresenceUserId(null, firstDocumentId), null);
+		assert.equal(getPresenceUserId("not-a-key", firstDocumentId), null);
 		assert.notEqual(
 			getPresenceUserId(identityKey, firstDocumentId),
 			getPresenceUserId(identityKey, secondDocumentId),
-		);
-		assert.equal(getPresenceLabel(null, firstDocumentId), "Guest 1111");
-		assert.match(
-			getPresenceLabel(identityKey, firstDocumentId),
-			/^02abab…abab$/i,
 		);
 	});
 
@@ -78,14 +63,14 @@ describe("landing presence restoration", () => {
 		assert.match(presence, /\bidentityKey\b/);
 		assert.match(
 			presence,
-			/getPresenceUserId\(identityKey,\s*anonymousId,\s*chain\)/,
+			/getPresenceUserId\(identityKey,\s*sessionId,\s*chain\)/,
 		);
 		assert.match(provider, /identityKey:\s*string\s*\|\s*null/);
 		assert.doesNotMatch(presence, /sessionStorage|localStorage/);
 		assert.match(presence, /crypto\.randomUUID\(\)/);
-		assert.match(presence, /connectionStatus\s*===\s*"authenticating"/);
-		assert.match(presence, /<PresenceLayer/);
-		assert.match(presence, /userId=\{userId\}/);
+		assert.match(presence, /connectionStatus\s*===\s*"ready"/);
+		assert.match(presence, /<LiveFloor/);
+		assert.match(presence, /userId=\{floor\.userId\}/);
 
 		for (const forbidden of [
 			"useAuth",
@@ -120,8 +105,8 @@ describe("landing presence restoration", () => {
 		assert.equal(layout.match(/<\/ConvexClientProvider>/g)?.length, 1);
 		assert.match(convexProvider, /NEXT_PUBLIC_CONVEX_URL/);
 		assert.match(convexProvider, /<ConvexProvider\s+client=\{convex\}>/);
-		assert.match(hero, /import\s*\{\s*SharedPresence\s*\}/);
-		assert.equal(hero.match(/<SharedPresence\s*\/>/g)?.length, 1);
+		assert.match(hero, /import\s*\{\s*SharedPresence,\s*useLandingFloor\s*\}/);
+		assert.equal(hero.match(/<SharedPresence floor=\{floor\} \/>/g)?.length, 1);
 
 		for (const restoredTradeUi of [
 			"components/landing/trade-request-listener.tsx",
@@ -146,7 +131,24 @@ describe("landing presence restoration", () => {
 		assert.match(server, /const ROOM_ID = PRESENCE_ROOM_ID/);
 		assert.match(server, /const HEARTBEAT_INTERVAL = 10_000/);
 		assert.match(server, /const WALLET_USER_ID/);
-		assert.match(server, /\^anon:\[0-9a-f\]\{8\}/);
+		assert.doesNotMatch(server, /anon:/);
+		assert.match(server, /Connect a wallet to join the trading floor/);
+		// The room token never reaches a client; only a wallet on the floor
+		// reads who is on it.
+		assert.match(
+			server,
+			/return \{ roomToken: "", sessionToken: tokens\.sessionToken \}/,
+		);
+		assert.match(
+			server,
+			/export const list = query\(\{\s*args: \{ roomToken: v\.string\(\) \},\s*handler: async \(\) => \[\]/,
+		);
+		assert.match(server, /export const floor = query/);
+		assert.match(server, /presence\.listUser\(ctx, userId, true\)/);
+		assert.match(
+			server,
+			/export const listPublicIdentities = query[\s\S]*handler: async \(\) => \[\]/,
+		);
 		assert.match(
 			server,
 			/handler: async \(ctx, \{ roomId, userId, sessionId \}\) =>/,
@@ -164,51 +166,42 @@ describe("landing presence restoration", () => {
 		assert.match(generatedApi, /ComponentApi<"presence">/);
 	});
 
-	it("counts only live peers, keeps desktop cursors, and exposes a touch peer control", () => {
+	it("shows the floor only to a signed-in wallet, with cursors on desktop and a peer sheet on touch", () => {
 		const presence = read("components/landing/shared-presence.tsx");
 
-		assert.match(
-			presence,
-			/presenceState\?\.filter\(\(entry\) => entry\.online\)/,
-		);
-		// Desktop/fine-pointer cursors stay at the live peer position while the
-		// separate touch tray covers narrow and coarse-pointer screens.
+		// Same-network, online, signed peers only (lib/p2p-floor floorPeers).
+		assert.match(presence, /floorPeers\(/);
 		assert.match(presence, /hidden[^"]*md:block/);
 		assert.match(presence, /\[@media\(pointer:coarse\)\]:hidden/);
 		assert.match(presence, /motion-safe:transition-/);
-		assert.match(presence, /startTrade/);
-		assert.match(presence, /BRC-100/);
-		assert.doesNotMatch(presence, /(?<!motion-safe:)animate-pulse/);
-
-		// Touch/mobile peer control: only when peers exist, keyboard
-		// accessible, >=44px tap target, reuses the startTrade path.
-		assert.match(presence, /cursors\.length > 0/);
-		assert.match(presence, /md:hidden/);
-		assert.match(presence, /\[@media\(pointer:coarse\)\]:!block/);
+		assert.doesNotMatch(presence, /(?<!motion-safe:)animate-(pulse|ping|spin)/);
+		// The floor bar and peer sheet work on every screen with 44px targets.
+		assert.match(presence, /data-testid="floor-bar"/);
 		assert.match(
 			presence,
-			/fixed bottom-\[max\(--spacing\(4\),env\(safe-area-inset-bottom\)\)\] left-1\/2/,
+			/pb-\[max\(--spacing\(3\),env\(safe-area-inset-bottom\)\)\]/,
 		);
-		assert.match(presence, /max-w-\[min\(calc\(100vw-8rem\),28rem\)\]/);
-		assert.match(presence, /fixed right-4 top-20/);
+		assert.match(presence, /min-h-11/);
+		assert.match(presence, /side="bottom"/);
+		assert.match(presence, /You're visible as/);
+		assert.match(presence, /Leave the floor/);
+		assert.match(presence, /Rejoin/);
+		// A trade request is confirmed before the wallet signs it.
 		assert.match(
 			presence,
-			/md:top-auto md:bottom-\[max\(--spacing\(4\),env\(safe-area-inset-bottom\)\)\]/,
+			/Ask \{confirming \? peerName\(confirming\) : ""\} to trade\?/,
 		);
-		assert.match(presence, /min-h-\[44px\]/);
-		assert.match(presence, /min-w-\[44px\]/);
+		assert.match(presence, /Send request/);
 		assert.match(presence, /publicProfileClaimFromWallet/);
 		assert.match(presence, /profileLoaded/);
 		assert.match(presence, /profile\?\.displayName/);
-		assert.match(presence, /Start a trade with/);
 		assert.match(presence, /PeerContextMenu/);
 		assert.match(presence, /Request trade/);
 		assert.match(presence, /Copy identity key/);
-		assert.match(
-			presence,
-			/onClick=\{\(\) => void startTrade\(cursor\.userId\)\}/,
-		);
-		assert.doesNotMatch(presence, /onContextMenu=\{\(event\) => \{/);
+		// Failures are reported, not swallowed.
+		assert.match(presence, /reportFailure\(/);
+		assert.doesNotMatch(presence, /catch\(\(\) => undefined\)/);
+		assert.doesNotMatch(presence, /listPublicIdentities/);
 	});
 
 	it("stacks trade offers on narrow screens and restores two columns at a breakpoint", () => {
@@ -219,7 +212,9 @@ describe("landing presence restoration", () => {
 		assert.match(dialog, /overflow-y-auto/);
 		assert.match(dialog, /max-h-\[90dvh\]/);
 		assert.match(dialog, /w-\[calc\(100vw-2rem\)\]/);
-		assert.match(dialog, /flex-col[\s\S]*sm:flex-row/);
+		// The swap footer stacks on phones and sits in one row from sm up.
+		const footer = read("components/landing/trade-settlement.tsx");
+		assert.match(footer, /flex-col[\s\S]*sm:flex-row/);
 	});
 
 	it("owns recurring timers and binds authentication to the wallet that signed it", () => {
@@ -234,10 +229,8 @@ describe("landing presence restoration", () => {
 			listener,
 			/cancelled = true;\s*if \(timer\) clearTimeout\(timer\)/,
 		);
-		assert.match(presence, /function AuthenticatedSharedPresence/);
-		assert.match(presence, /setAuthenticatedPresence\(\{ userId, wallet \}\)/);
-		assert.match(presence, /authenticatedPresence\?\.wallet === wallet/);
-		assert.match(presence, /identityKey && wallet && oneSatContext \? \(/);
-		assert.doesNotMatch(presence, /setAuthenticatedUserId/);
+		assert.match(presence, /export function useLandingFloor/);
+		assert.match(presence, /setAnnounced\(\{\s*userId,\s*wallet,/);
+		assert.match(presence, /announced\?\.wallet === wallet/);
 	});
 });

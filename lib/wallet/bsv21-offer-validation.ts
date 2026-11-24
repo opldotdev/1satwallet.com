@@ -6,6 +6,7 @@ import {
 	type WalletOutput,
 } from "@1sat/actions";
 import type { IndexedOutput, TokenDetailResponse } from "@1sat/types";
+import { reportFailure } from "../runtime-diagnostics";
 import type { P2PTradeItem } from "../types/p2p";
 
 const CANONICAL_OUTPOINT = /^([0-9a-f]{64})[._](0|[1-9][0-9]*)$/i;
@@ -172,6 +173,7 @@ async function validateToken(
 	ctx: OneSatContext,
 	offer: OfferedToken,
 	candidates: LocalCandidate[],
+	verified?: LocalCandidate[],
 ): Promise<Bsv21OfferValidationResult> {
 	const service = ctx.services?.bsv21;
 	if (!service) {
@@ -256,6 +258,7 @@ async function validateToken(
 		}
 		seen.add(outpoint);
 		validatedAmount += local.amount;
+		verified?.push(local);
 	}
 	if (validatedAmount < offer.amount) {
 		return failure(
@@ -278,6 +281,7 @@ async function validateToken(
 async function validateFreshOffer(
 	ctx: OneSatContext,
 	offers: OfferedToken[],
+	verified?: LocalCandidate[],
 ): Promise<Bsv21OfferValidationResult> {
 	if (!ctx.wallet) {
 		return failure(
@@ -313,7 +317,7 @@ async function validateFreshOffer(
 	ctx.services.bsv21.clearCache();
 	const results = await Promise.all(
 		offers.map((offer) =>
-			validateToken(ctx, offer, candidates.get(offer.id) ?? []),
+			validateToken(ctx, offer, candidates.get(offer.id) ?? [], verified),
 		),
 	);
 	const failed = results.find((result) => !result.ok);
@@ -374,4 +378,72 @@ export async function validateBsv21OfferForLock(
 	} finally {
 		if (timeout) clearTimeout(timeout);
 	}
+}
+
+export interface VerifiedBsv21Tip {
+	outpoint: string;
+	tokenId: string;
+	amount: bigint;
+}
+
+/**
+ * The same fresh check as validateBsv21OfferForLock, for the moment a locked
+ * offer is settled: returns this wallet's overlay-verified, unspent token
+ * outputs that cover each offered token, largest first, so the swap spends
+ * as few outputs as it can.
+ */
+export async function selectVerifiedBsv21Tips(
+	ctx: OneSatContext,
+	items: readonly P2PTradeItem[],
+): Promise<
+	| { ok: true; tips: VerifiedBsv21Tip[] }
+	| { ok: false; code: Bsv21OfferValidationCode; message: string }
+> {
+	const offers = readOffers(items);
+	if (!offers) {
+		return {
+			ok: false,
+			code: "invalid-offer",
+			message:
+				"The BSV21 offer data is invalid. Remove it and add the token again.",
+		};
+	}
+	if (offers.length === 0) return { ok: true, tips: [] };
+	const verified: LocalCandidate[] = [];
+	let result: Bsv21OfferValidationResult;
+	try {
+		result = await validateFreshOffer(ctx, offers, verified);
+	} catch (error) {
+		reportFailure(
+			{
+				category: "action",
+				code: "action.failed",
+				operation: "p2p-swap.select-token-tips",
+				recoverable: true,
+			},
+			error,
+		);
+		return {
+			ok: false,
+			code: "overlay-unavailable",
+			message:
+				"BSV21 verification failed. Check your connection and try again.",
+		};
+	}
+	if (!result.ok) return result;
+	const tips: VerifiedBsv21Tip[] = [];
+	for (const offer of offers) {
+		let total = 0n;
+		const sorted = verified
+			.filter((tip) => tip.tokenId === offer.id)
+			.sort((a, b) =>
+				a.amount === b.amount ? 0 : a.amount > b.amount ? -1 : 1,
+			);
+		for (const tip of sorted) {
+			if (total >= offer.amount) break;
+			tips.push({ ...tip });
+			total += tip.amount;
+		}
+	}
+	return { ok: true, tips };
 }

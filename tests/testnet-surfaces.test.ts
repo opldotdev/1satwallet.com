@@ -14,7 +14,6 @@ const HIDDEN_ON_TESTNET = [
 	"/market/bsv21/abc_0",
 	"/opns",
 	"/opns/name?x=1",
-	"/inscribe",
 	"/wallet/opns",
 	"/wallet/migrate",
 	"/wallet/sweep",
@@ -41,7 +40,7 @@ describe("testnet surfaces", () => {
 		);
 	});
 
-	it("hides Market, OpNS, Inscribe and migration on testnet only", () => {
+	it("hides Market, OpNS and migration on testnet only", () => {
 		for (const href of HIDDEN_ON_TESTNET) {
 			assert.equal(isRouteAvailableOn("main", href), true, href);
 			assert.equal(isRouteAvailableOn("test", href), false, href);
@@ -58,6 +57,7 @@ describe("testnet surfaces", () => {
 			"/docs",
 			"/marketing",
 			"/opnsx",
+			"/inscribe",
 		]) {
 			assert.equal(isRouteAvailableOn("test", href), true, href);
 		}
@@ -84,7 +84,6 @@ describe("testnet surfaces", () => {
 			"activity",
 			"market",
 			"opns",
-			"inscribe",
 			"wallet/opns",
 			"wallet/migrate",
 			"wallet/sweep",

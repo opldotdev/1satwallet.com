@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseP2PTradeItem, parseP2PTradeItems } from "../lib/p2p-trade-items";
+import {
+	parseP2PTradeItem,
+	parseP2PTradeItems,
+	sameTradeTerms,
+} from "../lib/p2p-trade-items";
+import type {
+	P2PBsv21TradeItem,
+	P2POrdinalTradeItem,
+	P2PSatoshisTradeItem,
+	P2PTradeItem,
+} from "../lib/types/p2p";
 
 const TOKEN_ID = `${"ab".repeat(32)}_1`;
 
@@ -143,5 +153,51 @@ describe("P2P trade item contract", () => {
 		assert.throws(() =>
 			parseP2PTradeItems(Array.from({ length: 25 }, () => item)),
 		);
+	});
+
+	it("compares offers by asset and amount, not field order or display", () => {
+		const txid = "c".repeat(64);
+		const ordinal = parseP2PTradeItem({
+			type: "ordinal",
+			id: `${txid}_0`,
+			name: "Pass",
+			txid,
+			vout: 0,
+		}) as P2POrdinalTradeItem;
+		const token = parseP2PTradeItem({
+			type: "bsv21",
+			id: TOKEN_ID,
+			name: "Twenty One",
+			amount: "5",
+		}) as P2PBsv21TradeItem;
+		// The database hands objects back with their keys sorted.
+		const sorted = (item: object) =>
+			Object.fromEntries(
+				Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+			);
+		const stored = [sorted(ordinal), sorted(token)] as P2PTradeItem[];
+		assert.equal(sameTradeTerms(stored, [ordinal, token]), true);
+		assert.equal(sameTradeTerms(stored, [token, ordinal]), true);
+		assert.equal(
+			sameTradeTerms(
+				[{ ...ordinal, name: "Renamed", image: "https://a.test/x.png" }, token],
+				[ordinal, { ...token, decimals: 2 }],
+			),
+			true,
+		);
+		assert.equal(
+			sameTradeTerms([ordinal, token], [ordinal, { ...token, amount: "6" }]),
+			false,
+		);
+		assert.equal(sameTradeTerms([ordinal, token], [ordinal]), false);
+		const other = { ...ordinal, id: `${txid}_1`, vout: 1 };
+		assert.equal(sameTradeTerms([ordinal], [other]), false);
+		const bsv = parseP2PTradeItem({
+			type: "satoshis",
+			id: "bsv",
+			name: "BSV",
+			satoshis: 5000,
+		}) as P2PSatoshisTradeItem;
+		assert.equal(sameTradeTerms([bsv], [{ ...bsv, satoshis: 5001 }]), false);
 	});
 });

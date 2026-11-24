@@ -24,6 +24,7 @@ const SUITES = {
 			"./e2e/mobile-layout-overview.e2e.ts",
 			"./e2e/mobile-lists.e2e.ts",
 			"./e2e/tokens-section-wallet.e2e.ts",
+			"./e2e/landing-floor-wallet.e2e.ts",
 		],
 		// After the batch above: these payments spend from wallet A and wait
 		// for its inboxes, so they don't run beside the other spending tests.
@@ -37,6 +38,7 @@ const SUITES = {
 			"./e2e/onboarding-layout.e2e.ts",
 			"./e2e/wallet-sections.e2e.ts",
 			"./e2e/tokens-section.e2e.ts",
+			"./e2e/landing-floor.e2e.ts",
 		],
 	],
 } as const;

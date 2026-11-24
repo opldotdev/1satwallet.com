@@ -26,9 +26,52 @@ if (location.origin === ${JSON.stringify(origin)}) {
 }
 `;
 
-/** For a fresh visitor: only records request hosts. */
+/** window key where the init script records failed DOM removals. */
+export const DOM_MISSES_KEY = "__e2eDomMisses";
+
+/**
+ * Records every removeChild call whose node isn't a child of the parent (the
+ * cause of React's "NotFoundError: removeChild"), with both nodes described,
+ * so a production build still names the element React was removing.
+ */
+const domMissRecorder = `
+(() => {
+	const misses = [];
+	Object.defineProperty(window, ${JSON.stringify(DOM_MISSES_KEY)}, { value: misses });
+	const describe = (node) => {
+		if (!node) return String(node);
+		if (node.nodeType === 1) {
+			const cls = (node.getAttribute("class") ?? "").split(/\\s+/).filter(Boolean).slice(0, 5).join(".");
+			const testId = node.getAttribute("data-testid");
+			return "<" + node.tagName.toLowerCase() + (node.id ? "#" + node.id : "") + (cls ? "." + cls : "") + (testId ? "[data-testid=" + testId + "]" : "") + ">";
+		}
+		if (node.nodeType === 3) return "#text " + JSON.stringify((node.textContent ?? "").slice(0, 40));
+		if (node.nodeType === 8) return "<!--" + (node.data ?? "").slice(0, 20) + "-->";
+		return node.nodeName;
+	};
+	const ancestry = (node) => {
+		const chain = [];
+		for (let at = node; at && chain.length < 5; at = at.parentNode) chain.push(describe(at));
+		return chain.join(" < ");
+	};
+	const native = Node.prototype.removeChild;
+	Node.prototype.removeChild = function (child) {
+		if (child && child.parentNode !== this) {
+			misses.push({
+				parent: ancestry(this),
+				child: describe(child),
+				childParent: ancestry(child.parentNode),
+				stack: (new Error().stack ?? "").split("\\n").slice(1, 8).join("\\n"),
+			});
+		}
+		return native.call(this, child);
+	};
+})();
+`;
+
+/** For a fresh visitor: records request hosts and failed DOM removals. */
 export function visitorInitScript(origin: string): string {
-	return hostRecorder(origin);
+	return `${hostRecorder(origin)}\n${domMissRecorder}`;
 }
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { Float, Html, Text3D } from "@react-three/drei";
+import { Float, Text3D } from "@react-three/drei";
 import { Canvas, useFrame } from "@react-three/fiber";
 import {
 	Bloom,
@@ -9,7 +9,14 @@ import {
 	Noise,
 } from "@react-three/postprocessing";
 import { folder, Leva, useControls } from "leva";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import {
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import * as THREE from "three";
 import {
 	type Font,
@@ -66,6 +73,8 @@ export function Logo3D() {
 		border: THREE.Color;
 	} | null>(null);
 	const [font, setFont] = useState<FontWithData | null>(null);
+	const [sceneReady, setSceneReady] = useState(false);
+	const markSceneReady = useCallback(() => setSceneReady(true), []);
 
 	useEffect(() => {
 		// Helper to resolve color from a temporary DOM element
@@ -163,16 +172,20 @@ export function Logo3D() {
 					height: "100%",
 				}}
 			>
-				<Suspense
-					fallback={
-						<Html center>
-							<Spinner />
-						</Html>
-					}
-				>
-					<Scene colors={colors} font={font} />
+				{/* The spinner is a plain overlay below, not drei's <Html>: unmounting <Html> as a
+				    Suspense fallback made React remove a node that was already gone. */}
+				<Suspense fallback={null}>
+					<Scene colors={colors} font={font} onReady={markSceneReady} />
 				</Suspense>
 			</Canvas>
+			{!sceneReady && (
+				<div
+					className="absolute inset-0 flex items-center justify-center pointer-events-none"
+					data-testid="hero-logo-loading"
+				>
+					<Spinner />
+				</div>
+			)}
 		</div>
 	);
 }
@@ -180,7 +193,9 @@ export function Logo3D() {
 function Scene({
 	colors,
 	font,
+	onReady,
 }: {
+	onReady: () => void;
 	colors: {
 		primary: THREE.Color;
 		primaryForeground: THREE.Color;
@@ -192,6 +207,9 @@ function Scene({
 	font: FontWithData;
 }) {
 	const isMobile = useIsMobile();
+	useEffect(() => {
+		onReady();
+	}, [onReady]);
 	const controls = useControls({
 		Layout: folder({
 			wordGap: { value: 10, min: 5, max: 50, step: 1 },

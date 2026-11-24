@@ -2,14 +2,13 @@ import { type Chain, isOneColorAvailable } from "@/lib/chain-endpoints";
 
 /**
  * Routes that read or write mainnet-only services (markets and market
- * activity, OpNS, inscribing, legacy migration). Testnet hides every way to
- * reach them.
+ * activity, OpNS, legacy migration). Testnet hides every way to reach them.
+ * Inscribing stays: the testnet stack serves ordfs, which is all it needs.
  */
 const MAINNET_ONLY_ROUTES = [
 	"/activity",
 	"/market",
 	"/opns",
-	"/inscribe",
 	"/wallet/opns",
 	"/wallet/migrate",
 	"/wallet/sweep",

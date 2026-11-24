@@ -20,6 +20,7 @@ import {
 	inbox,
 	openInbox,
 	sendRequest,
+	settle,
 	TERMINAL_RETENTION_MS,
 	updateOffer,
 } from "../convex/p2p";
@@ -407,6 +408,14 @@ describe("signed P2P negotiation lifecycle", () => {
 			name: "BSV",
 			satoshis: 1,
 		};
+		const ordinalTxid = "a".repeat(64);
+		const peerItem = {
+			type: "ordinal",
+			id: `${ordinalTxid}_0`,
+			name: "Ordinal",
+			txid: ordinalTxid,
+			vout: 0,
+		};
 		await invoke(
 			updateOffer,
 			context,
@@ -424,7 +433,7 @@ describe("signed P2P negotiation lifecycle", () => {
 				sessionId,
 				revision: 1,
 				locked: false,
-				items: [item],
+				items: [peerItem],
 			}),
 		);
 		await invoke(
@@ -441,7 +450,7 @@ describe("signed P2P negotiation lifecycle", () => {
 			sessionId,
 			revision: 2,
 			locked: true,
-			items: [item],
+			items: [peerItem],
 		});
 		const ready = await invoke<
 			SignedP2PCommand,
@@ -486,7 +495,7 @@ describe("signed P2P negotiation lifecycle", () => {
 					sessionId,
 					revision: 2,
 					locked: true,
-					items: [item],
+					items: [peerItem],
 				}),
 			),
 			/Offer changed/,
@@ -515,6 +524,88 @@ describe("signed P2P negotiation lifecycle", () => {
 		await invoke(deleteExpiredRecords, context, {});
 		assert.equal(context.db.table("p2pSessions").length, 0);
 		assert.equal(context.db.table("p2pRequests").length, 0);
+	});
+
+	test("keeps the peer's lock when stored items come back with sorted keys", async () => {
+		Date.now = () => 1_800_100_000_000;
+		const context = { db: new TestDatabase() };
+		const initiator = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const participant = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const requestId = crypto.randomUUID();
+		const sessionId = crypto.randomUUID();
+		await invoke(
+			sendRequest,
+			context,
+			await signed(initiator, "request.create", {
+				requestId,
+				toIdentity: await identity(participant),
+			}),
+		);
+		await invoke(
+			acceptRequest,
+			context,
+			await signed(participant, "request.accept", { requestId, sessionId }),
+		);
+		const txid = "b".repeat(64);
+		const ordinals = [0, 1].map((vout) => ({
+			type: "ordinal",
+			id: `${txid}_${vout}`,
+			name: `Ordinal ${vout}`,
+			txid,
+			vout,
+		}));
+		const bsv = { type: "satoshis", id: "bsv", name: "BSV", satoshis: 5000 };
+		const offer = (
+			wallet: WalletInterface,
+			revision: number,
+			locked: boolean,
+			items: unknown[],
+		) =>
+			signed(wallet, "session.offer", { sessionId, revision, locked, items });
+		await invoke(
+			updateOffer,
+			context,
+			await offer(initiator, 1, false, ordinals),
+		);
+		await invoke(
+			updateOffer,
+			context,
+			await offer(participant, 1, false, [bsv]),
+		);
+		// Convex returns stored objects with their keys sorted, so the items a
+		// side locks with never match the stored ones byte for byte.
+		const rawSession = context.db.table("p2pSessions")[0] as unknown as {
+			initiatorItems: Record<string, unknown>[];
+			participantItems: Record<string, unknown>[];
+			initiatorLocked: boolean;
+			participantLocked: boolean;
+		};
+		const sortKeys = (items: Record<string, unknown>[]) =>
+			items.map((item) =>
+				Object.fromEntries(
+					Object.entries(item).sort(([a], [b]) => a.localeCompare(b)),
+				),
+			);
+		rawSession.initiatorItems = sortKeys(rawSession.initiatorItems);
+		rawSession.participantItems = sortKeys(rawSession.participantItems);
+		await invoke(
+			updateOffer,
+			context,
+			await offer(participant, 2, true, [bsv]),
+		);
+		// The initiator locks its ordinals listed in another order.
+		const ready = await invoke<SignedP2PCommand, { status: string }>(
+			updateOffer,
+			context,
+			await offer(initiator, 2, true, [...ordinals].reverse()),
+		);
+		assert.equal(ready.status, "ready");
+		assert.equal(rawSession.participantLocked, true);
+		assert.equal(rawSession.initiatorLocked, true);
 	});
 
 	test("allows only a peer to cancel and keeps terminal transitions monotonic", async () => {
@@ -589,5 +680,205 @@ describe("signed P2P negotiation lifecycle", () => {
 		now += 2;
 		await invoke(deleteExpiredRecords, context, {});
 		assert.equal(context.db.table("p2pSessions").length, 0);
+	});
+	test("settles a locked trade through the relay steps in order", async () => {
+		const now = 1_800_200_000_000;
+		Date.now = () => now;
+		const context = { db: new TestDatabase() };
+		const initiator = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const participant = new ProtoWallet(
+			PrivateKey.fromRandom(),
+		) as WalletInterface;
+		const requestId = crypto.randomUUID();
+		const sessionId = crypto.randomUUID();
+		await invoke(
+			sendRequest,
+			context,
+			await signed(initiator, "request.create", {
+				requestId,
+				toIdentity: await identity(participant),
+			}),
+		);
+		await invoke(
+			acceptRequest,
+			context,
+			await signed(participant, "request.accept", { requestId, sessionId }),
+		);
+		const ordinal = (fill: string) => ({
+			type: "ordinal",
+			id: `${fill.repeat(64)}_0`,
+			name: "Ordinal",
+			txid: fill.repeat(64),
+			vout: 0,
+		});
+		const a = ordinal("a");
+		const b = ordinal("b");
+		const script = `76a914${"1".repeat(40)}88ac`;
+		const revisions = { initiator: 0, participant: 0 };
+		const offer = async (
+			who: "initiator" | "participant",
+			items: unknown[],
+			locked: boolean,
+			allowGift?: boolean,
+		) => {
+			revisions[who] += 1;
+			return invoke(
+				updateOffer,
+				context,
+				await signed(
+					who === "initiator" ? initiator : participant,
+					"session.offer",
+					{ sessionId, revision: revisions[who], items, locked, allowGift },
+				),
+			);
+		};
+		const step = async (
+			who: "initiator" | "participant",
+			payload: Record<string, unknown>,
+		) =>
+			invoke<SignedP2PCommand, { hash?: string }>(
+				settle,
+				context,
+				await signed(
+					who === "initiator" ? initiator : participant,
+					"session.settle",
+					{ sessionId, ...payload },
+				),
+			);
+		const session = () =>
+			context.db.table("p2pSessions")[0] as unknown as Record<string, unknown>;
+
+		// A gift needs the giver's own "Allow giving gifts".
+		await offer("initiator", [a], false);
+		await offer("participant", [], true);
+		await assert.rejects(offer("initiator", [a], true), /Allow giving gifts/);
+		revisions.initiator -= 1;
+		await offer("participant", [], true);
+		await offer("initiator", [a], true, true);
+		assert.equal(session().status, "ready");
+
+		const giftContribution = {
+			initiatorRevision: revisions.initiator,
+			participantRevision: revisions.participant,
+			inputs: [],
+			receive: {
+				nft: [{ id: a.id, script }],
+				token: [],
+				change: [],
+				satoshis: null,
+			},
+		};
+		await assert.rejects(
+			step("initiator", { step: "contribute", contribution: giftContribution }),
+			/other wallet starts/,
+		);
+		await assert.rejects(
+			step("participant", {
+				step: "contribute",
+				contribution: {
+					...giftContribution,
+					receive: { ...giftContribution.receive, nft: [] },
+				},
+			}),
+			/don't match/,
+		);
+		await step("participant", {
+			step: "contribute",
+			contribution: giftContribution,
+		});
+		assert.equal(session().status, "settling");
+		await assert.rejects(offer("participant", [b], false), /swap has started/);
+		revisions.participant -= 1;
+		await assert.rejects(
+			step("participant", { step: "candidate", txHex: "0100" }),
+			/Only the builder/,
+		);
+		const posted = await step("initiator", {
+			step: "candidate",
+			txHex: "0100",
+		});
+		assert.match(posted.hash ?? "", /^[0-9a-f]{64}$/);
+		await assert.rejects(
+			step("participant", {
+				step: "outcome",
+				outcome: { kind: "failed", reason: "no" },
+			}),
+			/Only the builder/,
+		);
+		await step("initiator", {
+			step: "outcome",
+			outcome: { kind: "failed", reason: "The swap was stopped." },
+		});
+		assert.equal(session().status, "negotiating");
+		assert.equal(session().initiatorLocked, false);
+		assert.equal(session().participantLocked, false);
+		assert.equal(session().settlement, undefined);
+		assert.equal(session().lastSettlementError, "The swap was stopped.");
+
+		// A two-sided swap: the participant signs its ordinal once the builder posts.
+		await offer("participant", [b], true);
+		await offer("initiator", [a], true);
+		assert.equal(session().status, "ready");
+		await step("participant", {
+			step: "contribute",
+			contribution: {
+				initiatorRevision: revisions.initiator,
+				participantRevision: revisions.participant,
+				inputs: [b.id],
+				receive: {
+					nft: [{ id: a.id, script }],
+					token: [],
+					change: [],
+					satoshis: null,
+				},
+			},
+		});
+		const candidate = await step("initiator", {
+			step: "candidate",
+			txHex: "0200",
+		});
+		await assert.rejects(
+			step("participant", {
+				step: "outcome",
+				outcome: { kind: "txid", txid: "e".repeat(64) },
+			}),
+			/before it's signed/,
+		);
+		await assert.rejects(
+			step("participant", {
+				step: "signatures",
+				candidateHash: "f".repeat(64),
+				signatures: [{ vin: 1, unlockingScript: "00" }],
+			}),
+			/review it again/,
+		);
+		await step("participant", {
+			step: "signatures",
+			candidateHash: candidate.hash,
+			signatures: [{ vin: 1, unlockingScript: "00" }],
+		});
+		await assert.rejects(
+			step("initiator", { step: "candidate", txHex: "0300" }),
+			/already signed/,
+		);
+		await assert.rejects(
+			invoke(
+				cancelSession,
+				context,
+				await signed(participant, "session.cancel", { sessionId }),
+			),
+			/already signed/,
+		);
+		await step("participant", {
+			step: "outcome",
+			outcome: { kind: "txid", txid: "e".repeat(64) },
+		});
+		assert.equal(session().status, "settled");
+		await assert.rejects(
+			step("initiator", { step: "outcome", outcome: { kind: "unknown" } }),
+			/already finished/,
+		);
 	});
 });

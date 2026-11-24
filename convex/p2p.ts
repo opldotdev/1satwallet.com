@@ -6,7 +6,16 @@ import {
 	type P2PCommand,
 	verifyP2PCommand,
 } from "../lib/p2p-auth";
-import { parseP2PTradeItems } from "../lib/p2p-trade-items";
+import {
+	contributionMatchesTerms,
+	offeredSatoshis,
+	parseSwapStep,
+	SWAP_TERMS_MESSAGE,
+	type SwapSide,
+	swapBuilder,
+} from "../lib/p2p-swap/wire";
+import { parseP2PTradeItems, sameTradeTerms } from "../lib/p2p-trade-items";
+import type { P2PTradeItem } from "../lib/types/p2p";
 import {
 	internalMutation,
 	type MutationCtx,
@@ -117,7 +126,19 @@ type RequestStatus =
 	| "declined"
 	| "cancelled"
 	| "expired";
-type SessionStatus = "negotiating" | "ready" | "cancelled" | "expired";
+type SessionStatus =
+	| "negotiating"
+	| "ready"
+	| "settling"
+	| "settled"
+	| "cancelled"
+	| "expired";
+
+function isOpenStatus(status: SessionStatus): boolean {
+	return (
+		status === "negotiating" || status === "ready" || status === "settling"
+	);
+}
 
 function effectiveRequestStatus(
 	request: { status: RequestStatus; expiresAt: number },
@@ -132,14 +153,9 @@ function effectiveSessionStatus(
 	session: { status: SessionStatus; expiresAt: number },
 	now: number,
 ): SessionStatus {
-	return (session.status === "negotiating" || session.status === "ready") &&
-		session.expiresAt <= now
+	return isOpenStatus(session.status) && session.expiresAt <= now
 		? "expired"
 		: session.status;
-}
-
-function sameItems(left: unknown, right: unknown): boolean {
-	return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export const openInbox = mutation({
@@ -353,10 +369,12 @@ export const updateOffer = mutation({
 				const sessionId = uuidField(payload, "sessionId");
 				const revision = payload.revision;
 				const locked = payload.locked;
+				const allowGift = payload.allowGift;
 				if (
 					!Number.isSafeInteger(revision) ||
 					(revision as number) < 1 ||
-					typeof locked !== "boolean"
+					typeof locked !== "boolean" ||
+					(allowGift !== undefined && typeof allowGift !== "boolean")
 				) {
 					throw new Error("Invalid offer revision");
 				}
@@ -368,6 +386,9 @@ export const updateOffer = mutation({
 				const effectiveStatus = effectiveSessionStatus(session, now);
 				if (effectiveStatus === "cancelled" || effectiveStatus === "expired") {
 					throw new Error("Trade session is closed");
+				}
+				if (effectiveStatus === "settling" || effectiveStatus === "settled") {
+					throw new Error("The swap has started; offers can't change now");
 				}
 				const initiator = session.initiatorIdentity === command.identityKey;
 				const participant = session.participantIdentity === command.identityKey;
@@ -389,10 +410,34 @@ export const updateOffer = mutation({
 					: session.participantLocked;
 				// A first lock of unchanged content may acknowledge the peer's lock.
 				// Every other revision invalidates the peer's prior consent.
+				const peerItems = (
+					initiator ? session.participantItems : session.initiatorItems
+				) as P2PTradeItem[];
+				if (
+					locked &&
+					offeredSatoshis(items) > 0 &&
+					offeredSatoshis(peerItems) > 0
+				) {
+					throw new Error(SWAP_TERMS_MESSAGE["both-offer-bsv"]);
+				}
+				const gift = allowGift === true;
 				const lockOnly =
-					locked && !currentLocked && sameItems(currentItems, items);
+					locked &&
+					!currentLocked &&
+					sameTradeTerms(currentItems as P2PTradeItem[], items);
 				const nextPeerLocked = lockOnly ? peerLocked : false;
 				const status = locked && nextPeerLocked ? "ready" : "negotiating";
+				if (status === "ready") {
+					const terms = swapBuilder({
+						initiatorItems: initiator ? items : peerItems,
+						participantItems: initiator ? peerItems : items,
+						initiatorAllowsGift: initiator ? gift : session.initiatorAllowsGift,
+						participantAllowsGift: initiator
+							? session.participantAllowsGift
+							: gift,
+					});
+					if (!terms.ok) throw new Error(SWAP_TERMS_MESSAGE[terms.error]);
+				}
 				await ctx.db.patch(
 					session._id,
 					initiator
@@ -400,7 +445,9 @@ export const updateOffer = mutation({
 								initiatorItems: items,
 								initiatorRevision: revision as number,
 								initiatorLocked: locked,
+								initiatorAllowsGift: gift,
 								participantLocked: nextPeerLocked,
+								lastSettlementError: undefined,
 								status,
 								updatedAt: now,
 							}
@@ -408,7 +455,9 @@ export const updateOffer = mutation({
 								participantItems: items,
 								participantRevision: revision as number,
 								participantLocked: locked,
+								participantAllowsGift: gift,
 								initiatorLocked: nextPeerLocked,
+								lastSettlementError: undefined,
 								status,
 								updatedAt: now,
 							},
@@ -438,6 +487,14 @@ export const cancelSession = mutation({
 				}
 				const status = effectiveSessionStatus(session, now);
 				if (status === "expired") throw new Error("Trade session expired");
+				if (status === "settled") throw new Error("The swap already finished");
+				if (
+					status === "settling" &&
+					(session.settlement?.signatures ||
+						session.settlement?.outcome?.kind === "unknown")
+				) {
+					throw new Error("The swap is already signed; wait for it to finish");
+				}
 				if (status !== "cancelled") {
 					await ctx.db.patch(session._id, {
 						status: "cancelled",
@@ -447,6 +504,182 @@ export const cancelSession = mutation({
 					});
 				}
 				return { sessionId, status: "cancelled" as const };
+			},
+		),
+});
+
+function swapSides(
+	session: { initiatorIdentity: string; participantIdentity: string },
+	identityKey: string,
+): SwapSide {
+	if (session.initiatorIdentity === identityKey) return "initiator";
+	if (session.participantIdentity === identityKey) return "participant";
+	throw new Error("Not authorized for this trade session");
+}
+
+/**
+ * One step of settling a ready trade in a single transaction. The relay only
+ * orders and stores public data; each wallet checks the exact transaction
+ * before it signs (docs/p2p-settlement-protocol.md).
+ */
+export const settle = mutation({
+	args: signedArgs,
+	handler: async (ctx, args) =>
+		runIdempotent(
+			ctx,
+			"session.settle",
+			args.body,
+			args.signature,
+			async (command, now) => {
+				const payload = record(command.payload);
+				const sessionId = uuidField(payload, "sessionId");
+				const step = parseSwapStep(payload);
+				const session = await sessionById(ctx, sessionId);
+				if (!session) throw new Error("Trade session not found");
+				const side = swapSides(session, command.identityKey);
+				const status = effectiveSessionStatus(session, now);
+				if (status === "cancelled" || status === "expired") {
+					throw new Error("Trade session is closed");
+				}
+				if (status === "settled") throw new Error("The swap already finished");
+				const settlement = session.settlement;
+
+				if (step.step === "contribute") {
+					if (
+						status !== "ready" &&
+						!(status === "settling" && settlement && !settlement.candidate)
+					) {
+						throw new Error("Both offers must be locked before the swap");
+					}
+					const terms = swapBuilder({
+						initiatorItems: session.initiatorItems as P2PTradeItem[],
+						participantItems: session.participantItems as P2PTradeItem[],
+						initiatorAllowsGift: session.initiatorAllowsGift,
+						participantAllowsGift: session.participantAllowsGift,
+					});
+					if (!terms.ok) throw new Error(SWAP_TERMS_MESSAGE[terms.error]);
+					if (side === terms.builder) {
+						throw new Error("The other wallet starts the swap");
+					}
+					const { contribution } = step;
+					if (
+						contribution.initiatorRevision !== session.initiatorRevision ||
+						contribution.participantRevision !== session.participantRevision
+					) {
+						throw new Error("Offer changed; refresh and try again");
+					}
+					const builderItems = (
+						terms.builder === "initiator"
+							? session.initiatorItems
+							: session.participantItems
+					) as P2PTradeItem[];
+					const myItems = (
+						side === "initiator"
+							? session.initiatorItems
+							: session.participantItems
+					) as P2PTradeItem[];
+					if (!contributionMatchesTerms(contribution, builderItems, myItems)) {
+						throw new Error("The swap details don't match the locked offers");
+					}
+					await ctx.db.patch(session._id, {
+						status: "settling",
+						settlement: {
+							builder: terms.builder,
+							initiatorRevision: session.initiatorRevision,
+							participantRevision: session.participantRevision,
+							contribution,
+							startedAt: now,
+						},
+						lastSettlementError: undefined,
+						expiresAt: Math.max(session.expiresAt, now + SESSION_TTL_MS),
+						updatedAt: now,
+					});
+					return { sessionId, step: step.step };
+				}
+
+				if (status !== "settling" || !settlement) {
+					throw new Error("The swap hasn't started");
+				}
+				const builder = settlement.builder === side;
+
+				if (step.step === "candidate") {
+					if (!builder) throw new Error("Only the builder posts the swap");
+					if (settlement.signatures || settlement.outcome) {
+						throw new Error("The swap is already signed");
+					}
+					const hash = toHex(Hash.sha256(step.txHex, "hex"));
+					await ctx.db.patch(session._id, {
+						settlement: {
+							...settlement,
+							candidate: { txHex: step.txHex, hash, postedAt: now },
+						},
+						updatedAt: now,
+					});
+					return { sessionId, step: step.step, hash };
+				}
+
+				if (step.step === "signatures") {
+					if (builder) throw new Error("The builder signs when it sends");
+					if (!settlement.candidate) throw new Error("No swap to sign yet");
+					if (step.candidateHash !== settlement.candidate.hash) {
+						throw new Error("The swap changed; review it again");
+					}
+					if (settlement.signatures) {
+						throw new Error("The swap is already signed");
+					}
+					await ctx.db.patch(session._id, {
+						settlement: {
+							...settlement,
+							signatures: {
+								candidateHash: step.candidateHash,
+								entries: step.signatures,
+							},
+						},
+						updatedAt: now,
+					});
+					return { sessionId, step: step.step };
+				}
+
+				const { outcome } = step;
+				if (outcome.kind !== "txid" && !builder) {
+					throw new Error("Only the builder reports a failed swap");
+				}
+				if (outcome.kind === "txid") {
+					if (!settlement.candidate) throw new Error("No swap was built");
+					// The other side can only have seen the swap on chain once it
+					// signed, or while the builder's result is unknown.
+					if (
+						!builder &&
+						!settlement.signatures &&
+						settlement.outcome?.kind !== "unknown"
+					) {
+						throw new Error(
+							"Only the builder reports the swap before it's signed",
+						);
+					}
+					await ctx.db.patch(session._id, {
+						status: "settled",
+						settlement: { ...settlement, outcome },
+						updatedAt: now,
+						terminalAt: now,
+						purgeAt: now + TERMINAL_RETENTION_MS,
+					});
+				} else if (outcome.kind === "failed") {
+					await ctx.db.patch(session._id, {
+						status: "negotiating",
+						settlement: undefined,
+						initiatorLocked: false,
+						participantLocked: false,
+						lastSettlementError: outcome.reason,
+						updatedAt: now,
+					});
+				} else {
+					await ctx.db.patch(session._id, {
+						settlement: { ...settlement, outcome },
+						updatedAt: now,
+					});
+				}
+				return { sessionId, step: step.step };
 			},
 		),
 });
@@ -533,15 +766,10 @@ export const inbox = query({
 		const outgoingAccepted: typeof accepted = [];
 		for (const { request, session } of acceptedSessions) {
 			const status = session ? effectiveSessionStatus(session, now) : "expired";
-			if (status === "negotiating" || status === "ready") {
-				outgoingAccepted.push(request);
-			}
+			if (isOpenStatus(status)) outgoingAccepted.push(request);
 		}
 		const activeSessions = [...initiated, ...participated]
-			.filter((session) => {
-				const status = effectiveSessionStatus(session, now);
-				return status === "negotiating" || status === "ready";
-			})
+			.filter((session) => isOpenStatus(effectiveSessionStatus(session, now)))
 			.sort((left, right) => right.updatedAt - left.updatedAt)
 			.slice(0, 20);
 		return {
@@ -578,6 +806,7 @@ export const deleteExpiredRecords = internalMutation({
 			pendingRequests,
 			negotiatingSessions,
 			readySessions,
+			settlingSessions,
 			legacyRequests,
 			legacySessions,
 			requestPurges,
@@ -610,6 +839,12 @@ export const deleteExpiredRecords = internalMutation({
 				)
 				.take(200),
 			ctx.db
+				.query("p2pSessions")
+				.withIndex("by_status_expiresAt", (q) =>
+					q.eq("status", "settling").lt("expiresAt", now),
+				)
+				.take(200),
+			ctx.db
 				.query("p2pRequests")
 				.withIndex("by_purgeAt", (q) => q.eq("purgeAt", undefined))
 				.take(200),
@@ -632,7 +867,9 @@ export const deleteExpiredRecords = internalMutation({
 			pendingRequests.map((item) => item._id),
 		);
 		const sessionExpirationIds = new Set(
-			[...negotiatingSessions, ...readySessions].map((item) => item._id),
+			[...negotiatingSessions, ...readySessions, ...settlingSessions].map(
+				(item) => item._id,
+			),
 		);
 		const requestExpirations = [];
 		for (const request of pendingRequests) {
@@ -647,7 +884,11 @@ export const deleteExpiredRecords = internalMutation({
 			);
 		}
 		const sessionExpirations = [];
-		for (const session of [...negotiatingSessions, ...readySessions]) {
+		for (const session of [
+			...negotiatingSessions,
+			...readySessions,
+			...settlingSessions,
+		]) {
 			if (sessionPurgeIds.has(session._id)) continue;
 			sessionExpirations.push(
 				ctx.db.patch(session._id, {
@@ -675,12 +916,11 @@ export const deleteExpiredRecords = internalMutation({
 				.filter((session) => !sessionExpirationIds.has(session._id))
 				.map((session) =>
 					ctx.db.patch(session._id, {
-						terminalAt:
-							session.status === "negotiating" || session.status === "ready"
-								? undefined
-								: session.updatedAt,
+						terminalAt: isOpenStatus(session.status)
+							? undefined
+							: session.updatedAt,
 						purgeAt:
-							(session.status === "negotiating" || session.status === "ready"
+							(isOpenStatus(session.status)
 								? session.expiresAt
 								: session.updatedAt) + TERMINAL_RETENTION_MS,
 					}),

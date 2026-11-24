@@ -42,5 +42,7 @@ export type P2PRequestStatus =
 export type P2PSessionStatus =
 	| "negotiating"
 	| "ready"
+	| "settling"
+	| "settled"
 	| "cancelled"
 	| "expired";

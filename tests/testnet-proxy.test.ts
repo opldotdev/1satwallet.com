@@ -21,7 +21,6 @@ const MAINNET_ONLY = [
 	"/market/bsv21/abc_0",
 	"/opns",
 	"/opns/satoshi",
-	"/inscribe",
 	"/activity",
 	"/wallet/opns",
 	"/wallet/migrate",
@@ -60,6 +59,7 @@ describe("testnet proxy", () => {
 			"/wallet/1color/abc_0",
 			"/marketing",
 			"/settings",
+			"/inscribe",
 		]) {
 			const response = proxy(request(path, "test"));
 			assert.equal(isRewrite(response), false, path);

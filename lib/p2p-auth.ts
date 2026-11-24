@@ -15,7 +15,8 @@ export type P2PAction =
 	| "request.decline"
 	| "request.cancel"
 	| "session.offer"
-	| "session.cancel";
+	| "session.cancel"
+	| "session.settle";
 
 export interface P2PCommand<T = unknown> {
 	v: typeof P2P_COMMAND_VERSION;
@@ -33,6 +34,12 @@ export interface SignedP2PCommand {
 	signature: string;
 }
 
+/** A swap candidate carries a whole unsigned transaction. */
+const MAX_BODY: Partial<Record<P2PAction, number>> = {
+	"session.settle": 250_000,
+};
+const DEFAULT_MAX_BODY = 24_000;
+
 const IDENTITY_KEY = /^(02|03)[0-9a-f]{64}$/;
 const UUID =
 	/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -46,7 +53,10 @@ export function parseP2PCommand(
 	expectedAction: P2PAction,
 	now = Date.now(),
 ): P2PCommand {
-	if (body.length === 0 || body.length > 24_000) {
+	if (
+		body.length === 0 ||
+		body.length > (MAX_BODY[expectedAction] ?? DEFAULT_MAX_BODY)
+	) {
 		throw new Error("Invalid signed command size");
 	}
 	let value: unknown;
