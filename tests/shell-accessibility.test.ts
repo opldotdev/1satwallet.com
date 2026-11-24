@@ -70,19 +70,15 @@ describe("landing hero accessibility", () => {
 	it("exposes one level-one heading and treats the 3D logo as decorative", () => {
 		const source = read("components/landing/hero.tsx");
 		assert.equal(source.match(/<h1/g)?.length, 1);
-		assert.match(
-			source,
-			/<h1[^>]*>\s*Satoshi's favorite asset wallet\.\s*<\/h1>/,
-		);
+		assert.match(source, /<h1[^>]*>\s*1Sat Wallet\s*<\/h1>/);
 		assert.doesNotMatch(source, /<h1 className="sr-only"/);
 		assert.match(source, /aria-hidden="true"/);
 	});
-	it("lets the button label carry what the floor needs", () => {
+	it("offers the ways in as labelled buttons, with no explaining copy", () => {
 		const source = read("components/landing/hero.tsx");
-		// No paragraph or icon explaining the floor: the label says it.
 		assert.match(source, /data-testid="hero-cta"/);
-		assert.match(source, /Connect wallet to enter/);
-		assert.match(source, /Unlock wallet to enter/);
+		assert.match(source, /Create wallet/);
+		assert.match(source, /Unlock wallet/);
 		assert.match(source, /Open wallet/);
 		assert.doesNotMatch(source, /floor-note/);
 		assert.doesNotMatch(source, /\bUsers\b/);

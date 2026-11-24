@@ -144,7 +144,9 @@ export function activeWalletTab<T extends Tab>(
 	tabs: readonly T[],
 ): T | undefined {
 	return tabs.find((tab) =>
-		tab.href === "/wallet" ? pathname === "/wallet" : under(pathname, tab.href),
+		tab.href === "/wallet"
+			? pathname === "/wallet" || pathname === "/"
+			: under(pathname, tab.href),
 	);
 }
 

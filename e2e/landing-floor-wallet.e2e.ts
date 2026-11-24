@@ -44,10 +44,7 @@ walletTest("landing floor opens for a signed-in wallet", async (browser) => {
 			const box = bar?.firstElementChild?.getBoundingClientRect();
 			return {
 				note: document.querySelector('[data-testid="floor-note"]') !== null,
-				openWallet:
-					document
-						.querySelector('[data-testid="hero-cta"]')
-						?.textContent?.trim() === "Open wallet",
+				walletShown: document.querySelector("#wallet-balance-heading") !== null,
 				barText: bar?.textContent ?? "",
 				barBottom: box?.bottom ?? 0,
 				innerHeight: window.innerHeight,
@@ -56,8 +53,10 @@ walletTest("landing floor opens for a signed-in wallet", async (browser) => {
 		if (page.note) {
 			problems.add(`${where}: the old floor note still shows.`);
 		}
-		if (!page.openWallet) {
-			problems.add(`${where}: no "Open wallet" action.`);
+		if (!page.walletShown) {
+			problems.add(
+				`${where}: the wallet overview isn't shown on the home page.`,
+			);
 		}
 		// CI's placeholder relay never answers, so there the bar ends on its
 		// "isn't responding" error with Try again.

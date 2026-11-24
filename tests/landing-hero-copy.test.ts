@@ -9,10 +9,13 @@ const heroSource = readFileSync(
 );
 
 describe("landing hero copy", () => {
-	it("preserves the original P2P message", () => {
-		assert.match(heroSource, /Satoshi's favorite asset wallet\./);
-		assert.match(heroSource, /Trade with peers\./);
-		assert.match(heroSource, /No servers\. No middleman\./);
+	it("carries no marketing copy: it is the wallet", () => {
+		assert.doesNotMatch(heroSource, /Satoshi's favorite/);
+		assert.doesNotMatch(heroSource, /Trade with peers/);
+		assert.doesNotMatch(heroSource, /No servers/);
+		assert.doesNotMatch(heroSource, /to enter/);
+		assert.doesNotMatch(heroSource, /<p\b/);
+		assert.match(heroSource, /<WalletHome \/>/);
 		assert.doesNotMatch(heroSource, /soon™/);
 		assert.doesNotMatch(heroSource, /One BRC-100 interface\./);
 	});
@@ -23,10 +26,9 @@ describe("landing hero copy", () => {
 		assert.doesNotMatch(heroSource, /min-h-\[100dvh\]/);
 		assert.match(heroSource, /min-h-0 flex-1/);
 		assert.doesNotMatch(heroSource, /floor-note/);
-		assert.match(heroSource, /Connect wallet to enter/);
-		assert.match(heroSource, /Unlock wallet to enter/);
+		assert.match(heroSource, /Create wallet/);
+		assert.match(heroSource, /Unlock wallet/);
 		assert.match(heroSource, /barShown \? "pb-28" : "pb-8"/);
-		assert.match(heroSource, /overflow-y-auto/);
 		assert.doesNotMatch(heroSource, /Popover/);
 	});
 });

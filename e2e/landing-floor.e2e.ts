@@ -57,9 +57,9 @@ e2eTest(
 					online: /\bonline\b|peers? here/i.test(document.body.innerText),
 				};
 			}, null);
-			if (page.ctaText !== "Connect wallet to enter") {
+			if (page.ctaText !== "Create wallet") {
 				problems.add(
-					`${where}: the main button reads "${page.ctaText}", expected "Connect wallet to enter".`,
+					`${where}: the main button reads "${page.ctaText}", expected "Create wallet".`,
 				);
 			}
 			if (page.note) {
@@ -70,12 +70,12 @@ e2eTest(
 			}
 			if (page.ctaHeight < 44) {
 				problems.add(
-					`${where}: "Connect wallet to enter" is ${page.ctaHeight}px tall, expected 44px.`,
+					`${where}: "Create wallet" is ${page.ctaHeight}px tall, expected 44px.`,
 				);
 			}
 			if (page.ctaBottom > page.innerHeight) {
 				problems.add(
-					`${where}: "Connect wallet to enter" ends at ${page.ctaBottom}px, below the ${page.innerHeight}px window.`,
+					`${where}: "Create wallet" ends at ${page.ctaBottom}px, below the ${page.innerHeight}px window.`,
 				);
 			}
 			if (page.floorBar || page.online) {
