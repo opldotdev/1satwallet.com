@@ -67,6 +67,10 @@ describe("walletSectionFor", () => {
 		assert.equal(activeWalletTab("/walletx", WALLET_TABS), undefined);
 	});
 
+	it("marks the overview on the home page, which shows the wallet", () => {
+		assert.equal(activeWalletTab("/", WALLET_TABS)?.value, "overview");
+	});
+
 	it("gives sub-pages a back arrow and no tabs", () => {
 		const cases: [string, string, string, string][] = [
 			["/wallet/settings", "Wallet settings", "/settings", "Settings"],

@@ -32,7 +32,7 @@ e2eTest(
 	async (browser) => {
 		const problems = new LayoutProblems();
 		await mkdir(REVIEW_DIR, { recursive: true });
-		await waitForSettledPage(browser, "/", '[data-testid="floor-note"]');
+		await waitForSettledPage(browser, "/", '[data-testid="hero-cta"]');
 		for (const viewport of PHONE_VIEWPORTS) {
 			const where = `/ at ${describeViewport(viewport)}`;
 			await setViewport(browser, viewport);
@@ -40,13 +40,12 @@ e2eTest(
 			const page = await browser.evaluate(() => {
 				const visible = (el: Element | null) =>
 					Boolean(el && el.getClientRects().length > 0);
-				const cta = Array.from(document.querySelectorAll("a")).find((a) =>
-					/Connect wallet to enter/.test(a.textContent ?? ""),
-				);
+				const cta = document.querySelector('[data-testid="hero-cta"]');
 				const ctaBox = cta?.getBoundingClientRect();
 				return {
-					note: document.querySelector('[data-testid="floor-note"]')
-						?.textContent,
+					ctaText: cta?.textContent?.trim() ?? "",
+					note: document.querySelector('[data-testid="floor-note"]') !== null,
+					headline: visible(document.querySelector("h1")),
 					ctaHeight: ctaBox?.height ?? 0,
 					ctaBottom: ctaBox?.bottom ?? Number.POSITIVE_INFINITY,
 					innerHeight: window.innerHeight,
@@ -58,17 +57,25 @@ e2eTest(
 					online: /\bonline\b|peers? here/i.test(document.body.innerText),
 				};
 			}, null);
-			if (!page.note?.includes("opens when you connect a wallet")) {
-				problems.add(`${where}: the floor note is missing (${page.note}).`);
+			if (page.ctaText !== "Create wallet") {
+				problems.add(
+					`${where}: the main button reads "${page.ctaText}", expected "Create wallet".`,
+				);
+			}
+			if (page.note) {
+				problems.add(`${where}: the old floor note still shows.`);
+			}
+			if (!page.headline) {
+				problems.add(`${where}: the headline isn't visible.`);
 			}
 			if (page.ctaHeight < 44) {
 				problems.add(
-					`${where}: "Connect wallet to enter" is ${page.ctaHeight}px tall, expected 44px.`,
+					`${where}: "Create wallet" is ${page.ctaHeight}px tall, expected 44px.`,
 				);
 			}
 			if (page.ctaBottom > page.innerHeight) {
 				problems.add(
-					`${where}: "Connect wallet to enter" ends at ${page.ctaBottom}px, below the ${page.innerHeight}px window.`,
+					`${where}: "Create wallet" ends at ${page.ctaBottom}px, below the ${page.innerHeight}px window.`,
 				);
 			}
 			if (page.floorBar || page.online) {
@@ -99,7 +106,7 @@ e2eTest(
 		};
 	},
 	async (browser) => {
-		await waitForSettledPage(browser, "/", '[data-testid="floor-note"]');
+		await waitForSettledPage(browser, "/", '[data-testid="hero-cta"]');
 		// The logo is done once its 3D scene has mounted (canvas shown, loading
 		// spinner gone), or the 3D failed and its boundary shows the static
 		// logo instead, or a removal already failed.
