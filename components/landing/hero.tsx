@@ -18,11 +18,11 @@ function StaticLogo() {
 			<Image
 				alt="1Sat Wallet"
 				fetchPriority="high"
-				className="size-[88px] sm:size-[140px]"
-				height={160}
+				className="size-[88px] sm:size-[140px] md:size-[220px]"
+				height={220}
 				priority
 				src="/oneSatLogoDark.svg"
-				width={160}
+				width={220}
 			/>
 		</div>
 	);
