@@ -70,14 +70,22 @@ describe("landing hero accessibility", () => {
 	it("exposes one level-one heading and treats the 3D logo as decorative", () => {
 		const source = read("components/landing/hero.tsx");
 		assert.equal(source.match(/<h1/g)?.length, 1);
-		assert.match(source, /<h1 className="sr-only">/);
+		assert.match(
+			source,
+			/<h1[^>]*>\s*Satoshi's favorite asset wallet\.\s*<\/h1>/,
+		);
+		assert.doesNotMatch(source, /<h1 className="sr-only"/);
 		assert.match(source, /aria-hidden="true"/);
 	});
-	it("says in visible text what the P2P trading floor needs", () => {
+	it("lets the button label carry what the floor needs", () => {
 		const source = read("components/landing/hero.tsx");
-		// The floor is explained under the button, not behind an icon.
-		assert.match(source, /data-testid="floor-note"/);
-		assert.match(source, /P2P trading floor/);
+		// No paragraph or icon explaining the floor: the label says it.
+		assert.match(source, /data-testid="hero-cta"/);
+		assert.match(source, /Connect wallet to enter/);
+		assert.match(source, /Unlock wallet to enter/);
+		assert.match(source, /Open wallet/);
+		assert.doesNotMatch(source, /floor-note/);
+		assert.doesNotMatch(source, /\bUsers\b/);
 		assert.doesNotMatch(source, /Popover/);
 	});
 });
