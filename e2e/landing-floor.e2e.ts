@@ -100,8 +100,9 @@ e2eTest(
 	},
 	async (browser) => {
 		await waitForSettledPage(browser, "/", '[data-testid="floor-note"]');
-		// The logo is done once it shows the 3D canvas, or nothing at all (the
-		// 3D failed and its boundary dropped it), or a removal already failed.
+		// The logo is done once its 3D scene has mounted (canvas shown, loading
+		// spinner gone), or it shows nothing at all (the 3D failed and its
+		// boundary dropped it), or a removal already failed.
 		await browser.waitFor(
 			"the hero logo to finish loading",
 			(key) => {
@@ -109,7 +110,8 @@ e2eTest(
 				const misses = (window as unknown as Record<string, unknown[]>)[key];
 				return (
 					misses.length > 0 ||
-					Boolean(logo?.querySelector("canvas")) ||
+					(Boolean(logo?.querySelector("canvas")) &&
+						!logo?.querySelector('[data-testid="hero-logo-loading"]')) ||
 					(logo !== null && logo.children.length === 0)
 				);
 			},

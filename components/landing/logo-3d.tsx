@@ -179,7 +179,10 @@ export function Logo3D() {
 				</Suspense>
 			</Canvas>
 			{!sceneReady && (
-				<div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+				<div
+					className="absolute inset-0 flex items-center justify-center pointer-events-none"
+					data-testid="hero-logo-loading"
+				>
 					<Spinner />
 				</div>
 			)}

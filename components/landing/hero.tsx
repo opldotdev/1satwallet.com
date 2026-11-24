@@ -90,9 +90,11 @@ export function LandingHero() {
 				}}
 			/>
 
-			<div className="relative z-20 w-full px-6 text-center">
+			{/* No stacking context here: the logo and tagline sit under peer cursors (z-30),
+			    the call-to-action sits above them (z-40) so a cursor never takes its click. */}
+			<div className="relative w-full px-6 text-center">
 				<h1 className="sr-only">1Sat Wallet</h1>
-				<div>
+				<div className="relative z-20">
 					<div aria-hidden="true" data-testid="hero-logo">
 						<ThreeBoundary>
 							{useStaticLogo ? <StaticLogo /> : <Logo3D />}
@@ -107,7 +109,7 @@ export function LandingHero() {
 					</p>
 				</div>
 
-				<div className="mx-auto mt-7 flex max-w-md flex-col items-center gap-4">
+				<div className="relative z-40 mx-auto mt-7 flex max-w-md flex-col items-center gap-4">
 					<Button
 						className="scale-100 font-bold shadow-[0_0_20px_-5px_var(--primary)] transition-[box-shadow,transform] duration-300 hover:scale-105 hover:shadow-[0_0_30px_-5px_var(--primary)]"
 						asChild

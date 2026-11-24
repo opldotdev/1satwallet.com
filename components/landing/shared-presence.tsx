@@ -520,8 +520,8 @@ function LiveFloor({
 
 	return (
 		<>
-			{/* Above the hero content (z-20), so a peer's cursor stays clickable
-			    over the logo; the layer itself lets clicks through. */}
+			{/* Above the logo and tagline (z-20) so a peer's cursor stays clickable there,
+			    below the hero's call-to-action (z-40); the layer itself lets clicks through. */}
 			<div
 				ref={containerRef}
 				className="absolute inset-0 z-30 overflow-hidden pointer-events-none"
