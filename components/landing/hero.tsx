@@ -96,7 +96,13 @@ export function LandingHero() {
 				<h1 className="sr-only">1Sat Wallet</h1>
 				<div className="relative z-20">
 					<div aria-hidden="true" data-testid="hero-logo">
-						<ThreeBoundary>
+						<ThreeBoundary
+							fallback={
+								<div data-testid="hero-logo-fallback">
+									<StaticLogo />
+								</div>
+							}
+						>
 							{useStaticLogo ? <StaticLogo /> : <Logo3D />}
 						</ThreeBoundary>
 					</div>

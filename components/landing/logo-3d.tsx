@@ -24,7 +24,6 @@ import {
 } from "three/examples/jsm/loaders/FontLoader.js";
 import { Spinner } from "@/components/ui/spinner";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import { Rings, type RingsControls } from "./ordinal-logo-3d";
 
 // Font data types matching Three.js FontLoader output
@@ -73,6 +72,7 @@ export function Logo3D() {
 		border: THREE.Color;
 	} | null>(null);
 	const [font, setFont] = useState<FontWithData | null>(null);
+	const [fontError, setFontError] = useState<Error | null>(null);
 	const [sceneReady, setSceneReady] = useState(false);
 	const markSceneReady = useCallback(() => setSceneReady(true), []);
 
@@ -137,17 +137,19 @@ export function Logo3D() {
 				setFont(loadedFont as FontWithData);
 			},
 			undefined,
-			() => {
-				reportDiagnostic({
-					category: "route",
-					code: "route.unexpected",
-					operation: "landing.logo.font",
-					recoverable: true,
-				});
+			(error) => {
+				// Thrown on the next render, so the logo's boundary records it and
+				// shows the static logo instead of an endless spinner.
+				setFontError(
+					new Error(`The 3D logo's font did not load from ${FONT_JSON_URL}.`, {
+						cause: error,
+					}),
+				);
 			},
 		);
 	}, []);
 
+	if (fontError) throw fontError;
 	if (!colors || !font)
 		return (
 			<div className="h-[280px] md:h-[360px] w-full bg-transparent flex items-center justify-center">

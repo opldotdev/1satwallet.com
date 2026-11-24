@@ -101,8 +101,8 @@ e2eTest(
 	async (browser) => {
 		await waitForSettledPage(browser, "/", '[data-testid="floor-note"]');
 		// The logo is done once its 3D scene has mounted (canvas shown, loading
-		// spinner gone), or it shows nothing at all (the 3D failed and its
-		// boundary dropped it), or a removal already failed.
+		// spinner gone), or the 3D failed and its boundary shows the static
+		// logo instead, or a removal already failed.
 		await browser.waitFor(
 			"the hero logo to finish loading",
 			(key) => {
@@ -112,7 +112,7 @@ e2eTest(
 					misses.length > 0 ||
 					(Boolean(logo?.querySelector("canvas")) &&
 						!logo?.querySelector('[data-testid="hero-logo-loading"]')) ||
-					(logo !== null && logo.children.length === 0)
+					Boolean(logo?.querySelector('[data-testid="hero-logo-fallback"]'))
 				);
 			},
 			DOM_MISSES_KEY,
