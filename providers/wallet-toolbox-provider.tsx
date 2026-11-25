@@ -97,7 +97,15 @@ import {
 	surfaceForConnection,
 } from "@/lib/wallet/provider-capabilities";
 import { isRateLimited, withRateLimitRetry } from "@/lib/wallet/rate-limit";
-import { walletStorageUrl } from "@/lib/wallet/storage-endpoint";
+import {
+	normalizeStorageUrl,
+	saveStorageChoice,
+} from "@/lib/wallet/storage-choice";
+import {
+	defaultWalletStorageUrl,
+	storageHostOf,
+	walletStorageUrl,
+} from "@/lib/wallet/storage-endpoint";
 import {
 	hasStoredWallet,
 	readWalletChain,
@@ -255,6 +263,32 @@ export type WalletEvent =
 			message: string;
 	  };
 
+/**
+ * The built-in wallet's storage, as `@1sat/wallet` reports it: which store is
+ * active, whether it takes writes, and the key of a store the wallet moved to
+ * on another device that this browser has no address for.
+ */
+export interface WalletStorageState {
+	activeRemoteUrl: string | undefined;
+	activeStorageKey: string | undefined;
+	writable: boolean;
+	movedTo: string | undefined;
+}
+
+/**
+ * `getStorageStatus` arrived after @1sat/wallet-browser 0.1.2, which also
+ * reclaims the active store on every open. Switching stays hidden until the
+ * installed wallet reports its status, so an older wallet never switches.
+ */
+function storageStatusOf(
+	result: WebWalletResult | null,
+): WalletStorageState | null {
+	const read = (
+		result as { getStorageStatus?: () => WalletStorageState } | null
+	)?.getStorageStatus;
+	return typeof read === "function" ? read() : null;
+}
+
 interface WalletToolboxContextValue {
 	wallet: WalletInterface | null;
 	permissionsManager: WalletPermissionsManager | null;
@@ -318,6 +352,18 @@ interface WalletToolboxContextValue {
 	disconnectExternalWallet: () => Promise<void>;
 	destroyWallet: () => Promise<void>;
 	refreshBalance: () => void;
+
+	/** The built-in wallet's storage; null for an external wallet or an older SDK. */
+	storageStatus: WalletStorageState | null;
+	/** True when the built-in wallet can move to another storage provider. */
+	canChangeWalletStorage: boolean;
+	/**
+	 * Makes `url` the built-in wallet's active storage provider, the one that
+	 * keeps its data and broadcasts its transactions. When the wallet was moved
+	 * on another device, `url` must be that store. Throws when the provider
+	 * can't be reached or doesn't end up as the writable active store.
+	 */
+	changeWalletStorage: (url: string) => Promise<void>;
 }
 
 const WalletToolboxContext = createContext<
@@ -365,6 +411,9 @@ export function WalletToolboxProvider({
 		useState<WalletConnectionStatus>("no-wallet");
 	const [providerType, setProviderType] = useState<string | null>(null);
 	const walletResultRef = useRef<WebWalletResult | null>(null);
+	const [storageStatus, setStorageStatus] = useState<WalletStorageState | null>(
+		null,
+	);
 	// The built-in wallet's manager and overlay, kept beside walletResultRef so
 	// switching back from an external wallet restores them.
 	const localPermissionsRef = useRef<{
@@ -666,6 +715,7 @@ export function WalletToolboxProvider({
 			setColorOverlay(null);
 			setServices(null);
 			setIdentityKey(null);
+			setStorageStatus(null);
 			setConnectionMode("none");
 			setConnectionStatus(status);
 			setProviderType(null);
@@ -859,6 +909,7 @@ export function WalletToolboxProvider({
 				setServices(externalServices);
 				setPermissionsManager(null);
 				setIdentityKey(result.identityKey);
+				setStorageStatus(null);
 				setDepositAddress(addresses[0] ?? null);
 				setReceiveAddresses(addresses);
 				setTrackedAddresses(addresses);
@@ -1065,7 +1116,7 @@ export function WalletToolboxProvider({
 				const storageIdentityKey =
 					await loadOrCreateWalletStorageIdentity(chain);
 
-				const activeRemote = walletStorageUrl(chain);
+				const activeRemote = walletStorageUrl(chain, newIdentityKey);
 				// The wallet server rate-limits; a busy moment shouldn't fail the open.
 				// Stops once the wallet is locked or reopened meanwhile.
 				const result = await withRateLimitRetry(
@@ -1163,6 +1214,7 @@ export function WalletToolboxProvider({
 				setPermissionsManager(wpm);
 				setColorOverlay(color?.overlay ?? null);
 				setIdentityKey(newIdentityKey);
+				setStorageStatus(storageStatusOf(result));
 				setConnectionMode("built-in");
 				setConnectionStatus("ready");
 				setProviderType("1sat-web");
@@ -1284,6 +1336,7 @@ export function WalletToolboxProvider({
 				addressManagerRef.current = addressManager;
 				receiveStateRef.current = state;
 				setIdentityKey(localReceive.identityKey);
+				setStorageStatus(storageStatusOf(local));
 				setReceiveAddressIndex(state.currentIndex);
 				setDepositAddress(getDepositAddress(addressManager, state) || null);
 				setReceiveAddresses(getActiveReceiveAddresses(addressManager, state));
@@ -1343,6 +1396,7 @@ export function WalletToolboxProvider({
 				setServices(externalServices);
 				setPermissionsManager(null);
 				setIdentityKey(result.identityKey);
+				setStorageStatus(null);
 				setDepositAddress(addresses[0] ?? null);
 				setReceiveAddresses(addresses);
 				setTrackedAddresses(addresses);
@@ -1435,6 +1489,78 @@ export function WalletToolboxProvider({
 		isInitializing || balanceSyncStatus.isSyncing || syncEngineActive;
 
 	// -- Context value --
+	const changeWalletStorage = useCallback(
+		async (input: string) => {
+			const result = walletResultRef.current;
+			const before = storageStatusOf(result);
+			if (!result || !before || connectionMode !== "built-in" || !identityKey) {
+				throw new Error("Open your built-in wallet to change its storage.");
+			}
+			const url = normalizeStorageUrl(input);
+			const provider = storageHostOf(url);
+			const mode = before.movedTo ? "follow" : "switch";
+			reportDiagnostic({
+				category: "provider",
+				code: "provider.state",
+				operation: "wallet.storage.change",
+				recoverable: true,
+				context: { status: "requested", mode, provider },
+			});
+			try {
+				// After a move made on another device, add the store the wallet
+				// moved to and follow it; switching here would undo that move.
+				if (before.movedTo) await result.addRemote(url);
+				else await result.setActiveStorage(url);
+			} catch (error) {
+				setStorageStatus(storageStatusOf(result));
+				reportFailure(
+					{
+						category: "provider",
+						code: "provider.failed",
+						operation: "wallet.storage.change",
+						recoverable: true,
+						context: { mode, provider },
+					},
+					error,
+				);
+				throw new Error(
+					`Couldn't switch to ${provider}. Check the address and try again.`,
+				);
+			}
+			const after = storageStatusOf(result);
+			setStorageStatus(after);
+			if (!after?.writable || after.activeRemoteUrl !== url) {
+				reportDiagnostic({
+					category: "provider",
+					code: "provider.failed",
+					operation: "wallet.storage.change",
+					recoverable: true,
+					context: { status: "not-active", mode, provider },
+				});
+				throw new Error(
+					before.movedTo
+						? "That isn't the storage your wallet moved to. Check the address used on your other device."
+						: "The new storage provider didn't take over the wallet. Check the address and try again.",
+				);
+			}
+			saveStorageChoice(
+				chain,
+				identityKey,
+				url,
+				defaultWalletStorageUrl(chain),
+			);
+			reportDiagnostic({
+				category: "provider",
+				code: "provider.state",
+				operation: "wallet.storage.change",
+				recoverable: true,
+				context: { status: "active", mode, provider },
+			});
+			refreshBalance();
+		},
+		[chain, connectionMode, identityKey, refreshBalance],
+	);
+
 	const value = useMemo<WalletToolboxContextValue>(
 		() => ({
 			wallet,
@@ -1482,6 +1608,10 @@ export function WalletToolboxProvider({
 			disconnectExternalWallet,
 			destroyWallet,
 			refreshBalance: refreshBalance,
+			storageStatus,
+			canChangeWalletStorage:
+				connectionMode === "built-in" && storageStatus !== null,
+			changeWalletStorage,
 		}),
 		[
 			wallet,
@@ -1528,6 +1658,8 @@ export function WalletToolboxProvider({
 			disconnectExternalWallet,
 			destroyWallet,
 			refreshBalance,
+			storageStatus,
+			changeWalletStorage,
 		],
 	);
 
