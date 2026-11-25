@@ -25,11 +25,15 @@ import {
 	SidebarMenuItem,
 	useSidebar,
 } from "@/components/ui/sidebar";
-import { useSound } from "@/hooks/use-sound";
 import {
-	isConnectionAvailable,
-	type WalletConnectionOption,
-} from "@/lib/wallet/connection-options";
+	LocalWalletBlockedHelp,
+	LocalWalletPrimer,
+	LocalWalletWaiting,
+} from "@/components/wallet/local-wallet-access";
+import { useSound } from "@/hooks/use-sound";
+import { useWalletDiscovery } from "@/hooks/use-wallet-discovery";
+import type { WalletConnectionOption } from "@/lib/wallet/connection-options";
+import { coverageFor } from "@/lib/wallet/discovery/discovery";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
 export function NavUser({
@@ -50,37 +54,65 @@ export function NavUser({
 		switchWallet,
 	} = useWalletToolbox();
 	const [menuOpen, setMenuOpen] = useState(false);
-	const [availability, setAvailability] = useState<
-		Record<"injected" | "desktop", boolean | null>
-	>({ injected: null, desktop: null });
-
+	const discovery = useWalletDiscovery(menuOpen);
+	const { snapshot, phase } = discovery;
+	const [localPanel, setLocalPanel] = useState<"primer" | "help" | null>(null);
+	const [lookError, setLookError] = useState<string | null>(null);
+	const [host, setHost] = useState("");
+	useEffect(() => setHost(window.location.host), []);
 	useEffect(() => {
-		if (!menuOpen) return;
-		let active = true;
-		void Promise.all([
-			isConnectionAvailable("injected"),
-			isConnectionAvailable("desktop"),
-		]).then(([injected, desktop]) => {
-			if (active) setAvailability({ injected, desktop });
-		});
-		const onFocus = () => {
-			void Promise.all([
-				isConnectionAvailable("injected"),
-				isConnectionAvailable("desktop"),
-			]).then(([injected, desktop]) => {
-				if (active) setAvailability({ injected, desktop });
-			});
-		};
-		window.addEventListener("focus", onFocus);
-		return () => {
-			active = false;
-			window.removeEventListener("focus", onFocus);
-		};
+		if (!menuOpen) setLocalPanel(null);
 	}, [menuOpen]);
+
+	const found = (option: "injected" | "desktop") =>
+		!!snapshot?.candidates.some((candidate) => candidate.option === option);
+	const windowCoverage = coverageFor(snapshot, "window.CWI");
+	const local = coverageFor(snapshot, "loopback");
+	const localNeedsAsk =
+		local?.cause === "permission-required" ||
+		local?.cause === "permission-declined";
+	const localDenied = local?.cause === "permission-denied";
+	const waiting = phase === "waiting";
+
+	const statusText = (option: "injected" | "desktop") => {
+		const coverage = option === "injected" ? windowCoverage : local;
+		if (found(option)) return "Available";
+		if (option === "desktop" && waiting) return "Waiting";
+		if (!coverage || phase === "scanning") return "Checking";
+		if (option === "desktop" && localNeedsAsk) return "Look for it";
+		if (option === "desktop" && localDenied) return "Blocked";
+		if (coverage.state === "unsupported") return "Not found";
+		return "Not detected";
+	};
 
 	const switchTo = (option: WalletConnectionOption) => {
 		play("click");
 		void switchWallet(option);
+	};
+
+	const lookForLocalWallet = async () => {
+		setLocalPanel(null);
+		setLookError(null);
+		try {
+			const result = await discovery.elicit();
+			if (!result) return;
+			if (result.outcome === "denied") {
+				setLocalPanel("help");
+				return;
+			}
+			if (
+				result.snapshot.candidates.some(({ adapter }) => adapter === "loopback")
+			) {
+				setMenuOpen(false);
+				switchTo("desktop");
+			}
+		} catch (error) {
+			setLookError(
+				error instanceof Error
+					? `Couldn't look for a wallet on this computer: ${error.message}`
+					: "Couldn't look for a wallet on this computer.",
+			);
+		}
 	};
 
 	return (
@@ -130,27 +162,56 @@ export function NavUser({
 							<Puzzle className="mr-2 h-4 w-4" />
 							Injected
 							<span className="ml-auto text-xs text-muted-foreground">
-								{availability.injected === null
-									? "Checking"
-									: availability.injected
-										? "Available"
-										: "Not detected"}
+								{statusText("injected")}
 							</span>
 						</DropdownMenuItem>
 						<DropdownMenuItem
-							disabled={isInitializing}
-							onSelect={() => switchTo("desktop")}
+							disabled={isInitializing || waiting}
+							onSelect={(event) => {
+								// The browser must be asked first (BRC-325): explain
+								// inside this menu, never by probing on the click.
+								if (localNeedsAsk) {
+									event.preventDefault();
+									setLocalPanel("primer");
+									return;
+								}
+								if (localDenied) {
+									event.preventDefault();
+									setLocalPanel("help");
+									return;
+								}
+								switchTo("desktop");
+							}}
 						>
 							<Laptop className="mr-2 h-4 w-4" />
 							Desktop
 							<span className="ml-auto text-xs text-muted-foreground">
-								{availability.desktop === null
-									? "Checking"
-									: availability.desktop
-										? "Available"
-										: "Not detected"}
+								{statusText("desktop")}
 							</span>
 						</DropdownMenuItem>
+						{waiting ? (
+							<LocalWalletWaiting
+								className="px-2 py-2"
+								onStop={discovery.stopWaiting}
+							/>
+						) : localPanel === "primer" ? (
+							<LocalWalletPrimer
+								className="px-2 py-2"
+								host={host}
+								onLook={() => void lookForLocalWallet()}
+								onSkip={() => setLocalPanel(null)}
+							/>
+						) : localPanel === "help" && localDenied ? (
+							<LocalWalletBlockedHelp
+								className="px-2 py-2"
+								onHide={() => setLocalPanel(null)}
+							/>
+						) : null}
+						{lookError && (
+							<p className="px-2 py-1 text-sm text-destructive" role="alert">
+								{lookError}
+							</p>
+						)}
 						<DropdownMenuItem
 							disabled={isInitializing}
 							onSelect={() => switchTo("embedded")}

@@ -5,17 +5,26 @@ import {
 	ArrowRight,
 	Laptop,
 	Loader2,
+	type LucideIcon,
 	Puzzle,
 	RefreshCw,
 	Smartphone,
+	Wallet,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-	isConnectionAvailable,
-	type WalletConnectionOption,
-} from "@/lib/wallet/connection-options";
+	LocalWalletBlockedHelp,
+	LocalWalletPrimer,
+	LocalWalletWaiting,
+} from "@/components/wallet/local-wallet-access";
+import { useWalletDiscovery } from "@/hooks/use-wallet-discovery";
+import {
+	type AdapterCoverage,
+	coverageFor,
+} from "@/lib/wallet/discovery/discovery";
+import { type Slide, walletSlides } from "@/lib/wallet/discovery/slides";
 import {
 	isWalletAppBrowser,
 	markHostWalletConnectTried,
@@ -28,32 +37,6 @@ import {
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import styles from "./wallet-connect-carousel.module.css";
 
-const options = [
-	{
-		id: "embedded",
-		name: "Embedded mobile",
-		icon: Smartphone,
-		description:
-			"Your wallet, right here. Create a new wallet or bring one you already own.",
-		hint: "Encrypted and stored on this device.",
-	},
-	{
-		id: "injected",
-		name: "Injected wallet",
-		icon: Puzzle,
-		description: "Connect a wallet extension in your browser.",
-		hint: "Enable your wallet extension, then check again.",
-	},
-	{
-		id: "desktop",
-		name: "Desktop Wallet",
-		icon: Laptop,
-		description: "Connect to the wallet running on your computer.",
-		hint: "Open your desktop wallet, then check again.",
-	},
-] as const;
-type Availability = Record<WalletConnectionOption, boolean | null>;
-
 function savedConnectionMode(): string | null {
 	try {
 		return window.localStorage.getItem(WALLET_CONNECTION_MODE_KEY);
@@ -65,81 +48,306 @@ function savedConnectionMode(): string | null {
 		return "unreadable";
 	}
 }
-const walletAppSlide = {
-	name: "Your wallet app",
-	description:
-		"This page is open in your wallet app. Connect it to use it here.",
-};
+
+type LocalPanel = "primer" | "help" | null;
+
+function localStatus(
+	coverage: AdapterCoverage | undefined,
+	scanning: boolean,
+	appName: string,
+): string {
+	if (!coverage || (scanning && coverage.state !== "blocked")) {
+		return "Checking this computer…";
+	}
+	switch (coverage.cause) {
+		case "permission-required":
+			return "Not checked yet";
+		case "permission-declined":
+			return "Your browser's question closed without an answer. Nothing was shared.";
+		case "permission-denied":
+			return "Blocked by your browser";
+		case "timeout":
+		case "no-response":
+			return `${appName} didn't answer`;
+		default:
+			return "Not running on this computer";
+	}
+}
 
 export function WalletConnectCarousel() {
 	const { isInitializing, initError, connectExternalWallet } =
 		useWalletToolbox();
-	const [active, setActive] = useState(0);
-	const [availability, setAvailability] = useState<Availability>({
-		embedded: null,
-		injected: null,
-		desktop: null,
-	});
-	const [checking, setChecking] = useState(true);
-	const mounted = useRef(false);
-	const checkingRef = useRef(false);
+	const discovery = useWalletDiscovery();
+	const { platform, snapshot, phase } = discovery;
+	const [walletApp, setWalletApp] = useState(false);
+	const [host, setHost] = useState("");
+	const [activeKey, setActiveKey] = useState<string | null>(null);
+	const [localPanel, setLocalPanel] = useState<LocalPanel>(null);
+	const [helpHidden, setHelpHidden] = useState(false);
+	const [lookError, setLookError] = useState<string | null>(null);
 	const start = useRef<number | null>(null);
-	const move = (step: number) =>
-		setActive((value) => (value + step + options.length) % options.length);
 	const connectRef = useRef(connectExternalWallet);
 	connectRef.current = connectExternalWallet;
 	const initializingRef = useRef(isInitializing);
 	initializingRef.current = isInitializing;
-	const check = useCallback(async () => {
-		if (checkingRef.current) return;
-		checkingRef.current = true;
-		setChecking(true);
-		try {
-			const results = await Promise.all(
-				options.map(
-					async ({ id }) => [id, await isConnectionAvailable(id)] as const,
-				),
-			);
-			if (!mounted.current) return;
-			setAvailability(Object.fromEntries(results) as Availability);
-			// Opened in a wallet app's browser (Metanet / bsv-browser) whose
-			// wallet answered: connect it, as other BRC-100 apps do there. Once
-			// per tab session, so a disconnect or a declined prompt leaves this
-			// picker in place.
-			const injected = results.some(([id, ok]) => id === "injected" && ok);
-			if (
-				injected &&
-				!initializingRef.current &&
-				shouldConnectHostWallet({
-					savedConnectionMode: savedConnectionMode(),
-					hasStoredWallet: hasStoredWallet(),
-				})
-			) {
-				markHostWalletConnectTried();
-				void connectRef.current("injected");
-			}
-		} finally {
-			checkingRef.current = false;
-			if (mounted.current) setChecking(false);
+
+	useEffect(() => {
+		setWalletApp(isWalletAppBrowser());
+		setHost(window.location.host);
+	}, []);
+
+	const slides = walletSlides(platform, snapshot?.candidates ?? []);
+	// Until the user moves, the first slide leads: whatever the scan found.
+	const activeIndex = Math.max(
+		0,
+		slides.findIndex(({ key }) => key === activeKey),
+	);
+	const show = (index: number) =>
+		setActiveKey(slides[(index + slides.length) % slides.length]?.key ?? null);
+	const move = (step: number) => show(activeIndex + step);
+
+	// Opened in a wallet app's browser (Metanet / bsv-browser) whose wallet
+	// answered: connect it, as other BRC-100 apps do there. Once per tab
+	// session, so a disconnect or a declined prompt leaves this picker in place.
+	const foundInjected = !!snapshot?.candidates.some(
+		({ option }) => option === "injected",
+	);
+	useEffect(() => {
+		if (
+			foundInjected &&
+			isWalletAppBrowser() &&
+			!initializingRef.current &&
+			shouldConnectHostWallet({
+				savedConnectionMode: savedConnectionMode(),
+				hasStoredWallet: hasStoredWallet(),
+			})
+		) {
+			markHostWalletConnectTried();
+			void connectRef.current("injected");
 		}
-	}, []);
-	// In a wallet app's browser, open on that app's wallet rather than on
-	// creating a separate one here.
-	const [walletApp, setWalletApp] = useState(false);
-	useEffect(() => {
-		if (!isWalletAppBrowser()) return;
-		setWalletApp(true);
-		setActive(options.findIndex(({ id }) => id === "injected"));
-	}, []);
-	useEffect(() => {
-		mounted.current = true;
-		void check();
-		window.addEventListener("focus", check);
-		return () => {
-			mounted.current = false;
-			window.removeEventListener("focus", check);
+	}, [foundInjected]);
+
+	const local = coverageFor(snapshot, "loopback");
+	const waiting = phase === "waiting";
+	const busy = isInitializing || waiting;
+
+	const lookForLocalWallet = async () => {
+		setLocalPanel(null);
+		setLookError(null);
+		try {
+			const result = await discovery.elicit();
+			if (!result) return;
+			if (result.outcome === "denied") {
+				setHelpHidden(false);
+				return;
+			}
+			// BRC-325 section 6.3: back to what the user was doing, which was
+			// connecting.
+			const found = result.snapshot.candidates.find(
+				({ adapter }) => adapter === "loopback",
+			);
+			if (found) {
+				setActiveKey(`${found.adapter}:${found.option}`);
+				void connectExternalWallet(found.option);
+			}
+		} catch (error) {
+			setLookError(
+				error instanceof Error
+					? `Couldn't look for a wallet on this computer: ${error.message}`
+					: "Couldn't look for a wallet on this computer.",
+			);
+		}
+	};
+
+	const slideView = (
+		slide: Slide,
+	): {
+		name: string;
+		icon: LucideIcon;
+		description: string;
+		body: React.ReactNode;
+	} => {
+		if (slide.kind === "candidate") {
+			const { candidate } = slide;
+			const inApp = candidate.adapter === "window.CWI" && walletApp;
+			return {
+				name: candidate.name,
+				icon:
+					candidate.adapter === "loopback"
+						? Laptop
+						: inApp
+							? Smartphone
+							: Puzzle,
+				description: inApp
+					? "This page is open in your wallet app. Connect it to use it here."
+					: candidate.adapter === "loopback"
+						? "Found running on this computer."
+						: "Found in this browser.",
+				body: (
+					<>
+						<Status ok text="Ready to connect" />
+						<div className={styles.actions}>
+							<Button
+								disabled={busy}
+								variant="secondary"
+								onClick={() => void connectExternalWallet(candidate.option)}
+							>
+								{isInitializing && (
+									<Loader2 className="motion-safe:animate-spin" />
+								)}{" "}
+								{isInitializing ? "Connecting…" : "Connect"}
+							</Button>
+						</div>
+						<p className={styles.hint}>
+							Approve the connection in your wallet.
+						</p>
+					</>
+				),
+			};
+		}
+		if (slide.kind === "local") {
+			const mac = platform === "mac";
+			const appName = mac ? "1Sat Wallet for Mac" : "Your desktop wallet";
+			const name = mac ? "1Sat Wallet for Mac" : "Desktop wallet";
+			const description = mac
+				? "Connect the 1Sat Wallet app on this Mac."
+				: "Connect a wallet app running on this computer.";
+			if (waiting) {
+				return {
+					name,
+					icon: Laptop,
+					description: "",
+					body: (
+						<LocalWalletWaiting
+							className={styles.panel}
+							onStop={discovery.stopWaiting}
+						/>
+					),
+				};
+			}
+			if (localPanel === "primer") {
+				return {
+					name,
+					icon: Laptop,
+					description: "",
+					body: (
+						<LocalWalletPrimer
+							className={styles.panel}
+							host={host}
+							onLook={() => void lookForLocalWallet()}
+							onSkip={() => setLocalPanel(null)}
+						/>
+					),
+				};
+			}
+			const needsAsk =
+				local?.cause === "permission-required" ||
+				local?.cause === "permission-declined";
+			const denied = local?.cause === "permission-denied";
+			return {
+				name,
+				icon: Laptop,
+				description: denied && !helpHidden ? "" : description,
+				body: (
+					<>
+						<Status
+							ok={false}
+							text={localStatus(local, phase === "scanning", appName)}
+						/>
+						{denied && !helpHidden ? (
+							<LocalWalletBlockedHelp
+								className={styles.panel}
+								onHide={() => setHelpHidden(true)}
+							/>
+						) : (
+							<div className={styles.actions}>
+								{needsAsk ? (
+									<Button
+										variant="secondary"
+										disabled={busy}
+										onClick={() => setLocalPanel("primer")}
+									>
+										Look for it
+									</Button>
+								) : (
+									<Button
+										variant="secondary"
+										disabled={busy || phase === "scanning" || denied}
+										onClick={discovery.refresh}
+									>
+										<RefreshCw
+											className={
+												phase === "scanning" ? "motion-safe:animate-spin" : ""
+											}
+										/>
+										Check again
+									</Button>
+								)}
+								{mac && (
+									<Button asChild variant="ghost">
+										<Link href="/download">Get the app</Link>
+									</Button>
+								)}
+							</div>
+						)}
+						{!needsAsk && !denied && (
+							<p className={styles.hint}>
+								{mac
+									? "Open 1Sat Wallet on this Mac, then check again."
+									: "Open your desktop wallet, then check again."}
+							</p>
+						)}
+						{lookError && (
+							<p className="text-destructive text-sm" role="alert">
+								{lookError}
+							</p>
+						)}
+					</>
+				),
+			};
+		}
+		if (slide.kind === "phone-app") {
+			return {
+				name: "1Sat Wallet for iPhone",
+				icon: Smartphone,
+				description: "Keep your wallet in the 1Sat Wallet app on your iPhone.",
+				body: (
+					<>
+						<Status ok text="Beta on TestFlight" />
+						<div className={styles.actions}>
+							<Button asChild variant="secondary">
+								<Link href="/download">Get the app</Link>
+							</Button>
+						</div>
+						<p className={styles.hint}>
+							Already installed? Open it from your home screen.
+						</p>
+					</>
+				),
+			};
+		}
+		return {
+			name: "Wallet in this browser",
+			icon: Wallet,
+			description: "Create a new wallet or bring one you already own.",
+			body: (
+				<>
+					<Status ok text="Ready here" />
+					<div className={styles.actions}>
+						<Button asChild variant="secondary">
+							<Link href="/wallet/create">Create wallet</Link>
+						</Button>
+						<Button asChild variant="ghost">
+							<Link href="/wallet/import">Import wallet</Link>
+						</Button>
+					</div>
+					<p className={styles.hint}>Encrypted and stored on this device.</p>
+				</>
+			),
 		};
-	}, [check]);
+	};
+
+	const views = slides.map((slide) => ({ slide, ...slideView(slide) }));
 
 	return (
 		<section
@@ -155,7 +363,7 @@ export function WalletConnectCarousel() {
 				onTouchEnd={(event) => {
 					const end = event.changedTouches[0]?.clientX;
 					if (
-						!isInitializing &&
+						!busy &&
 						start.current !== null &&
 						end !== undefined &&
 						Math.abs(end - start.current) > 60
@@ -164,24 +372,20 @@ export function WalletConnectCarousel() {
 					start.current = null;
 				}}
 			>
-				{options.map((option, index) => {
-					const { id, icon: Icon, hint } = option;
-					const { name, description } =
-						walletApp && id === "injected" ? walletAppSlide : option;
+				{views.map(({ slide, name, icon: Icon, description, body }, index) => {
 					const offset =
-						index === active
+						index === activeIndex
 							? 0
-							: (index - active + options.length) % options.length === 1
+							: (index - activeIndex + slides.length) % slides.length === 1
 								? 1
 								: -1;
-					const available = availability[id];
 					return (
 						<section
-							key={id}
+							key={slide.key}
 							className={styles.slide}
 							data-position={offset}
 							aria-roledescription="slide"
-							aria-label={`${name}, ${index + 1} of 3`}
+							aria-label={`${name}, ${index + 1} of ${slides.length}`}
 						>
 							<div
 								className={styles.slideContent}
@@ -194,116 +398,62 @@ export function WalletConnectCarousel() {
 									aria-hidden="true"
 								/>
 								<h2>{name}</h2>
-								<p className={styles.description}>{description}</p>
-								<p className={styles.status} role="status">
-									<span
-										className={
-											available || id === "embedded"
-												? styles.available
-												: styles.unavailable
-										}
-									/>
-									{id === "embedded"
-										? "Built-in wallet available"
-										: checking
-											? "Checking availability…"
-											: available
-												? "Available to connect"
-												: "Not detected"}
-								</p>
-								<div className={styles.actions}>
-									{id === "embedded" ? (
-										<>
-											<Button asChild variant="secondary">
-												<Link href="/wallet/create">Create wallet</Link>
-											</Button>
-											<Button asChild variant="ghost">
-												<Link href="/wallet/import">Import wallet</Link>
-											</Button>
-										</>
-									) : (
-										<Button
-											disabled={!available || isInitializing}
-											variant="secondary"
-											onClick={() => void connectExternalWallet(id)}
-										>
-											{isInitializing && (
-												<Loader2 className="motion-safe:animate-spin" />
-											)}{" "}
-											{isInitializing ? "Connecting…" : "Connect"}
-										</Button>
-									)}
-								</div>
-								<p className={styles.hint}>
-									{id === "embedded"
-										? hint
-										: available
-											? "Approve the connection in your wallet."
-											: hint}
-								</p>
-								{id !== "embedded" && (
-									<Button
-										variant="ghost"
-										size="sm"
-										disabled={checking || isInitializing}
-										onClick={() => void check()}
-									>
-										<RefreshCw
-											className={checking ? "motion-safe:animate-spin" : ""}
-										/>
-										Check again
-									</Button>
+								{description && (
+									<p className={styles.description}>{description}</p>
 								)}
+								{body}
 							</div>
 							{offset !== 0 && (
 								<button
 									className={styles.selectSide}
 									type="button"
 									aria-label={`Show ${name}`}
-									disabled={isInitializing}
-									onClick={() => setActive(index)}
+									disabled={busy}
+									onClick={() => show(index)}
 								/>
 							)}
 						</section>
 					);
 				})}
 			</div>
-			<div className={styles.controls}>
-				<Button
-					variant="ghost"
-					size="icon"
-					aria-label="Previous wallet option"
-					disabled={isInitializing}
-					onClick={() => move(-1)}
-				>
-					<ArrowLeft />
-				</Button>
-				<div className={styles.picker}>
-					{options.map(({ id, name, icon: Icon }, index) => (
-						<Button
-							key={id}
-							variant="ghost"
-							size="sm"
-							aria-label={name}
-							aria-pressed={active === index}
-							disabled={isInitializing}
-							onClick={() => setActive(index)}
-						>
-							<Icon />
-							<span>{name}</span>
-						</Button>
-					))}
+			{slides.length > 1 && (
+				<div className={styles.controls}>
+					<Button
+						variant="ghost"
+						size="icon"
+						aria-label="Previous wallet option"
+						disabled={busy}
+						onClick={() => move(-1)}
+					>
+						<ArrowLeft />
+					</Button>
+					<div className={styles.picker}>
+						{views.map(({ slide, name, icon: Icon }, index) => (
+							<Button
+								key={slide.key}
+								variant="ghost"
+								size="sm"
+								aria-label={name}
+								aria-pressed={activeIndex === index}
+								disabled={busy}
+								onClick={() => show(index)}
+							>
+								<Icon />
+								<span>{name}</span>
+							</Button>
+						))}
+					</div>
+					<Button
+						variant="ghost"
+						size="icon"
+						aria-label="Next wallet option"
+						disabled={busy}
+						onClick={() => move(1)}
+					>
+						<ArrowRight />
+					</Button>
 				</div>
-				<Button
-					variant="ghost"
-					size="icon"
-					aria-label="Next wallet option"
-					disabled={isInitializing}
-					onClick={() => move(1)}
-				>
-					<ArrowRight />
-				</Button>
-			</div>
+			)}
 			<div className="min-h-12 pt-4 text-center text-sm" aria-live="polite">
 				{initError && (
 					<p className="text-destructive" role="alert">
@@ -312,5 +462,14 @@ export function WalletConnectCarousel() {
 				)}
 			</div>
 		</section>
+	);
+}
+
+function Status({ ok, text }: { ok: boolean; text: string }) {
+	return (
+		<p className={styles.status} role="status">
+			<span className={ok ? styles.available : styles.unavailable} />
+			{text}
+		</p>
 	);
 }

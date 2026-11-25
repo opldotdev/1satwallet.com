@@ -27,7 +27,11 @@ export async function isConnectionAvailable(
 			}),
 		]);
 		return !!result && typeof result.version === "string";
-	} catch {
+	} catch (error) {
+		console.info(
+			`[wallet-connect] no ${option} wallet answered`,
+			error instanceof Error ? error.message : String(error),
+		);
 		return false;
 	} finally {
 		clearTimeout(timer);
