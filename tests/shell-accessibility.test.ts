@@ -74,10 +74,10 @@ describe("landing hero accessibility", () => {
 		assert.doesNotMatch(source, /<h1 className="sr-only"/);
 		assert.match(source, /aria-hidden="true"/);
 	});
-	it("offers the ways in as labelled buttons, with no explaining copy", () => {
+	it("offers the ways in: the wallet chooser, or a labelled button", () => {
 		const source = read("components/landing/hero.tsx");
 		assert.match(source, /data-testid="hero-cta"/);
-		assert.match(source, /Create wallet/);
+		assert.match(source, /<WalletConnectCarousel \/>/);
 		assert.match(source, /Unlock wallet/);
 		assert.match(source, /Open wallet/);
 		assert.doesNotMatch(source, /floor-note/);

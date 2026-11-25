@@ -152,13 +152,13 @@ export function Logo3D() {
 	if (fontError) throw fontError;
 	if (!colors || !font)
 		return (
-			<div className="h-[280px] md:h-[360px] w-full bg-transparent flex items-center justify-center">
+			<div className="h-[160px] md:h-[200px] w-full bg-transparent flex items-center justify-center">
 				<Spinner className="size-8 text-muted-foreground" />
 			</div>
 		);
 
 	return (
-		<div className="w-full min-w-0 h-[280px] md:h-[360px] relative cursor-default overflow-hidden">
+		<div className="w-full min-w-0 h-[160px] md:h-[200px] relative cursor-default overflow-hidden">
 			{/* Hide leva control panel in production */}
 			<Leva hidden />
 			<Canvas

@@ -32,7 +32,11 @@ interface VisitorRoute {
 }
 
 const ROUTES: readonly VisitorRoute[] = [
-	{ path: "/", ready: "h1", hasDefaultButton: false },
+	{
+		path: "/",
+		ready: '[aria-label="Choose a wallet"]',
+		hasDefaultButton: false,
+	},
 	{
 		path: "/wallet",
 		ready: '[aria-label="Choose a wallet"]',
