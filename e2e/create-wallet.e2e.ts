@@ -27,6 +27,13 @@ e2eTest(
 		};
 	},
 	async (browser) => {
+		// The first slide depends on the device (a Mac leads with the Mac app),
+		// so pick the browser wallet first.
+		await browser.click({
+			role: "button",
+			name: "Wallet in this browser",
+			within: { role: "region", name: "Choose a wallet" },
+		});
 		await browser.click({
 			role: "link",
 			name: "Create wallet",

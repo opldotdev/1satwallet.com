@@ -1,5 +1,10 @@
 import type { ConnectWalletResult } from "@1sat/connect";
 import { WalletClient } from "@bsv/sdk";
+import {
+	type LoopbackPermission,
+	loopbackAllowed,
+	readLoopbackPermission,
+} from "@/lib/wallet/discovery/loopback-permission";
 
 export type WalletConnectionOption = "injected" | "desktop" | "embedded";
 const substrates = {
@@ -27,7 +32,11 @@ export async function isConnectionAvailable(
 			}),
 		]);
 		return !!result && typeof result.version === "string";
-	} catch {
+	} catch (error) {
+		console.info(
+			`[wallet-connect] no ${option} wallet answered`,
+			error instanceof Error ? error.message : String(error),
+		);
 		return false;
 	} finally {
 		clearTimeout(timer);
@@ -53,10 +62,24 @@ export async function prepareWalletSwitch(
 	deps: {
 		probe?: typeof isConnectionAvailable;
 		connect?: typeof connectSelectedWallet;
+		readPermission?: () => Promise<LoopbackPermission>;
 	} = {},
 ): Promise<ConnectWalletResult> {
 	const probe = deps.probe ?? isConnectionAvailable;
 	const connect = deps.connect ?? connectSelectedWallet;
+	// A probe here is not preceded by an explanation, so it must never be
+	// the request that raises the browser's question (BRC-325).
+	if (target === "desktop") {
+		const readPermission =
+			deps.readPermission ??
+			(async () => (await readLoopbackPermission()).state);
+		if (!loopbackAllowed(await readPermission())) {
+			throw new WalletSwitchError(
+				"unavailable",
+				"The browser has not allowed this site to reach apps on this computer",
+			);
+		}
+	}
 	if (!(await probe(target))) {
 		throw new WalletSwitchError(
 			"unavailable",

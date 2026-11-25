@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { it } from "node:test";
+import { afterEach, beforeEach, it } from "node:test";
 import type { WalletClient } from "@bsv/sdk";
 import {
 	connectSelectedWallet,
@@ -7,6 +7,19 @@ import {
 	prepareWalletSwitch,
 	WalletSwitchError,
 } from "@/lib/wallet/connection-options";
+
+// A wallet that does not answer is logged; keep that log out of test output.
+const originalInfo = console.info;
+let informed: unknown[][] = [];
+beforeEach(() => {
+	informed = [];
+	console.info = (...args: unknown[]) => {
+		informed.push(args);
+	};
+});
+afterEach(() => {
+	console.info = originalInfo;
+});
 
 it("discovers availability without requesting authentication or identity", async () => {
 	const calls: string[] = [];
@@ -36,6 +49,7 @@ it("reports unavailable wallets and bounds unresponsive discovery", async () => 
 		getVersion: () => new Promise(() => {}),
 	} as unknown as WalletClient;
 	assert.equal(await isConnectionAvailable("desktop", () => client), false);
+	assert.match(String(informed[0]?.[1]), /unavailable/);
 });
 it("authenticates the selected wallet before requesting its identity", async () => {
 	const calls: string[] = [];
@@ -108,4 +122,22 @@ it("keeps identity derivation failures distinct from a missing wallet", async ()
 		(error: unknown) =>
 			error instanceof WalletSwitchError && error.reason === "identity-failed",
 	);
+});
+
+it("never switches to a desktop wallet before the browser allows it", async () => {
+	for (const permission of ["prompt", "denied"] as const) {
+		let probed = false;
+		await assert.rejects(
+			prepareWalletSwitch("desktop", {
+				readPermission: async () => permission,
+				probe: async () => {
+					probed = true;
+					return true;
+				},
+			}),
+			(error: unknown) =>
+				error instanceof WalletSwitchError && error.reason === "unavailable",
+		);
+		assert.equal(probed, false);
+	}
 });

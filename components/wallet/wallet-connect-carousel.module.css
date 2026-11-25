@@ -96,6 +96,12 @@
 	min-width: 130px;
 	height: 44px;
 }
+/* Primer, waiting and blocked help sit inside the slide (BRC-325 section 9.3). */
+.panel {
+	width: 100%;
+	max-width: 360px;
+	margin-top: 16px;
+}
 .hint {
 	margin-top: 16px;
 	color: var(--muted-foreground);
