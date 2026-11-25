@@ -25,6 +25,9 @@ describe("wallet storage endpoint", () => {
 				"https://storage.example:8443/wallet",
 			);
 			assert.equal(walletStorageHost("main"), "storage.example:8443");
+			process.env.NEXT_PUBLIC_WALLET_STORAGE_URL = "https://storage.example/";
+			// Normalized, so switching back to the default matches its store.
+			assert.equal(walletStorageUrl("main"), "https://storage.example");
 			// The override holds a mainnet URL; testnet keys must never use it.
 			assert.equal(walletStorageUrl("test"), "https://testnet.wallet.1sat.app");
 			assert.equal(walletStorageHost("test"), "testnet.wallet.1sat.app");
@@ -45,7 +48,7 @@ describe("wallet storage endpoint", () => {
 		const provider = read("providers/wallet-toolbox-provider.tsx");
 		assert.match(
 			provider,
-			/const activeRemote = walletStorageUrl\(chain, newIdentityKey\);/,
+			/const chosenRemote = walletStorageUrl\(chain, newIdentityKey\);/,
 		);
 		assert.doesNotMatch(provider, /https:\/\/wallet\.1sat\.app/);
 		const settings = read("components/wallet/wallet-settings-form.tsx");

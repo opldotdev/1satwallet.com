@@ -355,6 +355,11 @@ interface WalletToolboxContextValue {
 
 	/** The built-in wallet's storage; null for an external wallet or an older SDK. */
 	storageStatus: WalletStorageState | null;
+	/**
+	 * The provider chosen for this wallet that could not be reached when it
+	 * opened. The wallet then opened read-only on the 1Sat storage.
+	 */
+	storageUnreachable: string | null;
 	/** True when the built-in wallet can move to another storage provider. */
 	canChangeWalletStorage: boolean;
 	/**
@@ -412,6 +417,11 @@ export function WalletToolboxProvider({
 	const [providerType, setProviderType] = useState<string | null>(null);
 	const walletResultRef = useRef<WebWalletResult | null>(null);
 	const [storageStatus, setStorageStatus] = useState<WalletStorageState | null>(
+		null,
+	);
+	// The saved provider that could not be reached at open, when the wallet
+	// opened on the 1Sat storage instead.
+	const [storageUnreachable, setStorageUnreachable] = useState<string | null>(
 		null,
 	);
 	// The built-in wallet's manager and overlay, kept beside walletResultRef so
@@ -716,6 +726,7 @@ export function WalletToolboxProvider({
 			setServices(null);
 			setIdentityKey(null);
 			setStorageStatus(null);
+			setStorageUnreachable(null);
 			setConnectionMode("none");
 			setConnectionStatus(status);
 			setProviderType(null);
@@ -1116,23 +1127,58 @@ export function WalletToolboxProvider({
 				const storageIdentityKey =
 					await loadOrCreateWalletStorageIdentity(chain);
 
-				const activeRemote = walletStorageUrl(chain, newIdentityKey);
+				const chosenRemote = walletStorageUrl(chain, newIdentityKey);
+				const defaultRemote = defaultWalletStorageUrl(chain);
 				// The wallet server rate-limits; a busy moment shouldn't fail the open.
 				// Stops once the wallet is locked or reopened meanwhile.
-				const result = await withRateLimitRetry(
-					"wallet.initialize",
-					() =>
-						createWebWallet({
-							privateKey: rootKey,
-							chain,
-							activeRemote,
-							storageIdentityKey,
-						}),
-					{
-						shouldContinue: () =>
-							generation === connectionGenerationRef.current,
-					},
-				);
+				const open = (activeRemote: string) =>
+					withRateLimitRetry(
+						"wallet.initialize",
+						() =>
+							createWebWallet({
+								privateKey: rootKey,
+								chain,
+								activeRemote,
+								storageIdentityKey,
+							}),
+						{
+							shouldContinue: () =>
+								generation === connectionGenerationRef.current,
+						},
+					);
+				let unreachable: string | null = null;
+				let result: WebWalletResult;
+				try {
+					result = await open(chosenRemote);
+				} catch (error) {
+					// A provider the user chose is down: open on the 1Sat storage
+					// instead of locking them out. Its row names the chosen store,
+					// so the wallet comes up read-only (the move is followed, not
+					// undone) and Settings offers to reconnect. Only a saved choice
+					// falls back; the default failing is still an open failure.
+					if (
+						chosenRemote === defaultRemote ||
+						isRateLimited(error) ||
+						generation !== connectionGenerationRef.current
+					) {
+						throw error;
+					}
+					reportFailure(
+						{
+							category: "provider",
+							code: "provider.failed",
+							operation: "wallet.initialize.storage",
+							recoverable: true,
+							context: {
+								mode: "built-in",
+								provider: storageHostOf(chosenRemote),
+							},
+						},
+						error,
+					);
+					unreachable = chosenRemote;
+					result = await open(defaultRemote);
+				}
 				pendingResult = result;
 				if (generation !== connectionGenerationRef.current) {
 					await result.destroy();
@@ -1215,6 +1261,7 @@ export function WalletToolboxProvider({
 				setColorOverlay(color?.overlay ?? null);
 				setIdentityKey(newIdentityKey);
 				setStorageStatus(storageStatusOf(result));
+				setStorageUnreachable(unreachable);
 				setConnectionMode("built-in");
 				setConnectionStatus("ready");
 				setProviderType("1sat-web");
@@ -1506,13 +1553,22 @@ export function WalletToolboxProvider({
 				recoverable: true,
 				context: { status: "requested", mode, provider },
 			});
+			// A lock or another account opening meanwhile replaces the wallet;
+			// its state is no longer this one's to set.
+			const stillOpen = () => walletResultRef.current === result;
 			try {
 				// After a move made on another device, add the store the wallet
 				// moved to and follow it; switching here would undo that move.
 				if (before.movedTo) await result.addRemote(url);
 				else await result.setActiveStorage(url);
 			} catch (error) {
-				setStorageStatus(storageStatusOf(result));
+				if (!stillOpen()) {
+					throw new Error(
+						"Your wallet was locked. Open it to check its storage.",
+					);
+				}
+				const now = storageStatusOf(result);
+				setStorageStatus(now);
 				reportFailure(
 					{
 						category: "provider",
@@ -1523,8 +1579,23 @@ export function WalletToolboxProvider({
 					},
 					error,
 				);
+				const message = error instanceof Error ? error.message : "";
+				if (before.movedTo || /moved to storage/.test(message)) {
+					throw new Error(
+						/not the one/.test(message)
+							? "That isn't the storage your wallet moved to. Check the address used on your other device."
+							: now?.movedTo && before.movedTo
+								? `Couldn't reach ${provider}. Check the address and try again.`
+								: "Your wallet was moved on another device. Add the provider it uses there first.",
+					);
+				}
 				throw new Error(
-					`Couldn't switch to ${provider}. Check the address and try again.`,
+					`Couldn't switch to ${provider}. Your wallet stays where it was.`,
+				);
+			}
+			if (!stillOpen()) {
+				throw new Error(
+					"Your wallet was locked. Open it to check its storage.",
 				);
 			}
 			const after = storageStatusOf(result);
@@ -1549,6 +1620,7 @@ export function WalletToolboxProvider({
 				url,
 				defaultWalletStorageUrl(chain),
 			);
+			setStorageUnreachable(null);
 			reportDiagnostic({
 				category: "provider",
 				code: "provider.state",
@@ -1609,6 +1681,7 @@ export function WalletToolboxProvider({
 			destroyWallet,
 			refreshBalance: refreshBalance,
 			storageStatus,
+			storageUnreachable,
 			canChangeWalletStorage:
 				connectionMode === "built-in" && storageStatus !== null,
 			changeWalletStorage,
@@ -1659,6 +1732,7 @@ export function WalletToolboxProvider({
 			destroyWallet,
 			refreshBalance,
 			storageStatus,
+			storageUnreachable,
 			changeWalletStorage,
 		],
 	);

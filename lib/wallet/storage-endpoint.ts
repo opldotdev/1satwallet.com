@@ -1,5 +1,8 @@
 import { type Chain, endpointsOf } from "@/lib/chain-endpoints";
-import { loadStorageChoice } from "@/lib/wallet/storage-choice";
+import {
+	loadStorageChoice,
+	normalizeStorageUrl,
+} from "@/lib/wallet/storage-choice";
 
 /**
  * The hosted 1Sat storage, the same one Yours and the iOS app use by
@@ -7,8 +10,15 @@ import { loadStorageChoice } from "@/lib/wallet/storage-choice";
  * never applies to testnet.
  */
 export function defaultWalletStorageUrl(chain: Chain): string {
-	if (chain === "main" && process.env.NEXT_PUBLIC_WALLET_STORAGE_URL) {
-		return process.env.NEXT_PUBLIC_WALLET_STORAGE_URL;
+	const override = process.env.NEXT_PUBLIC_WALLET_STORAGE_URL;
+	if (chain === "main" && override) {
+		// Normalized like a chosen address, so the two compare equal (a
+		// trailing slash would otherwise read as a different store).
+		try {
+			return normalizeStorageUrl(override);
+		} catch {
+			return override;
+		}
 	}
 	return endpointsOf(chain).storage;
 }

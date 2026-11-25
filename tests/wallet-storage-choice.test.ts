@@ -73,4 +73,20 @@ describe("storage choice", () => {
 		store.setItem("1sat.walletStorage.main.02aa", "http://store.example");
 		assert.equal(loadStorageChoice("main", "02aa", store), null);
 	});
+
+	it("saves a choice even when the default is a development address", () => {
+		const store = memoryStore();
+		const devDefault = "http://wallet.dev.internal";
+		saveStorageChoice(
+			"main",
+			"02aa",
+			"https://store.example",
+			devDefault,
+			store,
+		);
+		assert.equal(
+			loadStorageChoice("main", "02aa", store),
+			"https://store.example",
+		);
+	});
 });

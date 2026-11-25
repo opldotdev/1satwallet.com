@@ -33,6 +33,7 @@ export function WalletStorageRow() {
 		chain,
 		identityKey,
 		storageStatus,
+		storageUnreachable,
 		canChangeWalletStorage,
 		changeWalletStorage,
 	} = useWalletToolbox();
@@ -40,6 +41,8 @@ export function WalletStorageRow() {
 	const [address, setAddress] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [retrying, setRetrying] = useState(false);
+	const [retryError, setRetryError] = useState<string | null>(null);
 
 	const defaultUrl = defaultWalletStorageUrl(chain);
 	const activeUrl = storageStatus ? storageStatus.activeRemoteUrl : undefined;
@@ -55,6 +58,19 @@ export function WalletStorageRow() {
 		setAddress(moved ? "" : (activeUrl ?? defaultUrl));
 		setError(null);
 		setOpen(true);
+	};
+
+	const retry = async () => {
+		if (!storageUnreachable) return;
+		setRetrying(true);
+		setRetryError(null);
+		try {
+			await changeWalletStorage(storageUnreachable);
+		} catch (e) {
+			setRetryError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setRetrying(false);
+		}
 	};
 
 	const submit = async (event: FormEvent) => {
@@ -94,7 +110,31 @@ export function WalletStorageRow() {
 					) : undefined
 				}
 			/>
-			{moved && (
+			{storageUnreachable && canChangeWalletStorage && (
+				<div className="flex flex-col gap-3 py-3">
+					<Notice
+						tone="danger"
+						title={`Couldn't reach ${storageHostOf(storageUnreachable)}`}
+					>
+						That's the storage provider this wallet uses. It opened from the
+						1Sat storage instead, read-only, so balances may be out of date and
+						sending is off until the provider is back.
+					</Notice>
+					{retryError && <Notice tone="danger">{retryError}</Notice>}
+					<Button
+						className="self-start"
+						variant="outline"
+						onClick={() => void retry()}
+						disabled={retrying}
+					>
+						{retrying && (
+							<Loader2 className="animate-spin" data-icon="inline-start" />
+						)}
+						Try again
+					</Button>
+				</div>
+			)}
+			{moved && !storageUnreachable && (
 				<div className="py-3">
 					<Notice tone="warning" title="Your wallet moved on another device">
 						It now uses a storage provider this browser doesn't know. Until you
@@ -161,7 +201,7 @@ export function WalletStorageRow() {
 								disabled={
 									busy ||
 									!address.trim() ||
-									(!moved && address.trim() === activeUrl)
+									(!moved && !readOnly && address.trim() === activeUrl)
 								}
 							>
 								{busy && (

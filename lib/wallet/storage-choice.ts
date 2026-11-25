@@ -82,12 +82,16 @@ export function saveStorageChoice(
 	const s = storeOf(store);
 	if (!s) return;
 	const key = choiceKey(chain, identityKey);
-	if (
-		url === null ||
-		normalizeStorageUrl(url) === normalizeStorageUrl(defaultUrl)
-	) {
+	const normalized = url === null ? null : normalizeStorageUrl(url);
+	let defaultNormalized = defaultUrl;
+	try {
+		defaultNormalized = normalizeStorageUrl(defaultUrl);
+	} catch {
+		// A development default (plain http) still compares as written.
+	}
+	if (normalized === null || normalized === defaultNormalized) {
 		s.removeItem(key);
 	} else {
-		s.setItem(key, normalizeStorageUrl(url));
+		s.setItem(key, normalized);
 	}
 }
