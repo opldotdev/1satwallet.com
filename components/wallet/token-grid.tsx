@@ -21,9 +21,9 @@ import {
 	SoundDialog,
 } from "@/components/ui/sound-dialog";
 import { useSound } from "@/hooks/use-sound";
+import { bsv21IconSrc } from "@/lib/bsv21-icon";
 import type { Chain } from "@/lib/chain-endpoints";
 import { useBsv21Availability } from "@/lib/hooks/use-stack-features";
-import { getOrdinalThumbnail } from "@/lib/image-utils";
 import { reportDiagnostic } from "@/lib/runtime-diagnostics";
 import {
 	type AssetSurfaceState,
@@ -75,9 +75,12 @@ export function Bsv21Unreadable({ state }: { state: AssetSurfaceState }) {
 	);
 }
 
-/** A BSV-21 token's icon, else its deploy inscription's thumbnail. */
-export const bsv21Icon = (token: Bsv21Balance, chain: Chain) =>
-	token.icon || getOrdinalThumbnail(token.id, 100, chain);
+/**
+ * A BSV-21 token's icon through OrdFS, sized for a TokenIcon tile of `size`
+ * CSS px. No icon shows the coin: the deploy inscription is BSV-20 JSON.
+ */
+export const bsv21Icon = (token: Bsv21Balance, chain: Chain, size: 40 | 64) =>
+	bsv21IconSrc(token.id, token.icon, size * 2, chain);
 
 /** Says why BSV-21 sends, mints and creates are off, once the stack has answered. */
 export function Bsv21UnavailableNotice() {
@@ -388,7 +391,7 @@ export default function TokenGrid() {
 						amount={formatBsv21Amount(bsv21Spendable(token), token.dec)}
 						caption={shortOutpoint(token.id)}
 						href={tokenDetailHref("bsv21", token.id)}
-						icon={bsv21Icon(token, chain)}
+						icon={bsv21Icon(token, chain, 40)}
 						key={token.id}
 						ticker={bsv21Ticker(token)}
 					/>

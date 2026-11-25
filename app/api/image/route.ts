@@ -22,7 +22,7 @@ import { lookup } from "node:dns/promises";
 import { ImageProtocols } from "bitcoin-image";
 import { type NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import { reportDiagnostic } from "@/lib/runtime-diagnostics";
+import { reportFailure } from "@/lib/runtime-diagnostics";
 
 /**
  * SSRF protection: block requests to private/reserved IP ranges.
@@ -246,23 +246,24 @@ export async function GET(request: NextRequest) {
 				"X-Cache": "MISS",
 			},
 		});
-	} catch {
-		const diagnostic = reportDiagnostic({
-			category: "route",
-			code: "route.unexpected",
-			operation: "api.image",
-			recoverable: true,
-			context: { route: "/api/image", retryable: true },
-		});
-		// Fallback error image
-		return new NextResponse(
-			`<svg width="200" height="200" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" fill="#eee"/><text x="50%" y="50%" fill="#999" text-anchor="middle" dy=".3em">Image Error</text></svg>`,
+	} catch (error) {
+		// A 502, not a placeholder image: the page's onError must see the
+		// failure so it can show its own fallback.
+		const diagnostic = reportFailure(
 			{
-				status: 200,
-				headers: {
-					"Content-Type": "image/svg+xml",
-					"X-Correlation-ID": diagnostic.correlationId,
-				},
+				category: "route",
+				code: "route.unexpected",
+				operation: "api.image",
+				recoverable: true,
+				context: { route: "/api/image", retryable: true },
+			},
+			error,
+		);
+		return NextResponse.json(
+			{ error: "Could not process the image" },
+			{
+				status: 502,
+				headers: { "X-Correlation-ID": diagnostic.correlationId },
 			},
 		);
 	}

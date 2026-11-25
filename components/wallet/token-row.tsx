@@ -3,27 +3,39 @@
 import { ChevronRight, Coins } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSound } from "@/hooks/use-sound";
 import { cn } from "@/lib/utils";
 
-/** A token's icon, else a coin, in a rounded tile: 40px in a row, 64 on its page. */
+/**
+ * A token's icon, else a coin, in a rounded tile: 40px in a row, 64 on its
+ * wallet page, 80 on its market page. An icon that fails to load is logged
+ * and replaced by the coin.
+ */
 export function TokenIcon({
 	icon,
 	size,
 }: {
 	icon: string | undefined;
-	size: 40 | 64;
+	size: 40 | 64 | 80;
 }) {
+	const [failedSrc, setFailedSrc] = useState<string | null>(null);
+	const showImage = Boolean(icon) && failedSrc !== icon;
 	return (
 		<div
+			data-slot="token-icon"
+			data-icon-src={icon || undefined}
 			className={cn(
 				"relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted",
-				size === 64 ? "size-16 border" : "size-10",
+				size === 80
+					? "size-20 border"
+					: size === 64
+						? "size-16 border"
+						: "size-10",
 			)}
 		>
-			{icon ? (
+			{icon && showImage ? (
 				<Image
 					src={icon}
 					alt=""
@@ -31,13 +43,18 @@ export function TokenIcon({
 					sizes={`${size}px`}
 					className="object-cover"
 					unoptimized
+					onError={() => {
+						console.error("[token-icon] image failed to load", { src: icon });
+						setFailedSrc(icon);
+					}}
 				/>
 			) : (
 				<Coins
 					aria-hidden="true"
+					data-testid={icon ? "token-icon-failed" : "token-icon-none"}
 					className={cn(
 						"text-muted-foreground",
-						size === 64 ? "size-8" : "size-5",
+						size === 40 ? "size-5" : "size-8",
 					)}
 				/>
 			)}

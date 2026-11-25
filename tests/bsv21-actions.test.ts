@@ -114,6 +114,16 @@ describe("BSV21 listing safety", () => {
 		);
 	});
 
+	it("reads the stack's null answer as no listings for the token", async () => {
+		const ctx = context();
+		(
+			ctx.services as unknown as {
+				bsv21: { validateOutputs: () => Promise<null> };
+			}
+		).bsv21.validateOutputs = async () => null;
+		assert.deepEqual(await getBsv21Listings(ctx, tokenId), []);
+	});
+
 	it("rejects spent, amount-changed, and price-changed reviews", async () => {
 		assert.deepEqual(
 			await getBsv21Listings(context({ spentToken: true }), tokenId),

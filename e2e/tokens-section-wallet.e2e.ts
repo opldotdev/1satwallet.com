@@ -77,6 +77,54 @@ function readRows(browser: Browser) {
 	}, null);
 }
 
+/**
+ * Every BSV-21 icon tile under `scope` once its image has loaded or failed.
+ * A tile's src (kept on the tile, so a failed load that swapped in the coin
+ * is still checked) must be OrdFS content through /api/image, never a bare
+ * outpoint, and an image still shown must have pixels.
+ */
+async function checkBsv21Icons(
+	browser: Browser,
+	scope: string,
+	where: string,
+	problems: LayoutProblems,
+) {
+	await browser.waitFor(
+		`${where}: token icons to load or fail`,
+		(selector: string) =>
+			Array.from(
+				document.querySelectorAll<HTMLImageElement>(
+					`${selector} [data-slot="token-icon"] img`,
+				),
+			).every((img) => img.complete),
+		scope,
+		CHAIN_TIMEOUT,
+	);
+	const tiles = await browser.evaluate(
+		(selector: string) =>
+			Array.from(
+				document.querySelectorAll(`${selector} [data-slot="token-icon"]`),
+			).map((tile) => ({
+				src: tile.getAttribute("data-icon-src"),
+				imageWidth: tile.querySelector("img")?.naturalWidth ?? null,
+			})),
+		scope,
+	);
+	for (const tile of tiles) {
+		if (tile.src === null) continue;
+		const source = tile.src.startsWith("/api/image?")
+			? new URLSearchParams(tile.src.slice("/api/image?".length)).get("url")
+			: null;
+		if (!source?.includes("/content/")) {
+			problems.add(
+				`${where}: a token icon's src is ${JSON.stringify(tile.src)}, expected OrdFS content through /api/image.`,
+			);
+		} else if (tile.imageWidth === 0) {
+			problems.add(`${where}: token icon ${tile.src} loaded with no pixels.`);
+		}
+	}
+}
+
 async function checkPhones(
 	browser: Browser,
 	pathname: string,
@@ -191,6 +239,12 @@ walletTest(
 				problems.add(`/wallet/tokens: a 1Color row links to ${href}.`);
 			}
 		}
+		await checkBsv21Icons(
+			browser,
+			'section[aria-labelledby="tokens-bsv21"]',
+			"/wallet/tokens",
+			problems,
+		);
 		problems.throwIfAny("Tokens on testnet");
 
 		// Each standard's page has its own headline and the back arrow to
@@ -255,6 +309,7 @@ walletTest(
 			null,
 			CHAIN_TIMEOUT,
 		);
+		await checkBsv21Icons(browser, "main", first, problems);
 		await checkPhones(browser, first, problems);
 		problems.throwIfAny("BSV-21 token page on testnet");
 		// The BSV-21 page was checked; only part was left out, so the test
