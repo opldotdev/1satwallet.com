@@ -78,9 +78,10 @@ function readRows(browser: Browser) {
 }
 
 /**
- * Every BSV-21 icon under `scope` once each has loaded or failed: its src
- * must be an OrdFS URL through the image API (never a bare outpoint), and a
- * loaded one must have pixels. A failed one shows the coin in its place.
+ * Every BSV-21 icon tile under `scope` once its image has loaded or failed.
+ * A tile's src (kept on the tile, so a failed load that swapped in the coin
+ * is still checked) must be OrdFS content through /api/image, never a bare
+ * outpoint, and an image still shown must have pixels.
  */
 async function checkBsv21Icons(
 	browser: Browser,
@@ -99,28 +100,27 @@ async function checkBsv21Icons(
 		scope,
 		CHAIN_TIMEOUT,
 	);
-	const icons = await browser.evaluate(
+	const tiles = await browser.evaluate(
 		(selector: string) =>
 			Array.from(
-				document.querySelectorAll<HTMLImageElement>(
-					`${selector} [data-slot="token-icon"] img`,
-				),
-			).map((img) => ({
-				src: img.getAttribute("src") ?? "",
-				width: img.naturalWidth,
+				document.querySelectorAll(`${selector} [data-slot="token-icon"]`),
+			).map((tile) => ({
+				src: tile.getAttribute("data-icon-src"),
+				imageWidth: tile.querySelector("img")?.naturalWidth ?? null,
 			})),
 		scope,
 	);
-	for (const icon of icons) {
-		const source = icon.src.startsWith("/api/image?")
-			? new URLSearchParams(icon.src.slice("/api/image?".length)).get("url")
+	for (const tile of tiles) {
+		if (tile.src === null) continue;
+		const source = tile.src.startsWith("/api/image?")
+			? new URLSearchParams(tile.src.slice("/api/image?".length)).get("url")
 			: null;
 		if (!source?.includes("/content/")) {
 			problems.add(
-				`${where}: a token icon's src is ${JSON.stringify(icon.src)}, expected OrdFS content through /api/image.`,
+				`${where}: a token icon's src is ${JSON.stringify(tile.src)}, expected OrdFS content through /api/image.`,
 			);
-		} else if (icon.width === 0) {
-			problems.add(`${where}: token icon ${icon.src} loaded with no pixels.`);
+		} else if (tile.imageWidth === 0) {
+			problems.add(`${where}: token icon ${tile.src} loaded with no pixels.`);
 		}
 	}
 }

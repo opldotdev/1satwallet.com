@@ -82,7 +82,10 @@ describe("BSV-21 token icons", () => {
 		const read = (path: string) =>
 			readFileSync(join(process.cwd(), path), "utf8");
 		const grid = read("components/wallet/token-grid.tsx");
-		assert.match(grid, /bsv21IconSrc\(token\.id, token\.icon \|\| token\.id/);
+		assert.match(
+			grid,
+			/bsv21IconSrc\(token\.id, token\.icon, size \* 2, chain\)/,
+		);
 		assert.doesNotMatch(grid, /token\.icon \|\| getOrdinalThumbnail/);
 		assert.match(read("lib/hooks/use-legacy-assets.ts"), /bsv21IconSrc\(/);
 		assert.match(
@@ -90,5 +93,9 @@ describe("BSV-21 token icons", () => {
 			/bsv21IconSrc\(tokenId, details\.token\.icon/,
 		);
 		assert.match(read("components/wallet/token-row.tsx"), /onError=/);
+		assert.match(
+			read("app/(main)/market/bsv21/[tokenId]/page.tsx"),
+			/<TokenIcon icon=\{iconSrc\} size=\{80\} \/>/,
+		);
 	});
 });

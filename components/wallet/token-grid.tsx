@@ -76,11 +76,11 @@ export function Bsv21Unreadable({ state }: { state: AssetSurfaceState }) {
 }
 
 /**
- * A BSV-21 token's icon through OrdFS, else its deploy inscription, sized
- * for a TokenIcon tile of `size` CSS px.
+ * A BSV-21 token's icon through OrdFS, sized for a TokenIcon tile of `size`
+ * CSS px. No icon shows the coin: the deploy inscription is BSV-20 JSON.
  */
 export const bsv21Icon = (token: Bsv21Balance, chain: Chain, size: 40 | 64) =>
-	bsv21IconSrc(token.id, token.icon || token.id, size * 2, chain);
+	bsv21IconSrc(token.id, token.icon, size * 2, chain);
 
 /** Says why BSV-21 sends, mints and creates are off, once the stack has answered. */
 export function Bsv21UnavailableNotice() {
