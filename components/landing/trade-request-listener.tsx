@@ -152,7 +152,7 @@ function ConnectedTradeRequestListener({
 			(activeTrade.status === "cancelled" || activeTrade.status === "expired")
 		) {
 			terminalSession.current = activeTrade.sessionId;
-			play("dialog", 0.2);
+			play("dialog");
 			queueMicrotask(() => setActiveSession(null));
 		}
 	}, [activeTrade, play]);

@@ -11,11 +11,12 @@ test("Apple download offers the wallet invitation separately from TestFlight", (
 		new URL("../app/download/beta-notice.tsx", import.meta.url),
 		"utf8",
 	);
-	assert.equal(
-		html.match(/href="https:\/\/testflight.apple.com\/join\/9N4jc7Qm"/g)
-			?.length,
-		1,
+	const links = readFileSync(
+		new URL("../app/download/links.ts", import.meta.url),
+		"utf8",
 	);
+	assert.ok(links.includes('"https://testflight.apple.com/join/9N4jc7Qm"'));
+	assert.equal(html.match(/href=\{TESTFLIGHT_URL\}/g)?.length, 1);
 	assert.ok(html.includes('href="/wallet"'));
 	assert.ok(!html.includes('href="/wallet/create"'));
 	assert.ok(html.includes('href="mailto:luke@opl.dev"'));

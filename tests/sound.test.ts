@@ -61,7 +61,7 @@ describe("payment chime", () => {
 	it("bundles a dedicated chime while clipboard retains success", async () => {
 		const { SOUNDS, SOUND_VOLUMES } = await import("@/lib/sounds");
 		assert.equal(SOUNDS.payChime, "/sounds/pay-chime.mp3");
-		assert.equal(SOUND_VOLUMES.payChime, 0.3);
+		assert.equal(SOUND_VOLUMES.payChime, 0.15);
 		assert.ok(
 			readFileSync(join(root, "public", SOUNDS.payChime)).length > 1000,
 		);
@@ -157,7 +157,7 @@ describe("payment chime", () => {
 			muted = false;
 			await playPayChime();
 			assert.equal(starts, 1);
-			assert.equal(volume, 0.3);
+			assert.equal(volume, 0.15);
 			muted = true;
 			playSound("payChime");
 			await Promise.resolve();
@@ -196,4 +196,18 @@ describe("sound accessibility preferences", () => {
 			assert.equal(result.status, 0, result.stderr);
 		});
 	}
+});
+
+describe("sound levels", () => {
+	it("keeps every wallet sound quiet", async () => {
+		const { SOUND_VOLUMES } = await import("@/lib/sounds");
+		for (const [name, volume] of Object.entries(SOUND_VOLUMES)) {
+			assert.ok(volume > 0 && volume <= 0.3, `${name} at ${volume}`);
+		}
+		assert.ok(SOUND_VOLUMES.click <= 0.06);
+		assert.match(
+			read("components/sidebar-sound-effects.tsx"),
+			/volume = SOUND_VOLUMES\.dialog/,
+		);
+	});
 });

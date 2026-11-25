@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useSound } from "@/hooks/use-sound";
+import { SOUND_VOLUMES } from "@/lib/sounds";
 
 interface SidebarSoundEffectsProps {
 	volume?: number;
@@ -13,7 +14,7 @@ interface SidebarSoundEffectsProps {
  * This keeps sound behavior outside the base shadcn sidebar component.
  */
 export function SidebarSoundEffects({
-	volume = 0.2,
+	volume = SOUND_VOLUMES.dialog,
 }: SidebarSoundEffectsProps) {
 	const { open, openMobile } = useSidebar();
 	const { play } = useSound();
