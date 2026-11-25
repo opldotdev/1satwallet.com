@@ -11,10 +11,13 @@ import {
 	waitForSettledPage,
 } from "./support/layout";
 
-// The landing page for a first-time visitor on a phone: it says the live
-// trading floor opens once a wallet is connected, offers that as the one
-// primary action, and shows nothing of the floor (no bar, no peers, no
-// count). A screenshot per phone size goes to e2e-artifacts/review/.
+// The landing page for a first-time visitor on a phone: it shows the wallet
+// chooser, whose leading slide on this (non-Apple) browser offers Create
+// wallet inside the window, and shows nothing of the floor (no bar, no peers,
+// no count). A screenshot per phone size goes to e2e-artifacts/review/.
+
+const CREATE_WALLET =
+	'section[aria-label="Choose a wallet"] a[href="/wallet/create"]';
 
 const REVIEW_DIR = "e2e-artifacts/review";
 
@@ -32,15 +35,15 @@ e2eTest(
 	async (browser) => {
 		const problems = new LayoutProblems();
 		await mkdir(REVIEW_DIR, { recursive: true });
-		await waitForSettledPage(browser, "/", '[data-testid="hero-cta"]');
+		await waitForSettledPage(browser, "/", CREATE_WALLET);
 		for (const viewport of PHONE_VIEWPORTS) {
 			const where = `/ at ${describeViewport(viewport)}`;
 			await setViewport(browser, viewport);
 			await checkNoSidewaysScroll(browser, where, problems);
-			const page = await browser.evaluate(() => {
+			const page = await browser.evaluate((selector) => {
 				const visible = (el: Element | null) =>
 					Boolean(el && el.getClientRects().length > 0);
-				const cta = document.querySelector('[data-testid="hero-cta"]');
+				const cta = document.querySelector(selector);
 				const ctaBox = cta?.getBoundingClientRect();
 				return {
 					ctaText: cta?.textContent?.trim() ?? "",
@@ -56,10 +59,10 @@ e2eTest(
 					// biome-ignore lint/performance/useDomNodeTextContent: visible text is the point.
 					online: /\bonline\b|peers? here/i.test(document.body.innerText),
 				};
-			}, null);
+			}, CREATE_WALLET);
 			if (page.ctaText !== "Create wallet") {
 				problems.add(
-					`${where}: the main button reads "${page.ctaText}", expected "Create wallet".`,
+					`${where}: the chooser's create button reads "${page.ctaText}", expected "Create wallet".`,
 				);
 			}
 			if (page.note) {
@@ -106,7 +109,7 @@ e2eTest(
 		};
 	},
 	async (browser) => {
-		await waitForSettledPage(browser, "/", '[data-testid="hero-cta"]');
+		await waitForSettledPage(browser, "/", CREATE_WALLET);
 		// The logo is done once its 3D scene has mounted (canvas shown, loading
 		// spinner gone), or the 3D failed and its boundary shows the static
 		// logo instead, or a removal already failed.

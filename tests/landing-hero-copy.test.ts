@@ -26,7 +26,7 @@ describe("landing hero copy", () => {
 		assert.doesNotMatch(heroSource, /min-h-\[100dvh\]/);
 		assert.match(heroSource, /min-h-0 flex-1/);
 		assert.doesNotMatch(heroSource, /floor-note/);
-		assert.match(heroSource, /Create wallet/);
+		assert.match(heroSource, /<WalletConnectCarousel \/>/);
 		assert.match(heroSource, /Unlock wallet/);
 		assert.match(heroSource, /barShown \? "pb-28" : "pb-8"/);
 		assert.doesNotMatch(heroSource, /Popover/);

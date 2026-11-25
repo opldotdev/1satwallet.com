@@ -3,11 +3,13 @@
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useMediaQuery } from "usehooks-ts";
 import { ThreeBoundary } from "@/components/landing/three-boundary";
 import { UnderPageHeading } from "@/components/not-on-testnet";
 import { Page } from "@/components/page-layout";
 import { Button } from "@/components/ui/button";
+import { WalletConnectCarousel } from "@/components/wallet/wallet-connect-carousel";
 import { WalletHeader } from "@/components/wallet/wallet-header";
 import { WalletHome } from "@/components/wallet/wallet-home";
 import { WalletTabs } from "@/components/wallet/wallet-tabs";
@@ -17,13 +19,15 @@ import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 import { SharedPresence, useLandingFloor } from "./shared-presence";
 import { TradeRequestListener } from "./trade-request-listener";
 
+// The logo box (here and in Logo3D) is short enough that the wallet chooser
+// and its slide picker under it show in a 1280x800 window.
 function StaticLogo() {
 	return (
-		<div className="flex h-[104px] items-center justify-center sm:h-[200px] md:h-[360px]">
+		<div className="flex h-[104px] items-center justify-center sm:h-[160px] md:h-[200px]">
 			<Image
 				alt="1Sat Wallet"
 				fetchPriority="high"
-				className="size-[88px] sm:size-[140px] md:size-[220px]"
+				className="size-[88px] sm:size-[120px] md:size-[140px]"
 				height={220}
 				priority
 				src="/oneSatLogoDark.svg"
@@ -40,9 +44,10 @@ const Logo3D = dynamic(
 
 /**
  * Home is the wallet. Signed in, it is the wallet overview (the same header,
- * tabs and balance as /wallet) with the P2P floor around it. Signed out, it
- * is the logo and the three ways in: create, import or connect. Locked, it
- * is the logo and Unlock. No copy beyond labels.
+ * tabs and balance as /wallet) with the P2P floor around it. Signed out with
+ * no wallet here, it is the logo and the wallet chooser (the same one as
+ * /wallet), which leads with what discovery finds. Locked, or with a wallet
+ * stored here, it is the logo and Unlock or Open wallet.
  */
 export function LandingHero() {
 	const floor = useLandingFloor();
@@ -66,6 +71,15 @@ export function LandingHero() {
 		isInitializing ||
 		connectionStatus === "authenticating" ||
 		floor.state.kind === "checking";
+	// The chooser shows once the wallet is known and there is none here, and
+	// stays mounted while a wallet it picked connects (which counts as
+	// resolving), so its own Connecting state and errors stay on screen.
+	const [chooserShown, setChooserShown] = useState(false);
+	const noWalletHere = !signedIn && !locked && !hasWallet;
+	useEffect(() => {
+		if (!resolving && noWalletHere) setChooserShown(true);
+	}, [resolving, noWalletHere]);
+	const choosing = noWalletHere && (chooserShown || !resolving);
 	const barShown =
 		floor.state.kind === "live" ||
 		floor.state.kind === "joining" ||
@@ -91,10 +105,13 @@ export function LandingHero() {
 				</Page>
 			) : (
 				<>
-					<div
-						aria-hidden="true"
-						className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_50%_40%,_var(--tw-gradient-stops))] from-primary/12 via-background to-background"
-					/>
+					{/* The chooser's opaque slides would cut the glow into a box. */}
+					{choosing ? null : (
+						<div
+							aria-hidden="true"
+							className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_50%_40%,_var(--tw-gradient-stops))] from-primary/12 via-background to-background"
+						/>
+					)}
 					<div className="relative w-full px-6 text-center">
 						<div className="relative z-20">
 							<div aria-hidden="true" data-testid="hero-logo">
@@ -112,49 +129,23 @@ export function LandingHero() {
 								1Sat Wallet
 							</h1>
 						</div>
-						{resolving ? null : (
+						{choosing ? (
+							<div className="relative z-40 mx-auto mt-2 w-full max-w-3xl">
+								<WalletConnectCarousel />
+							</div>
+						) : resolving ? null : (
 							<div className="relative z-40 mx-auto mt-8 flex max-w-xs flex-col gap-2">
-								{locked || hasWallet ? (
-									<Button
-										asChild
-										className="h-12 w-full text-base font-bold"
-										data-testid="hero-cta"
-										onClick={() => play("click")}
-										size="lg"
-									>
-										<Link href="/wallet">
-											{locked ? "Unlock wallet" : "Open wallet"}
-										</Link>
-									</Button>
-								) : (
-									<>
-										<Button
-											asChild
-											className="h-12 w-full text-base font-bold"
-											data-testid="hero-cta"
-											onClick={() => play("click")}
-											size="lg"
-										>
-											<Link href="/wallet/create">Create wallet</Link>
-										</Button>
-										<Button
-											asChild
-											className="h-11 w-full"
-											onClick={() => play("click")}
-											variant="outline"
-										>
-											<Link href="/wallet/import">Import</Link>
-										</Button>
-										<Button
-											asChild
-											className="h-11 w-full"
-											onClick={() => play("click")}
-											variant="ghost"
-										>
-											<Link href="/wallet">Connect</Link>
-										</Button>
-									</>
-								)}
+								<Button
+									asChild
+									className="h-12 w-full text-base font-bold"
+									data-testid="hero-cta"
+									onClick={() => play("click")}
+									size="lg"
+								>
+									<Link href="/wallet">
+										{locked ? "Unlock wallet" : "Open wallet"}
+									</Link>
+								</Button>
 							</div>
 						)}
 					</div>
