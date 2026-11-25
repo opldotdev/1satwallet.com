@@ -13,13 +13,7 @@ import type { CSSProperties } from "react";
 import styles from "./showcase.module.css";
 import type { Shot, Vignette } from "./showcase-data";
 
-export function DeviceShot({
-	shot,
-	preload = false,
-}: {
-	shot: Shot;
-	preload?: boolean;
-}) {
+export function DeviceShot({ shot }: { shot: Shot }) {
 	return (
 		<div className={styles.device}>
 			<Image
@@ -28,7 +22,6 @@ export function DeviceShot({
 				height={shot.height}
 				alt={shot.alt}
 				sizes="(max-width: 767px) 72vw, 380px"
-				preload={preload}
 			/>
 		</div>
 	);
@@ -87,9 +80,6 @@ function PayVignette() {
 				<div className={styles.qrTile}>
 					<QrCode size={112} strokeWidth={1.4} />
 				</div>
-				<p className={styles.recipients}>
-					Handle · Paymail · Address · Identity key
-				</p>
 			</div>
 		</div>
 	);

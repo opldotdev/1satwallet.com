@@ -136,10 +136,10 @@ export const chapters: Chapter[] = [
 		id: "ordinals",
 		eyebrow: "Ordinals",
 		title: "Inscribe it. Sign it.",
-		body: "Inscribe text, a photo or any file. Then keep it, send it or sign it as yours.",
+		body: "Inscribe text, a photo or any file, signed as yours if you choose.",
 		points: [
 			"Photo optimizer with quality and size controls",
-			"Metadata on every inscription",
+			"Add metadata to any inscription",
 			"Sign with your identity (SIGMA)",
 			"Collections with traits, rank and rarity",
 			"Zoom into images and read text full screen",
@@ -195,8 +195,8 @@ export const chapters: Chapter[] = [
 	{
 		id: "market",
 		eyebrow: "Market and locks",
-		title: "Buy on the open market. Lock for later.",
-		body: "Buy from the open 1Sat marketplace. Lock bitcoin until a block height you choose.",
+		title: "Buy a listing. Lock for later.",
+		body: "Buy any open-market listing by its outpoint. Lock bitcoin until a block height you choose.",
 		points: [
 			"Buy any OrdLock listing",
 			"Manage and delist your own listings",

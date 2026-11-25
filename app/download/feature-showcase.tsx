@@ -15,10 +15,15 @@ export function FeatureShowcase() {
 	const [open, setOpen] = useState(false);
 	const [active, setActive] = useState("cover");
 	const scroller = useRef<HTMLDivElement>(null);
+	const closing = useRef(false);
+	const target = useRef(0);
 
 	// The dialog follows the #features hash so a link can open it and Back closes it.
 	useEffect(() => {
-		const sync = () => setOpen(window.location.hash === HASH);
+		const sync = () => {
+			closing.current = false;
+			setOpen(window.location.hash === HASH);
+		};
 		sync();
 		window.addEventListener("popstate", sync);
 		return () => window.removeEventListener("popstate", sync);
@@ -26,12 +31,16 @@ export function FeatureShowcase() {
 
 	const changeOpen = useCallback((next: boolean) => {
 		if (next) {
+			closing.current = false;
 			window.history.pushState({ showcase: true }, "", HASH);
 			setOpen(true);
 			return;
 		}
+		// A second close during the exit animation must not go back twice.
+		if (closing.current) return;
 		setOpen(false);
 		if (window.history.state?.showcase) {
+			closing.current = true;
 			window.history.back();
 		} else if (window.location.hash === HASH) {
 			const { pathname, search } = window.location;
@@ -45,19 +54,37 @@ export function FeatureShowcase() {
 		scroller.current = root;
 		if (!root) return;
 		const sections = root.querySelectorAll<HTMLElement>("[data-chapter]");
-		const observer = new IntersectionObserver(
+		// Any part in view reveals a chapter, however tall it is.
+		const reveal = new IntersectionObserver(
 			(entries) => {
 				for (const entry of entries) {
 					if (!entry.isIntersecting) continue;
-					const target = entry.target as HTMLElement;
-					target.dataset.inview = "true";
-					setActive(target.dataset.chapter ?? "cover");
+					(entry.target as HTMLElement).dataset.inview = "true";
+					reveal.unobserve(entry.target);
 				}
 			},
-			{ root, threshold: 0.35 },
+			{ root, threshold: 0, rootMargin: "0px 0px -15% 0px" },
 		);
-		for (const section of sections) observer.observe(section);
-		return () => observer.disconnect();
+		// The chapter crossing the middle line is the current one.
+		const current = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					if (!entry.isIntersecting) continue;
+					const id = (entry.target as HTMLElement).dataset.chapter ?? "cover";
+					target.current = Math.max(0, stops.indexOf(id));
+					setActive(id);
+				}
+			},
+			{ root, threshold: 0, rootMargin: "-50% 0px -50% 0px" },
+		);
+		for (const section of sections) {
+			reveal.observe(section);
+			current.observe(section);
+		}
+		return () => {
+			reveal.disconnect();
+			current.disconnect();
+		};
 	}, []);
 
 	const jump = useCallback((id: string) => {
@@ -78,13 +105,22 @@ export function FeatureShowcase() {
 		const back = event.key === "ArrowUp" || event.key === "k";
 		if (!forward && !back) return;
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
+		const root = scroller.current;
+		const here = root?.querySelector<HTMLElement>(
+			`[data-chapter="${stops[target.current]}"]`,
+		);
+		if (root && here) {
+			// Inside a chapter taller than the screen, arrows scroll normally.
+			const box = here.getBoundingClientRect();
+			if (forward && box.bottom > root.clientHeight + 4) return;
+			if (back && box.top < -4) return;
+		}
 		event.preventDefault();
-		const index = stops.indexOf(active);
-		const next =
-			stops[
-				Math.min(stops.length - 1, Math.max(0, index + (forward ? 1 : -1)))
-			];
-		jump(next);
+		target.current = Math.min(
+			stops.length - 1,
+			Math.max(0, target.current + (forward ? 1 : -1)),
+		);
+		jump(stops[target.current]);
 	};
 
 	return (
@@ -93,6 +129,7 @@ export function FeatureShowcase() {
 				See everything it does <ArrowDownRight size={14} aria-hidden="true" />
 			</Dialog.Trigger>
 			<Dialog.Portal>
+				<Dialog.Overlay />
 				<Dialog.Content
 					className={styles.showcase}
 					onKeyDown={onKeyDown}

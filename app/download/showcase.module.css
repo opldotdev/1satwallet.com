@@ -292,8 +292,8 @@
 
 .device {
 	position: relative;
+	display: flex;
 	height: min(72dvh, 760px);
-	aspect-ratio: 1179 / 2366;
 	padding: 10px;
 	border-radius: 54px;
 	background: #0b0b0c;
@@ -303,10 +303,8 @@
 		0 40px 120px #000c;
 }
 .device img {
-	width: 100%;
+	width: auto;
 	height: 100%;
-	object-fit: cover;
-	object-position: top;
 	border-radius: 44px;
 }
 .coverShot .device {
@@ -434,12 +432,6 @@
 	border-radius: 20px;
 	background: #f5f5f7;
 	color: #000;
-}
-.recipients {
-	margin-top: 18px;
-	color: #8e8e93;
-	font-size: 13px;
-	text-align: center;
 }
 .list {
 	width: 100%;
@@ -637,6 +629,22 @@
 	}
 }
 
+/* Small desktops */
+
+@media (max-width: 1279px) {
+	.cover,
+	.chapter {
+		width: calc(100% - 112px);
+		gap: 48px;
+	}
+	.chapter {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 400px);
+	}
+	.chapter[data-flip] {
+		grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+	}
+}
+
 /* Tablet and phone */
 
 @media (max-width: 1023px) {
@@ -692,6 +700,10 @@
 	.device {
 		height: auto;
 		width: min(72vw, 300px);
+	}
+	.device img {
+		width: 100%;
+		height: auto;
 	}
 	.coverShot .device {
 		height: auto;

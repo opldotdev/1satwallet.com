@@ -95,7 +95,7 @@ export function ShowcaseChapters({
 				</div>
 				<div className={styles.coverShot}>
 					<div className={styles.glow} aria-hidden="true" />
-					<DeviceShot shot={coverShot} preload />
+					<DeviceShot shot={coverShot} />
 				</div>
 			</header>
 			{chapters.map((chapter, index) => (
