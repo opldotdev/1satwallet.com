@@ -54,12 +54,15 @@ export function useWalletDiscovery(enabled = true): WalletDiscovery {
 	const scanning = useRef(false);
 	const rescan = useRef(false);
 	const waiting = useRef<AbortController | null>(null);
+	/** Bumped by every wait, so a scan that started before it is dropped. */
+	const generation = useRef(0);
 	const statusRef = useRef<Partial<EventTarget> | undefined>(undefined);
 	const [status, setStatus] = useState<Partial<EventTarget> | undefined>();
 
 	const readPermission = useCallback(async (): Promise<LoopbackPermission> => {
 		const read = await readLoopbackPermission();
-		if (read.status && read.status !== statusRef.current) {
+		// Each query returns a new status object; one is enough to watch.
+		if (read.status && !statusRef.current) {
 			statusRef.current = read.status;
 			if (mounted.current) setStatus(read.status);
 		}
@@ -78,12 +81,19 @@ export function useWalletDiscovery(enabled = true): WalletDiscovery {
 			try {
 				do {
 					rescan.current = false;
+					const started = generation.current;
 					const current = detectPlatform();
 					if (mounted.current) setPlatform(current);
 					const permission = await readPermission();
 					const next = await discoverWallets({ platform: current, permission });
 					// A wait that started meanwhile owns the result.
-					if (!mounted.current || waiting.current) return;
+					if (
+						!mounted.current ||
+						waiting.current ||
+						started !== generation.current
+					) {
+						return;
+					}
 					setSnapshot(next);
 				} while (rescan.current);
 			} catch (error) {
@@ -100,6 +110,7 @@ export function useWalletDiscovery(enabled = true): WalletDiscovery {
 		waiting.current?.abort();
 		const controller = new AbortController();
 		waiting.current = controller;
+		generation.current += 1;
 		setPhase("waiting");
 		try {
 			const current = detectPlatform();
@@ -108,6 +119,10 @@ export function useWalletDiscovery(enabled = true): WalletDiscovery {
 				signal: controller.signal,
 				readPermission,
 			});
+			// Stopped, or replaced by another wait, while the permission was read.
+			if (waiting.current !== controller || controller.signal.aborted) {
+				return null;
+			}
 			if (mounted.current) setSnapshot(result.snapshot);
 			return result;
 		} catch (error) {

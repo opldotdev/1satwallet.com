@@ -80,6 +80,11 @@ import {
 	type WalletConnectionOption,
 } from "@/lib/wallet/connection-options";
 import {
+	hasWindowWallet,
+	loopbackAllowed,
+	readLoopbackPermission,
+} from "@/lib/wallet/discovery/loopback-permission";
+import {
 	EXTERNAL_NETWORK_CHANGED,
 	externalWalletChain,
 } from "@/lib/wallet/external-network";
@@ -982,14 +987,41 @@ export function WalletToolboxProvider({
 			return;
 		}
 		const savedOption = localStorage.getItem(CONNECTION_OPTION_KEY);
-		void connectExternal(
+		const option =
 			savedOption === "injected" ||
-				savedOption === "desktop" ||
-				savedOption === "embedded"
+			savedOption === "desktop" ||
+			savedOption === "embedded"
 				? savedOption
-				: undefined,
-			true,
-		);
+				: undefined;
+		let cancelled = false;
+		void (async () => {
+			// Reconnecting on load is not something the user just asked for, so
+			// it must not raise the browser's question about apps on this
+			// computer (BRC-325). Then the connect screen offers to look.
+			if (option === "desktop" || option === undefined) {
+				const { state } = await readLoopbackPermission();
+				if (cancelled) return;
+				if (!loopbackAllowed(state)) {
+					// A browser wallet needs no such permission and still reconnects.
+					if (option === undefined && hasWindowWallet()) {
+						void connectExternal("injected", true);
+						return;
+					}
+					reportDiagnostic({
+						category: "provider",
+						code: "provider.state",
+						operation: "wallet.external.reconnect.deferred",
+						recoverable: true,
+						context: { mode: option ?? "auto", status: state },
+					});
+					return;
+				}
+			}
+			void connectExternal(option, true);
+		})();
+		return () => {
+			cancelled = true;
+		};
 	}, [chain, connectExternal, isInitialized, isInitializing]);
 
 	// -- Wallet init --

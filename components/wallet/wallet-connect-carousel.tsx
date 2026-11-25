@@ -96,7 +96,10 @@ export function WalletConnectCarousel() {
 		setHost(window.location.host);
 	}, []);
 
-	const slides = walletSlides(platform, snapshot?.candidates ?? []);
+	// Nothing until the device is known, so the leading slide does not change
+	// right after the first paint.
+	const slides =
+		platform === null ? [] : walletSlides(platform, snapshot?.candidates ?? []);
 	// Until the user moves, the first slide leads: whatever the scan found.
 	const activeIndex = Math.max(
 		0,
@@ -269,10 +272,17 @@ export function WalletConnectCarousel() {
 									>
 										Look for it
 									</Button>
+								) : denied ? (
+									<Button
+										variant="secondary"
+										onClick={() => setHelpHidden(false)}
+									>
+										How to allow it
+									</Button>
 								) : (
 									<Button
 										variant="secondary"
-										disabled={busy || phase === "scanning" || denied}
+										disabled={busy || phase === "scanning"}
 										onClick={discovery.refresh}
 									>
 										<RefreshCw

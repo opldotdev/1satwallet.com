@@ -11,7 +11,10 @@
  */
 import { createConnectionClient } from "@/lib/wallet/connection-options";
 import { isWalletAppBrowser } from "@/lib/wallet/host-wallet";
-import type { LoopbackPermission } from "./loopback-permission";
+import {
+	hasWindowWallet,
+	type LoopbackPermission,
+} from "./loopback-permission";
 import { canReachLocalWallet, type DevicePlatform } from "./platform";
 
 export type DiscoveredOption = "injected" | "desktop";
@@ -154,14 +157,10 @@ export async function discoverWallets(
 ): Promise<DiscoverySnapshot> {
 	const probe = input.probe ?? probeVersion;
 	const inWalletApp = input.inWalletApp ?? isWalletAppBrowser();
-	const hasWindowWallet =
-		input.hasWindowWallet ??
-		(typeof window !== "undefined" &&
-			typeof (window as unknown as { CWI?: unknown }).CWI === "object" &&
-			(window as unknown as { CWI?: unknown }).CWI !== null);
+	const windowWallet = input.hasWindowWallet ?? hasWindowWallet();
 
 	const windowAdapter = async (): Promise<AdapterResult> => {
-		if (!hasWindowWallet) {
+		if (!windowWallet) {
 			return { coverage: { adapter: "window.CWI", state: "unsupported" } };
 		}
 		return probeAdapter("window.CWI", "injected", DISCOVERY_DEADLINE_MS);

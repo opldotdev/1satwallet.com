@@ -5,6 +5,7 @@ import {
 	type DiscoveredOption,
 	discoverWallets,
 	elicitLoopback,
+	ProbeCancelled,
 	type VersionProbe,
 	versionVendor,
 } from "../lib/wallet/discovery/discovery";
@@ -85,6 +86,21 @@ describe("loopback permission", () => {
 			},
 		});
 		assert.equal(read.state, "denied");
+	});
+
+	it("asks first when the permission cannot be read", async () => {
+		const failed = await readLoopbackPermission({
+			hostname: "1satwallet.com",
+			query: async () => {
+				throw new Error("permissions service crashed");
+			},
+		});
+		assert.equal(failed.state, "prompt");
+		const odd = await readLoopbackPermission({
+			hostname: "1satwallet.com",
+			query: async () => ({ state: "something-new" as PermissionState }),
+		});
+		assert.equal(odd.state, "prompt");
 	});
 
 	it("reports unsupported where the browser has no such permission", async () => {
@@ -286,6 +302,29 @@ describe("asking the browser", () => {
 			{ option: "desktop", deadline: DISCOVERY_DEADLINE_MS },
 		]);
 		assert.equal(result.snapshot.candidates[0]?.name, "1Sat Wallet for Mac");
+	});
+
+	it("keeps the answer where there is no permission to read", async () => {
+		const result = await elicitLoopback({
+			...base,
+			probe: fakeProbe({ desktop: "1sat-1.0.0" }),
+			readPermission: async () => "unsupported",
+		});
+		assert.equal(result.outcome, "found-or-rescanned");
+		assert.equal(result.snapshot.candidates.length, 1);
+	});
+
+	it("passes a cancel through instead of reporting no wallet", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(
+			elicitLoopback({
+				...base,
+				signal: controller.signal,
+				readPermission: async () => "granted",
+			}),
+			ProbeCancelled,
+		);
 	});
 
 	it("tells a block from an unanswered question by the permission", async () => {

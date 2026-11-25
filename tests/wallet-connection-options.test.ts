@@ -123,3 +123,21 @@ it("keeps identity derivation failures distinct from a missing wallet", async ()
 			error instanceof WalletSwitchError && error.reason === "identity-failed",
 	);
 });
+
+it("never switches to a desktop wallet before the browser allows it", async () => {
+	for (const permission of ["prompt", "denied"] as const) {
+		let probed = false;
+		await assert.rejects(
+			prepareWalletSwitch("desktop", {
+				readPermission: async () => permission,
+				probe: async () => {
+					probed = true;
+					return true;
+				},
+			}),
+			(error: unknown) =>
+				error instanceof WalletSwitchError && error.reason === "unavailable",
+		);
+		assert.equal(probed, false);
+	}
+});

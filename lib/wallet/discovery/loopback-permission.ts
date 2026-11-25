@@ -58,20 +58,21 @@ export async function readLoopbackPermission(
 			if (state === "granted" || state === "prompt" || state === "denied") {
 				return { state, status };
 			}
+			// Fail closed: an unknown state may still mean the browser asks.
 			console.warn(
-				`[wallet-discovery] ${name} permission reported an unknown state`,
+				`[wallet-discovery] ${name} permission reported an unknown state; asking first`,
 				state,
 			);
-			return { state: "unsupported" };
+			return { state: "prompt", status };
 		} catch (error) {
 			// An unknown descriptor name rejects with a TypeError: this browser
 			// lacks that permission. Anything else is a real failure.
 			if (error instanceof TypeError) continue;
 			console.error(
-				`[wallet-discovery] reading the ${name} permission failed`,
+				`[wallet-discovery] reading the ${name} permission failed; asking first`,
 				error,
 			);
-			return { state: "unsupported" };
+			return { state: "prompt" };
 		}
 	}
 	return { state: "unsupported" };
@@ -84,6 +85,18 @@ function defaultQuery(): PermissionQuery | null {
 	const permissions = navigator.permissions;
 	return (descriptor) =>
 		permissions.query(descriptor as unknown as PermissionDescriptor);
+}
+
+/** A browser wallet (extension or wallet-app browser) needs no permission. */
+export function hasWindowWallet(): boolean {
+	if (typeof window === "undefined") return false;
+	const cwi = (window as unknown as { CWI?: unknown }).CWI;
+	return typeof cwi === "object" && cwi !== null;
+}
+
+/** False while reaching this computer could raise the browser's question. */
+export function loopbackAllowed(state: LoopbackPermission): boolean {
+	return state !== "prompt" && state !== "denied";
 }
 
 /**
