@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useMediaQuery } from "usehooks-ts";
 import { ThreeBoundary } from "@/components/landing/three-boundary";
 import { UnderPageHeading } from "@/components/not-on-testnet";
@@ -19,7 +20,7 @@ import { SharedPresence, useLandingFloor } from "./shared-presence";
 import { TradeRequestListener } from "./trade-request-listener";
 
 // The logo box (here and in Logo3D) is short enough that the wallet chooser
-// under it fits a 1280x800 window without scrolling.
+// and its slide picker under it show in a 1280x800 window.
 function StaticLogo() {
 	return (
 		<div className="flex h-[104px] items-center justify-center sm:h-[160px] md:h-[200px]">
@@ -70,8 +71,15 @@ export function LandingHero() {
 		isInitializing ||
 		connectionStatus === "authenticating" ||
 		floor.state.kind === "checking";
-	// The chooser shows once the wallet is known and there is none here.
-	const choosing = !resolving && !locked && !hasWallet;
+	// The chooser shows once the wallet is known and there is none here, and
+	// stays mounted while a wallet it picked connects (which counts as
+	// resolving), so its own Connecting state and errors stay on screen.
+	const [chooserShown, setChooserShown] = useState(false);
+	const noWalletHere = !signedIn && !locked && !hasWallet;
+	useEffect(() => {
+		if (!resolving && noWalletHere) setChooserShown(true);
+	}, [resolving, noWalletHere]);
+	const choosing = noWalletHere && (chooserShown || !resolving);
 	const barShown =
 		floor.state.kind === "live" ||
 		floor.state.kind === "joining" ||
@@ -97,10 +105,13 @@ export function LandingHero() {
 				</Page>
 			) : (
 				<>
-					<div
-						aria-hidden="true"
-						className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_50%_40%,_var(--tw-gradient-stops))] from-primary/12 via-background to-background"
-					/>
+					{/* The chooser's opaque slides would cut the glow into a box. */}
+					{choosing ? null : (
+						<div
+							aria-hidden="true"
+							className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_50%_40%,_var(--tw-gradient-stops))] from-primary/12 via-background to-background"
+						/>
+					)}
 					<div className="relative w-full px-6 text-center">
 						<div className="relative z-20">
 							<div aria-hidden="true" data-testid="hero-logo">
@@ -118,11 +129,11 @@ export function LandingHero() {
 								1Sat Wallet
 							</h1>
 						</div>
-						{resolving ? null : choosing ? (
+						{choosing ? (
 							<div className="relative z-40 mx-auto mt-2 w-full max-w-3xl">
 								<WalletConnectCarousel />
 							</div>
-						) : (
+						) : resolving ? null : (
 							<div className="relative z-40 mx-auto mt-8 flex max-w-xs flex-col gap-2">
 								<Button
 									asChild
