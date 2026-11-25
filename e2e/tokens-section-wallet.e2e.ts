@@ -77,6 +77,54 @@ function readRows(browser: Browser) {
 	}, null);
 }
 
+/**
+ * Every BSV-21 icon under `scope` once each has loaded or failed: its src
+ * must be an OrdFS URL through the image API (never a bare outpoint), and a
+ * loaded one must have pixels. A failed one shows the coin in its place.
+ */
+async function checkBsv21Icons(
+	browser: Browser,
+	scope: string,
+	where: string,
+	problems: LayoutProblems,
+) {
+	await browser.waitFor(
+		`${where}: token icons to load or fail`,
+		(selector: string) =>
+			Array.from(
+				document.querySelectorAll<HTMLImageElement>(
+					`${selector} [data-slot="token-icon"] img`,
+				),
+			).every((img) => img.complete),
+		scope,
+		CHAIN_TIMEOUT,
+	);
+	const icons = await browser.evaluate(
+		(selector: string) =>
+			Array.from(
+				document.querySelectorAll<HTMLImageElement>(
+					`${selector} [data-slot="token-icon"] img`,
+				),
+			).map((img) => ({
+				src: img.getAttribute("src") ?? "",
+				width: img.naturalWidth,
+			})),
+		scope,
+	);
+	for (const icon of icons) {
+		const source = icon.src.startsWith("/api/image?")
+			? new URLSearchParams(icon.src.slice("/api/image?".length)).get("url")
+			: null;
+		if (!source?.includes("/content/")) {
+			problems.add(
+				`${where}: a token icon's src is ${JSON.stringify(icon.src)}, expected OrdFS content through /api/image.`,
+			);
+		} else if (icon.width === 0) {
+			problems.add(`${where}: token icon ${icon.src} loaded with no pixels.`);
+		}
+	}
+}
+
 async function checkPhones(
 	browser: Browser,
 	pathname: string,
@@ -191,6 +239,12 @@ walletTest(
 				problems.add(`/wallet/tokens: a 1Color row links to ${href}.`);
 			}
 		}
+		await checkBsv21Icons(
+			browser,
+			'section[aria-labelledby="tokens-bsv21"]',
+			"/wallet/tokens",
+			problems,
+		);
 		problems.throwIfAny("Tokens on testnet");
 
 		// Each standard's page has its own headline and the back arrow to
@@ -255,6 +309,7 @@ walletTest(
 			null,
 			CHAIN_TIMEOUT,
 		);
+		await checkBsv21Icons(browser, "main", first, problems);
 		await checkPhones(browser, first, problems);
 		problems.throwIfAny("BSV-21 token page on testnet");
 		// The BSV-21 page was checked; only part was left out, so the test

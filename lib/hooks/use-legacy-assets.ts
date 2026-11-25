@@ -9,6 +9,7 @@ import {
 } from "@1sat/actions";
 import type { IndexedOutput } from "@1sat/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { bsv21IconSrc } from "@/lib/bsv21-icon";
 import { createStackServices, stackContentUrl } from "@/lib/stack";
 import {
 	type AddressScanStatus,
@@ -78,15 +79,6 @@ const enrichOrdinal = (out: IndexedOutput): EnrichedOrdinal => {
 	const name = getEvent(events, "name:");
 	const contentUrl = stackContentUrl(origin ?? out.outpoint);
 	return { ...out, origin, contentType, name, contentUrl };
-};
-
-const resolveIconUrl = (tokenId: string, icon?: string): string => {
-	if (!icon) return "";
-	let outpoint = icon;
-	if (icon.startsWith("_")) {
-		outpoint = `${tokenId.split("_")[0]}${icon}`;
-	}
-	return stackContentUrl(outpoint);
 };
 
 /**
@@ -203,7 +195,8 @@ export function useAddressAssets(
 			bsv21Tokens: excludeUnsweepableTokens(result?.bsv21Tokens ?? EMPTY).map(
 				(t) => ({
 					...t,
-					icon: resolveIconUrl(t.tokenId, t.icon),
+					// Sweep rows show icons in 40px tiles.
+					icon: bsv21IconSrc(t.tokenId, t.icon, 80) ?? "",
 				}),
 			),
 			bsv20Tokens: result?.bsv20Tokens ?? EMPTY,

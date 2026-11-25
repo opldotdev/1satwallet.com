@@ -188,11 +188,13 @@ export async function getBsv21Listings(
 		limit: 100,
 	});
 	if (marketOutputs.length === 0) return [];
-	const tokenOutputs = await ctx.services.bsv21.validateOutputs(
-		tokenId,
-		marketOutputs.map((output) => output.outpoint),
-		{ unspent: true, tags: "bsv21" },
-	);
+	// The stack answers null, not [], when no listing holds this token.
+	const tokenOutputs =
+		(await ctx.services.bsv21.validateOutputs(
+			tokenId,
+			marketOutputs.map((output) => output.outpoint),
+			{ unspent: true, tags: "bsv21" },
+		)) ?? [];
 	const marketByOutpoint = new Map(
 		marketOutputs.map((output) => [toStackOutpoint(output.outpoint), output]),
 	);

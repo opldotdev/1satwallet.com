@@ -4,8 +4,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import ImageWithFallback from "@/components/image-with-fallback";
 import { Bsv21DetailClient } from "@/components/market/bsv21-detail-client";
-import { createStackServices, stackContentUrl } from "@/lib/stack";
-import { isValidOutpoint } from "@/lib/validation";
+import { bsv21IconSrc } from "@/lib/bsv21-icon";
+import { createStackServices } from "@/lib/stack";
 import {
 	formatBsv21Amount,
 	getBsv21Listings,
@@ -31,6 +31,8 @@ export default async function Bsv21DetailPage({
 	const decimals = Number.parseInt(details.token.dec ?? "0", 10);
 	const symbol = details.token.sym || tokenId.slice(0, 8);
 	const overlayFee = safeOverlayFee(details);
+	// Shown at 80px; ask the image API for 2x.
+	const iconSrc = bsv21IconSrc(tokenId, details.token.icon, 160);
 
 	return (
 		<div className="mx-auto w-full max-w-5xl space-y-8 p-4">
@@ -41,13 +43,14 @@ export default async function Bsv21DetailPage({
 				<ArrowLeft className="mr-2 size-4" /> Back to BSV21 tokens
 			</Link>
 			<header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-				{details.token.icon && isValidOutpoint(details.token.icon) ? (
+				{iconSrc ? (
 					<ImageWithFallback
-						src={stackContentUrl(details.token.icon)}
+						src={iconSrc}
 						alt=""
 						width={80}
 						height={80}
 						className="size-20 rounded-lg border object-cover"
+						unoptimized
 					/>
 				) : null}
 				<div className="min-w-0 space-y-2">

@@ -222,7 +222,7 @@ export default function Bsv21Detail({ tokenId }: { tokenId: string }) {
 					) : null}
 				</>
 			}
-			icon={bsv21Icon(token, chain)}
+			icon={bsv21Icon(token, chain, 64)}
 			id={token.id}
 			idLabel="Token ID"
 			status={
