@@ -1,8 +1,16 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 export const alt = "1Sat Wallet: Apple App Beta for iPhone, iPad, and Mac";
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
+
+const logoData = await readFile(
+	join(process.cwd(), "public/oneSatLogoDark.svg"),
+	"base64",
+);
+const logoSrc = `data:image/svg+xml;base64,${logoData}`;
 
 export default function OpenGraphImage() {
 	return new ImageResponse(
@@ -17,17 +25,7 @@ export default function OpenGraphImage() {
 				gap: 72,
 			}}
 		>
-			<div
-				style={{
-					width: 280,
-					height: 280,
-					borderRadius: 999,
-					background: "#F0BB00",
-					border: "28px solid #0b0b0a",
-					boxShadow: "0 0 0 14px #111, 0 0 120px rgba(240,187,0,0.35)",
-					display: "flex",
-				}}
-			/>
+			<img src={logoSrc} alt="1Sat Wallet logo" width={280} height={280} />
 			<div style={{ display: "flex", flexDirection: "column" }}>
 				<div
 					style={{

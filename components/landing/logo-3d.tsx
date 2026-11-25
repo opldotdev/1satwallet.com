@@ -250,7 +250,7 @@ function Scene({
 			ringsPosition: { value: [0, 2, -15] },
 			ringsOuterColor: "#ffffff",
 			ringsMiddleColor: "#000000",
-			ringsInnerColor: "#F7931A", // Orange/Yellow
+			ringsInnerColor: "#F0BB00",
 			ringsThickness: { value: 0.1, min: 0.01, max: 1.0, step: 0.01 },
 			ringsGap: { value: 0.1, min: 0, max: 1, step: 0.05 },
 			ringsSpeed: { value: 0.5, min: 0, max: 5, step: 0.1 },
