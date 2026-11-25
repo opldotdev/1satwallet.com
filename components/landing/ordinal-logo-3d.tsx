@@ -42,7 +42,7 @@ function Scene() {
 		}),
 		Colors: folder({
 			outerColor: "#ffffff",
-			middleColor: "#333333", // Dark/Gap
+			middleColor: "#000000",
 			innerColor: "#F0BB00", // Gold
 			emissiveIntensity: { value: 1.0, min: 0, max: 5, step: 0.1 },
 		}),
