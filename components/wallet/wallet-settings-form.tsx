@@ -4,7 +4,6 @@ import {
 	Bug,
 	Cable,
 	Coins,
-	Database,
 	Eye,
 	EyeOff,
 	Globe,
@@ -30,10 +29,10 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { MessageboxReceiving } from "@/components/wallet/messagebox-receiving";
 import { TestnetBadge } from "@/components/wallet/testnet-badge";
+import { WalletStorageRow } from "@/components/wallet/wallet-storage-row";
 import { useSound } from "@/hooks/use-sound";
 import { isRouteAvailableOn } from "@/lib/chain-surfaces";
 import { CURRENCY_KEY, PRIVACY_MODE_KEY } from "@/lib/constants";
-import { walletStorageHost } from "@/lib/wallet/storage-endpoint";
 import { useSettingsStorage } from "@/lib/wallet-storage";
 import { useWalletToolbox } from "@/providers/wallet-toolbox-provider";
 
@@ -48,7 +47,6 @@ export function WalletSettingsForm() {
 		disconnectExternalWallet,
 		chain,
 	} = useWalletToolbox();
-	const storageHost = walletStorageHost(chain);
 	const [isPrivacyModeEnabled, setIsPrivacyModeEnabled] =
 		useSettingsStorage<boolean>(PRIVACY_MODE_KEY, false);
 	const [currency, setCurrency] = useSettingsStorage<string>(
@@ -82,17 +80,7 @@ export function WalletSettingsForm() {
 						}
 					/>
 				) : (
-					<SettingsRow
-						icon={Database}
-						title="Wallet storage"
-						description={
-							<>
-								Using the wallet built into this browser. Active store:{" "}
-								<code className="break-all font-mono">{storageHost}</code>. A
-								copy in this browser is kept in sync as a backup.
-							</>
-						}
-					/>
+					<WalletStorageRow />
 				)}
 				{connectionMode === "built-in" && (
 					<SettingsRow icon={Inbox}>
