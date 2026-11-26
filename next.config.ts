@@ -61,6 +61,7 @@ const nextConfig: NextConfig = {
 			{ pathname: "/images/wallet/radar.png", search: "" },
 			{ pathname: "/oneSatLogoDark.png", search: "" },
 			{ pathname: "/download/*.png", search: "" },
+			{ pathname: "/download/features/*.webp", search: "" },
 			{
 				pathname: "/api/image",
 			},

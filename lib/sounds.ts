@@ -7,7 +7,7 @@
  * Sound Design Philosophy:
  * - Soft, clean digital tones
  * - Short durations (< 0.5s feel)
- * - Low-mid volume range (0.1 - 0.4)
+ * - Low volume: taps stay quiet (about 0.06 - 0.15)
  * - Premium, subtle feedback
  */
 
@@ -33,13 +33,13 @@ export type SoundName = keyof typeof SOUNDS;
  * Keep these low for subtle, non-intrusive feedback.
  */
 export const SOUND_VOLUMES: Record<SoundName, number> = {
-	click: 0.15, // Very subtle
-	success: 0.2, // Slightly more noticeable
-	payChime: 0.3, // One-second coin chime
-	error: 0.25, // Noticeable but not harsh
-	alert: 0.5, // Needs attention
-	dialog: 0.3, // Moderate
-	decline: 0.3, // Moderate
+	click: 0.06, // Very subtle
+	success: 0.1, // Slightly more noticeable
+	payChime: 0.15, // One-second coin chime
+	error: 0.12, // Noticeable but not harsh
+	alert: 0.3, // Needs attention
+	dialog: 0.12, // Open/close and tab changes
+	decline: 0.15, // Moderate
 };
 
 /**
